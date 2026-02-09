@@ -5,13 +5,14 @@ This folder contains a strict, reproducible cluster-evaluation harness (discover
 ## Non-Negotiable Rules
 - GPU benchmark runs are valid only when clock locking succeeds through the harness (`lock_gpu_clocks`).
 - Preflight is mandatory for suite runs (`nvidia-persistenced`, `nvidia-imex`, `nvidia-dcgm`).
+- FP4/grouped-GEMM runs enforce stack-profile preflight (digest-pinned image for container mode, stack drift checks, and strict `nvidia_peermem` requirement).
 - Runtime/CVE evidence collection is enabled by default in discovery + health workflows (CVE-2025-23266 and CVE-2025-23267).
 - Do not rotate machine identity / SSH host keys unless explicitly approved for a break-glass recovery.
 
 ## Quick Start
 
 ### 1) Portable baseline (recommended first run)
-Use this when FP4 external dependencies are not guaranteed.
+Use this when you want a fast first pass without FP4.
 
 ```bash
 scripts/run_cluster_eval_suite.sh \
@@ -27,7 +28,7 @@ scripts/run_cluster_eval_suite.sh \
 ```
 
 ### 2) Full GB200 run (FP4 enabled)
-Use this when suite/image dependencies are available.
+Use this with host-native FP4 (default runtime).
 
 ```bash
 scripts/run_cluster_eval_suite.sh \
@@ -39,8 +40,7 @@ scripts/run_cluster_eval_suite.sh \
   --socket-ifname <iface> \
   --nccl-ib-hca mlx5_0,mlx5_1,mlx5_4,mlx5_5 \
   --health-suite extended \
-  --fp4-suite-dir /path/to/cluster_perf_suite \
-  --fp4-image ghcr.io/jordannanos/cmax-compute:latest
+  --enable-fp4
 ```
 
 ### 2b) Full GB200 run (all extended checks enabled)
@@ -60,8 +60,7 @@ scripts/run_cluster_eval_suite.sh \
   --health-gdr-gpu 0 \
   --health-gdr-mem-types 0,1 \
   --health-gdr-use-dmabuf \
-  --fp4-suite-dir /path/to/cluster_perf_suite \
-  --fp4-image ghcr.io/jordannanos/cmax-compute:latest \
+  --fp4-runtime host \
   --run-c2c \
   --run-numa-mem-bw \
   --run-train-step \
@@ -87,6 +86,44 @@ scripts/run_cluster_eval_suite.sh \
   --nccl-algos Ring,Tree,NVLS,auto
 ```
 
+Optional containerized FP4 runtime (if you prefer containerized FP4 or host bootstrap cannot satisfy prerequisites):
+
+```bash
+scripts/repro/build_cluster_perf_image.sh --profile open --tag cfregly/cluster_perf:latest
+
+scripts/run_cluster_eval_suite.sh \
+  --run-id <run_id> \
+  --hosts node1,node2 \
+  --labels node1,node2 \
+  --ssh-key ~/.ssh/ssh_key.pem \
+  --oob-if <iface> \
+  --socket-ifname <iface> \
+  --nccl-ib-hca mlx5_0,mlx5_1,mlx5_4,mlx5_5 \
+  --health-suite extended \
+  --fp4-runtime container \
+  --fp4-stack-profile new_container
+```
+
+Optional old-parity open container profile (matches legacy `old_container` software versions, without `jordannanos` image dependency):
+
+```bash
+scripts/repro/build_cluster_perf_image.sh --profile old_parity
+IMAGE_ID="$(docker image inspect --format '{{.Id}}' cfregly/cluster_perf_old_parity:latest)"
+
+scripts/run_cluster_eval_suite.sh \
+  --run-id <run_id> \
+  --hosts node1,node2 \
+  --labels node1,node2 \
+  --ssh-key ~/.ssh/ssh_key.pem \
+  --oob-if <iface> \
+  --socket-ifname <iface> \
+  --nccl-ib-hca mlx5_0,mlx5_1,mlx5_4,mlx5_5 \
+  --health-suite extended \
+  --fp4-runtime container \
+  --fp4-stack-profile old_parity_container \
+  --fp4-image "${IMAGE_ID}"
+```
+
 Optional extension for 2-node vLLM serving (Ray + TP across nodes):
 
 ```bash
@@ -102,8 +139,7 @@ Optional dedicated `nvbandwidth` add-on (strict lock + structured JSON/CSV):
 scripts/repro/run_nvbandwidth_bundle.sh \
   --run-id <run_id> \
   --label <label> \
-  --suite-dir /path/to/cluster_perf_suite \
-  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --runtime host \
   --quick
 python3 analysis/plot_nvbandwidth_sums.py \
   --input results/structured/<run_id>_<label>_nvbandwidth_sums.csv \
@@ -118,24 +154,23 @@ python3 scripts/write_manifest.py --run-id <run_id> --hosts node1,node2 --includ
 ```
 
 ## FP4 Notes
-- `--fp4-suite-dir` and bootstrap `--sync-suite-dir` are local filesystem paths to a Cluster Perf checkout, not container image references.
-- Valid path forms for suite-dir flags:
-  - suite root (`<suite>/standalone/compute`)
-  - `<suite>/standalone`
-  - `<suite>/standalone/compute`
-  - a parent directory containing a suite root
-- FP4 execution is containerized:
-  - grouped GEMM: `scripts/run_cluster_perf_grouped_gemm.sh` (`docker run ... --image ...`)
-  - DeepGEMM smoke: `scripts/run_cluster_perf_fp4_smoke.sh` (`docker run ... --image ...`)
+- FP4 is enabled by default in `scripts/run_cluster_eval_suite.sh`.
+- FP4 runtime is host-native by default (`--fp4-runtime host`).
+- Host bootstrap installs pinned `deep_gemm` (`DeepGEMM@477618c`) into `env/venv` for `host_only` profile parity.
+- Optional container runtime is supported with `--fp4-runtime container --fp4-stack-profile new_container`.
+- FP4 benchmark entrypoints also expose runtime selection:
+  - grouped GEMM: `scripts/run_cluster_perf_grouped_gemm.sh --runtime host|container --stack-profile <profile>`
+  - FP4 smoke: `scripts/run_cluster_perf_fp4_smoke.sh --runtime host|container --stack-profile <profile>`
+- Build local open container runtime (optional):
+  - open decoupled: `scripts/repro/build_cluster_perf_image.sh --profile open --tag cfregly/cluster_perf:latest`
+  - old-parity: `scripts/repro/build_cluster_perf_image.sh --profile old_parity --tag cfregly/cluster_perf_old_parity:latest`
+- Stack profile catalog and pinned digests: `docs/cluster-perf-stack-profiles.md`
 - FP4 checks now enforce a balanced attestation by default:
-  - semantic source check on `standalone/compute/gemm-bench/grouped_gemm_bench.py` (GB200 UE8M0 markers)
+  - semantic source check on `scripts/benchmarks/grouped_gemm_bench.py` (GB200 UE8M0 markers)
   - grouped GEMM behavioral validation (`--require-deepgemm`) so unsupported DeepGEMM paths fail fast
-  - per-host provenance capture (suite path/git if available, container image ID/digest, driver/CUDA)
+  - per-host provenance capture (repo git, runtime mode, optional container image ID/digest, driver/CUDA)
   - cross-host consistency report at `results/structured/<run_id>_fp4_attestation_consistency.json`
 - Provenance capture is metadata-only. It does not mutate host state, lock versions, or pin files.
-- The GB200 grouped-GEMM compatibility patch is tracked in this repo:
-  - `code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch`
-  - full apply/verify steps are in `docs/advanced-runbook.md`.
 - Health-suite GDR behavior:
   - if perftest CUDA mode (`--use_cuda`) is unavailable, GDR checks are automatically disabled with a recorded warning
   - if a GDR subtest fails at runtime (for example MR allocation errors), the suite logs warnings and continues with the rest of the run

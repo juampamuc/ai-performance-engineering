@@ -55,6 +55,9 @@ INSTALL_PYTHON_DEPS=1
 SYNC_SUITE_DIR=""
 TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
 TORCH_VERSION="2.9.1+cu130"
+DEEP_GEMM_GIT_URL="https://github.com/deepseek-ai/DeepGEMM.git"
+DEEP_GEMM_GIT_REF="477618c"
+DEEP_GEMM_VERSION="2.3.0+477618c"
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -334,14 +337,17 @@ install_python_deps_on_host() {
   local venv_py="${venv_dir}/bin/python"
   local venv_pip="${venv_dir}/bin/pip"
   local req_file="${REMOTE_ROOT}/env/requirements.txt"
+  local deep_gemm_req="deep_gemm @ git+${DEEP_GEMM_GIT_URL}@${DEEP_GEMM_GIT_REF}"
 
-  local q_venv_dir q_venv_py q_venv_pip q_req q_torch_index q_torch_version
+  local q_venv_dir q_venv_py q_venv_pip q_req q_torch_index q_torch_version q_deep_gemm_req q_deep_gemm_version
   printf -v q_venv_dir '%q' "$venv_dir"
   printf -v q_venv_py '%q' "$venv_py"
   printf -v q_venv_pip '%q' "$venv_pip"
   printf -v q_req '%q' "$req_file"
   printf -v q_torch_index '%q' "$TORCH_INDEX_URL"
   printf -v q_torch_version '%q' "$TORCH_VERSION"
+  printf -v q_deep_gemm_req '%q' "$deep_gemm_req"
+  printf -v q_deep_gemm_version '%q' "$DEEP_GEMM_VERSION"
 
   local cmd="
 set -euo pipefail
@@ -356,6 +362,23 @@ fi
 if [[ -f ${q_req} ]]; then
   ${q_venv_pip} install -r ${q_req}
 fi
+cuda_home=\"\${CUDA_HOME:-}\"
+if [[ -z \"\${cuda_home}\" ]]; then
+  if [[ -d /usr/local/cuda ]]; then
+    cuda_home=/usr/local/cuda
+  elif command -v nvcc >/dev/null 2>&1; then
+    nvcc_path=\"\$(command -v nvcc)\"
+    cuda_home=\"\$(cd \"\$(dirname \"\${nvcc_path}\")/..\" && pwd -P)\"
+  fi
+fi
+if [[ -z \"\${cuda_home}\" || ! -f \"\${cuda_home}/include/cuda.h\" ]]; then
+  echo 'ERROR: CUDA toolkit headers not found; cannot install pinned deep_gemm for host-only FP4.' >&2
+  echo \"Resolved CUDA_HOME=\${cuda_home:-<empty>}\" >&2
+  exit 2
+fi
+if ! ${q_venv_py} -c \"import importlib.metadata as m; print(m.version('deep_gemm'))\" 2>/dev/null | grep -qx ${q_deep_gemm_version}; then
+  CUDA_HOME=\"\${cuda_home}\" CUDACXX=\"\${cuda_home}/bin/nvcc\" ${q_venv_pip} install --no-build-isolation --upgrade ${q_deep_gemm_req}
+fi
 ${q_venv_pip} check || true
 "
   run_host_cmd "$host" "$cmd"
@@ -369,7 +392,7 @@ write_status_json() {
 
   local python3_path pip3_path docker_path nvidia_smi_path nvcc_path mpirun_path ib_write_bw_path ibstat_path iperf3_path numactl_path
   local fio_path jq_path wget_path curl_path ncu_path nsys_path dcgmi_path
-  local venv_py torch_version torch_cuda_available matplotlib_version numpy_version
+  local venv_py torch_version torch_cuda_available matplotlib_version numpy_version deep_gemm_version
 
   python3_path="$(check_cmd_path "$host" "python3")"
   pip3_path="$(check_cmd_path "$host" "pip3")"
@@ -394,8 +417,9 @@ write_status_json() {
   torch_cuda_available="$(run_host_cmd "$host" "${venv_py} -c \"import torch; print(int(torch.cuda.is_available()))\" 2>/dev/null || true" | tr -d '\r' | head -n1 | xargs || true)"
   matplotlib_version="$(run_host_cmd "$host" "${venv_py} -c \"import matplotlib; print(matplotlib.__version__)\" 2>/dev/null || true" | tr -d '\r' | head -n1 | xargs || true)"
   numpy_version="$(run_host_cmd "$host" "${venv_py} -c \"import numpy; print(numpy.__version__)\" 2>/dev/null || true" | tr -d '\r' | head -n1 | xargs || true)"
+  deep_gemm_version="$(run_host_cmd "$host" "${venv_py} -c \"import importlib.metadata as m; print(m.version('deep_gemm'))\" 2>/dev/null || true" | tr -d '\r' | head -n1 | xargs || true)"
 
-  python3 - <<'PY' "$out_path" "$host" "$label" "$SYNC_CODE" "$INSTALL_SYSTEM_PACKAGES" "$INSTALL_PYTHON_DEPS" "$installed_pkgs" "$REMOTE_ROOT" "$python3_path" "$pip3_path" "$docker_path" "$nvidia_smi_path" "$nvcc_path" "$mpirun_path" "$ib_write_bw_path" "$ibstat_path" "$iperf3_path" "$numactl_path" "$fio_path" "$jq_path" "$wget_path" "$curl_path" "$ncu_path" "$nsys_path" "$dcgmi_path" "$venv_py" "$torch_version" "$torch_cuda_available" "$matplotlib_version" "$numpy_version"
+  python3 - <<'PY' "$out_path" "$host" "$label" "$SYNC_CODE" "$INSTALL_SYSTEM_PACKAGES" "$INSTALL_PYTHON_DEPS" "$installed_pkgs" "$REMOTE_ROOT" "$python3_path" "$pip3_path" "$docker_path" "$nvidia_smi_path" "$nvcc_path" "$mpirun_path" "$ib_write_bw_path" "$ibstat_path" "$iperf3_path" "$numactl_path" "$fio_path" "$jq_path" "$wget_path" "$curl_path" "$ncu_path" "$nsys_path" "$dcgmi_path" "$venv_py" "$torch_version" "$torch_cuda_available" "$matplotlib_version" "$numpy_version" "$deep_gemm_version"
 import json
 import sys
 import time
@@ -432,6 +456,7 @@ from pathlib import Path
     torch_cuda_available,
     matplotlib_version,
     numpy_version,
+    deep_gemm_version,
 ) = sys.argv[1:]
 
 payload = {
@@ -470,6 +495,7 @@ payload = {
         "torch_cuda_available": bool(int(torch_cuda_available)) if torch_cuda_available in {"0", "1"} else None,
         "matplotlib_version": matplotlib_version or None,
         "numpy_version": numpy_version or None,
+        "deep_gemm_version": deep_gemm_version or None,
     },
 }
 

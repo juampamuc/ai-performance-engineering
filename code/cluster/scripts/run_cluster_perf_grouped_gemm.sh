@@ -3,26 +3,28 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF' >&2
-Run the Cluster Perf grouped GEMM benchmark (DeepGEMM FP8xFP4 path + torch baselines)
+Run grouped GEMM benchmark (DeepGEMM FP8xFP4 path + torch baselines)
 and write a structured log + summary + plot under results/ and docs/.
 
 This validates the DeepGEMM grouped-GEMM FP8xFP4 path on GB200/SM100.
 
 Usage:
   scripts/run_cluster_perf_grouped_gemm.sh \
-    --suite-dir /path/to/cluster_perf_suite \
     --run-id 2026-02-08_deepgemm_grouped_gemm \
     --label node1
 
 Options:
-  --suite-dir <dir>   Required. Cluster Perf suite root dir (has standalone/compute/).
-                      You can also set CLUSTER_PERF_SUITE_DIR instead.
   --run-id <id>       RUN_ID prefix for outputs (default: YYYY-MM-DD_grouped_gemm).
   --label <label>     Label used in output filenames (default: hostname).
   --preset <name>     Preset passed to grouped_gemm_bench.py (default: all).
   --warmup <n>        Warmup iterations (default: 5).
   --iters <n>         Benchmark iterations (default: 30).
-  --image <image>     Container image (required; or set CONTAINER_IMAGE).
+  --runtime <mode>    host|container (default: host).
+  --stack-profile <name>
+                      Stack profile: old_container|old_parity_container|new_container|host_only
+                      (default: runtime-specific from configs/cluster_perf_stack_profiles.json).
+  --image <image>     Container image for runtime=container
+                      (default: stack-profile image_ref or $CONTAINER_IMAGE).
   --require-deepgemm  Fail if grouped GEMM summary reports DeepGEMM unsupported
                       or no DeepGEMM datapoints (default: off).
   --allow-deepgemm-unsupported
@@ -31,23 +33,32 @@ EOF
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -f "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" ]]; then
+  echo "ERROR: missing stack profile helper: ${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" >&2
+  exit 1
+fi
+# shellcheck source=scripts/cluster_perf_stack_profiles.sh
+source "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh"
+
 RUN_ID="$(date +%Y-%m-%d)_grouped_gemm"
 LABEL="$(hostname)"
 PRESET="all"
 WARMUP="5"
 ITERS="30"
-SUITE_DIR="${CLUSTER_PERF_SUITE_DIR:-}"
+RUNTIME="host"
+STACK_PROFILE=""
 IMAGE="${CONTAINER_IMAGE:-}"
 REQUIRE_DEEPGEMM=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
-    --suite-dir) SUITE_DIR="${2:-}"; shift 2 ;;
     --run-id) RUN_ID="${2:-}"; shift 2 ;;
     --label) LABEL="${2:-}"; shift 2 ;;
     --preset) PRESET="${2:-}"; shift 2 ;;
     --warmup) WARMUP="${2:-}"; shift 2 ;;
     --iters) ITERS="${2:-}"; shift 2 ;;
+    --runtime) RUNTIME="${2:-}"; shift 2 ;;
+    --stack-profile) STACK_PROFILE="${2:-}"; shift 2 ;;
     --image) IMAGE="${2:-}"; shift 2 ;;
     --require-deepgemm) REQUIRE_DEEPGEMM=1; shift ;;
     --allow-deepgemm-unsupported) REQUIRE_DEEPGEMM=0; shift ;;
@@ -56,18 +67,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$SUITE_DIR" ]]; then
-  echo "ERROR: --suite-dir is required (or set CLUSTER_PERF_SUITE_DIR)." >&2
-  exit 1
-fi
-if [[ -z "$IMAGE" ]]; then
-  echo "ERROR: --image is required (or set CONTAINER_IMAGE)." >&2
+if [[ "$RUNTIME" != "host" && "$RUNTIME" != "container" ]]; then
+  echo "ERROR: --runtime must be host or container (got: ${RUNTIME})" >&2
   exit 1
 fi
 
-COMPUTE_DIR="${SUITE_DIR}/standalone/compute"
-if [[ ! -d "$COMPUTE_DIR" ]]; then
-  echo "ERROR: suite compute dir not found: $COMPUTE_DIR" >&2
+if [[ -z "$STACK_PROFILE" ]]; then
+  STACK_PROFILE="$(cluster_perf_default_profile_for_runtime "$ROOT_DIR" "$RUNTIME")"
+fi
+if ! cluster_perf_profile_exists "$ROOT_DIR" "$STACK_PROFILE"; then
+  echo "ERROR: unknown --stack-profile: ${STACK_PROFILE}" >&2
+  exit 1
+fi
+if ! cluster_perf_profile_runtime_allowed "$ROOT_DIR" "$STACK_PROFILE" "$RUNTIME"; then
+  echo "ERROR: --stack-profile ${STACK_PROFILE} does not allow runtime=${RUNTIME}" >&2
+  exit 1
+fi
+
+if [[ "$RUNTIME" == "container" && -z "$IMAGE" ]]; then
+  IMAGE="$(cluster_perf_profile_image_ref "$ROOT_DIR" "$STACK_PROFILE")"
+fi
+if [[ "$RUNTIME" == "container" && -z "$IMAGE" ]]; then
+  echo "ERROR: no container image resolved for runtime=container/profile=${STACK_PROFILE}" >&2
   exit 1
 fi
 
@@ -77,21 +98,90 @@ OUT_LOG="${ROOT_DIR}/results/structured/${RUN_ID}_${LABEL}_cluster_perf_grouped_
 OUT_JSON="${ROOT_DIR}/results/structured/${RUN_ID}_${LABEL}_cluster_perf_grouped_gemm_summary.json"
 OUT_PNG="${ROOT_DIR}/docs/figures/${RUN_ID}_${LABEL}_cluster_perf_grouped_gemm_tflops.png"
 LOCK_META="${ROOT_DIR}/results/structured/${RUN_ID}_${LABEL}_cluster_perf_grouped_gemm_clock_lock.json"
+PREFLIGHT_STACK_META="${ROOT_DIR}/results/structured/${RUN_ID}_${LABEL}_cluster_perf_grouped_gemm_preflight_stack.json"
+PREFLIGHT_CLOCK_META="${ROOT_DIR}/results/structured/${RUN_ID}_${LABEL}_cluster_perf_grouped_gemm_preflight_clock_lock.json"
+BENCH_SCRIPT_REL="scripts/benchmarks/grouped_gemm_bench.py"
+BENCH_SCRIPT="${ROOT_DIR}/${BENCH_SCRIPT_REL}"
+MATH_ALLOW_TF32="$(cluster_perf_profile_math_allow_tf32 "$ROOT_DIR" "$STACK_PROFILE")"
+MATH_FP32_MATMUL_PRECISION="$(cluster_perf_profile_math_precision "$ROOT_DIR" "$STACK_PROFILE")"
+HOST_CUDA_HOME=""
+
+resolve_host_cuda_home() {
+  local resolved="${CUDA_HOME:-}"
+  if [[ -z "$resolved" ]]; then
+    if [[ -d /usr/local/cuda ]]; then
+      resolved="/usr/local/cuda"
+    elif command -v nvcc >/dev/null 2>&1; then
+      local nvcc_path
+      nvcc_path="$(command -v nvcc)"
+      resolved="$(cd "$(dirname "$nvcc_path")/.." && pwd -P)"
+    fi
+  fi
+  if [[ -z "$resolved" || ! -f "${resolved}/include/cuda_runtime.h" ]]; then
+    echo "ERROR: CUDA toolkit headers not found for host runtime (resolved CUDA_HOME=${resolved:-<empty>})." >&2
+    exit 1
+  fi
+  printf '%s\n' "$resolved"
+}
 
 echo "== Cluster Perf Grouped GEMM =="
 echo "RUN_ID=${RUN_ID}"
 echo "LABEL=${LABEL}"
-echo "SUITE_DIR=${SUITE_DIR}"
-echo "COMPUTE_DIR=${COMPUTE_DIR}"
-echo "IMAGE=${IMAGE}"
+echo "RUNTIME=${RUNTIME}"
+echo "STACK_PROFILE=${STACK_PROFILE}"
+if [[ "$RUNTIME" == "container" ]]; then
+  echo "IMAGE=${IMAGE}"
+fi
+echo "MATH_POLICY=allow_tf32:${MATH_ALLOW_TF32},float32_matmul_precision:${MATH_FP32_MATMUL_PRECISION}"
 echo "PRESET=${PRESET}"
 echo "WARMUP=${WARMUP}"
 echo "ITERS=${ITERS}"
+echo "BENCH_SCRIPT=${BENCH_SCRIPT_REL}"
 echo
 
+if [[ ! -f "$BENCH_SCRIPT" ]]; then
+  echo "ERROR: grouped benchmark script not found: ${BENCH_SCRIPT}" >&2
+  exit 1
+fi
+if [[ ! -x "${ROOT_DIR}/env/venv/bin/python" ]]; then
+  echo "ERROR: venv python not found: ${ROOT_DIR}/env/venv/bin/python" >&2
+  exit 1
+fi
+if [[ "$RUNTIME" == "host" ]]; then
+  HOST_CUDA_HOME="$(resolve_host_cuda_home)"
+fi
+
+preflight_args=(
+  --runtime "${RUNTIME}"
+  --stack-profile "${STACK_PROFILE}"
+  --profiles-json "${ROOT_DIR}/configs/cluster_perf_stack_profiles.json"
+  --out-json "${PREFLIGHT_STACK_META}"
+  --host-python "${ROOT_DIR}/env/venv/bin/python"
+)
+if [[ "$RUNTIME" == "container" ]]; then
+  preflight_args+=(--image "${IMAGE}")
+fi
+"${ROOT_DIR}/env/venv/bin/python" "${ROOT_DIR}/scripts/preflight_cluster_perf_runtime.py" "${preflight_args[@]}"
+
+# Fail fast before long benchmark runs if clocks cannot be locked.
 "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
-  --lock-meta-out "$LOCK_META" \
-  -- bash -lc "set -euo pipefail; docker run --rm --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -v \"${COMPUTE_DIR}:/workspace\" -w /workspace \"${IMAGE}\" python -u gemm-bench/grouped_gemm_bench.py --preset \"${PRESET}\" --warmup \"${WARMUP}\" --iters \"${ITERS}\" 2>&1 | tee \"${OUT_LOG}\""
+  --lock-meta-out "${PREFLIGHT_CLOCK_META}" \
+  -- bash -lc "set -euo pipefail; nvidia-smi -L >/dev/null"
+
+if [[ "$RUNTIME" == "host" ]]; then
+  echo "HOST_CUDA_HOME=${HOST_CUDA_HOME}"
+  "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
+    --lock-meta-out "$LOCK_META" \
+    -- bash -lc "set -euo pipefail; CUDA_HOME=\"${HOST_CUDA_HOME}\" CUDACXX=\"${HOST_CUDA_HOME}/bin/nvcc\" CLUSTER_PERF_ALLOW_TF32=\"${MATH_ALLOW_TF32}\" CLUSTER_PERF_FLOAT32_MATMUL_PRECISION=\"${MATH_FP32_MATMUL_PRECISION}\" \"${ROOT_DIR}/env/venv/bin/python\" -u \"${BENCH_SCRIPT}\" --preset \"${PRESET}\" --warmup \"${WARMUP}\" --iters \"${ITERS}\" 2>&1 | tee \"${OUT_LOG}\""
+else
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: docker not found for --runtime container." >&2
+    exit 1
+  fi
+  "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
+    --lock-meta-out "$LOCK_META" \
+    -- bash -lc "set -euo pipefail; docker run --rm --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -e CLUSTER_PERF_ALLOW_TF32=\"${MATH_ALLOW_TF32}\" -e CLUSTER_PERF_FLOAT32_MATMUL_PRECISION=\"${MATH_FP32_MATMUL_PRECISION}\" -v \"${ROOT_DIR}:/workspace\" -w /workspace \"${IMAGE}\" python -u \"${BENCH_SCRIPT_REL}\" --preset \"${PRESET}\" --warmup \"${WARMUP}\" --iters \"${ITERS}\" 2>&1 | tee \"${OUT_LOG}\""
+fi
 
 "${ROOT_DIR}/env/venv/bin/python" \
   "${ROOT_DIR}/analysis/summarize_grouped_gemm_torch_fp16_vs_fp8.py" \
@@ -133,3 +223,5 @@ echo "  - $OUT_LOG"
 echo "  - $OUT_JSON"
 echo "  - $OUT_PNG"
 echo "  - $LOCK_META"
+echo "  - $PREFLIGHT_STACK_META"
+echo "  - $PREFLIGHT_CLOCK_META"

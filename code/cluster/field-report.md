@@ -17,7 +17,7 @@ Last updated: 2026-02-09.
 12. [Implications For Small AI Teams](#implications-for-small-ai-teams)
 13. [Stakeholder Recommendations (Prioritized)](#stakeholder-recommendations-prioritized)
 14. [Capability Demonstration (Causal Debugging Workflow)](#capability-demonstration-causal-debugging-workflow)
-15. [<cluster_perf_suite> Patchset](#cluster-perf-suite-patchset)
+15. [FP4/Harness Patchset](#fp4harness-patchset)
 16. [Repro Steps](#repro-steps)
 17. [`--disable-fp4` if needed](#disable-fp4-if-needed)
 18. [Local Patch Prerequisite (for FP4-Enabled Repro)](#local-patch-prerequisite)
@@ -40,7 +40,7 @@ Last updated: 2026-02-09.
 | Transient anomalies | One-off GPU degradations and GEMM collapses were transient: either reset-fixed or self-cleared on immediate locked rerun. |
 | Service policy | DCGM is now hard-required during preflight with before/after state captured per host. |
 | Incident retention | Historical incident evidence is retained only where it changes operator recommendations. |
-| Upstreaming | GB200-focused harness updates should be upstreamed into independent `<cluster_perf_suite>`. |
+| Upstreaming | GB200-focused harness updates are now maintained in this public harness with host-native defaults and optional open container runtime. |
 
 ## TL;DR Evidence Anchors
 
@@ -497,27 +497,27 @@ Falsification: interface pinning, launch/mapping variants, and lock-vs-no-lock c
 Recovery path: targeted GPU reset and immediate revalidation restored normal compute/collective behavior in historical validation; this was treated as a fixable device/driver state, not a permanent capacity limit (historical investigation notes).
 Operator outcome: the reproducible workflow is detect -> isolate -> rerun locked -> escalate with targeted reset only if persistent; avoid blind node-wide resets.
 
-<a id="cluster-perf-suite-patchset"></a>
-## <cluster_perf_suite> Patchset
+<a id="fp4harness-patchset"></a>
+## FP4/Harness Patchset
 This case study produced a local patchset and harness extensions that demonstrate practical systems-debugging capability and operator-focused product improvement.
 
-Patchset handling model (non-public source):
+Patchset handling model:
 
 | Policy | Implementation |
 | --- | --- |
-| Private source handling | Source diffs in `/home/ubuntu/ai-performance-engineering/code/<cluster_perf_suite>/` are treated as private and are not required in the public write-up. |
+| Source handling | Benchmark and orchestration logic is now in this repo under `scripts/` and `analysis/`, with no external private suite requirement. |
 | Public deliverable model | Public-facing deliverable uses capability/impact summaries plus reproducible evidence from `results/structured/` and `docs/figures/`. |
-| Reviewer handoff | Reviewer handoff can be done via private repo access + commit hash/tag, while keeping this report artifact-focused. |
+| Reviewer handoff | Reviewer handoff can use this repo commit/tag plus artifact links. |
 
 | Patch area | Capability demonstrated | Operator impact |
 | --- | --- | --- |
 | `scripts/repro/run_vllm_serve_multinode_container.sh` + `scripts/repro/vllm_multinode_inner.sh` | First-class 2-node vLLM serving execution path with strict per-node clock-lock evidence, automatic cross-node image digest pinning, and structured outputs | Converts ad-hoc multinode serving attempts into reproducible artifacts with deterministic runtime parity across nodes for field reports and operator handoff. |
 | `analysis/plot_nvlink_topology.py` + suite integration in `scripts/run_cluster_eval_suite.sh` | Topology artifact productization from discovery metadata (`nvidia-smi topo -m`) | Adds explicit NVLink/NVSwitch evidence to stakeholder packages without requiring a separate manual extraction workflow. |
 | `.gitignore` | Output hygiene and reproducibility policy enforcement (generated vLLM result artifacts ignored by default) | Keeps review/commit surface focused on code and documented artifacts, not transient run outputs. |
-| `standalone/compute/run-all-benchmarks.sh` | Container/runtime robustness debugging (GPU access check path hardening) | Reduces first-run failures from image/tag assumptions and improves setup reliability. |
+| `scripts/run_cluster_eval_suite.sh` + `scripts/run_fp4_checks_all_nodes.sh` | Host-native FP4 orchestration with optional container runtime selection | Removes external suite path coupling while preserving FP4 artifacts used by the report. |
 | `scripts/repro/run_nvbandwidth_bundle.sh` + `analysis/plot_nvbandwidth_sums.py` | Dedicated strict-lock nvbandwidth artifact path with structured SUM extraction and stakeholder-ready figure output | Adds explicit host-device and GPU-GPU bandwidth evidence to the report package with reproducible JSON/CSV/PNG outputs. |
 | `standalone/compute/p2p-bandwidth/p2p-bandwidth.py` | Measurement-correctness validation (timing path reliability) | Avoids misleading bandwidth claims from unstable timing methodology. |
-| `standalone/compute/gemm-bench/grouped_gemm_bench.py` + `code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch` | Architecture-specific compatibility triage on GB200 | Restores reproducible FP4 grouped-GEMM behavior where legacy scaling-factor errors appeared. |
+| `scripts/benchmarks/grouped_gemm_bench.py` | Architecture-specific compatibility behavior for GB200 UE8M0 DeepGEMM grouped GEMM | Keeps attestation markers and reproducible FP4 grouped-GEMM behavior without proprietary suite code. |
 | `standalone/storage/fio/run-fio-bench.sh` | Failure-mode fallback design (native path when container pull fails) | Maintains storage benchmark continuity under registry/auth constraints. |
 | `standalone/inference/vllm/run-vllm-bench.sh` | Serving runbook hardening (health/smoke/logging robustness) | Faster diagnosis and fewer silent failures in inference runs. |
 | `standalone/inference/vllm/run-vllm-bench-multinode.sh` | Multinode inference launch workflow prototyping for GB200 trays | Provides a concrete operator entrypoint for two-node serving validation in environments without Slurm/K8s orchestration. |
@@ -564,8 +564,7 @@ scripts/run_cluster_eval_suite.sh \
   --health-gdr-gpu 0 \
   --health-gdr-mem-types 0,1 \
   --health-gdr-use-dmabuf \
-  --fp4-suite-dir /home/ubuntu/ai-performance-engineering/code/clustermax \
-  --fp4-image ghcr.io/jordannanos/cmax-compute:latest \
+  --fp4-runtime host \
   --run-c2c \
   --run-numa-mem-bw \
   --run-train-step \
@@ -626,8 +625,7 @@ python3 analysis/plot_nvlink_topology.py \
 scripts/repro/run_nvbandwidth_bundle.sh \
   --run-id 2026-02-09_gb200_fullflags_all_0117 \
   --label node1 \
-  --suite-dir /home/ubuntu/ai-performance-engineering/code/clustermax \
-  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --runtime host \
   --quick
 
 python3 analysis/plot_nvbandwidth_sums.py \
@@ -638,8 +636,7 @@ python3 analysis/plot_nvbandwidth_sums.py \
 scripts/repro/run_nvbandwidth_bundle.sh \
   --run-id 2026-02-09_gb200_fullflags_all_0117 \
   --label node2 \
-  --suite-dir /home/ubuntu/ai-performance-engineering/code/clustermax \
-  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --runtime host \
   --quick
 
 python3 analysis/plot_nvbandwidth_sums.py \
@@ -653,48 +650,24 @@ python3 analysis/plot_nvbandwidth_sums.py \
 | Setting | Guidance |
 | --- | --- |
 | FP4 default | FP4 checks are enabled by default in the suite. |
-| Portability mode | Use `--disable-fp4` to avoid requiring external FP4 suite/image dependencies. |
+| Portability mode | Use `--disable-fp4` when you need a non-FP4 baseline or when DeepGEMM is unavailable. |
 | Recommended workflow | Run portability first, then run FP4-enabled as an explicit second pass when dependencies are available. |
 
 <a id="local-patch-prerequisite"></a>
-## Local Patch Prerequisite (for FP4-Enabled Repro)
-FP4 grouped-GEMM reproducibility on GB200 requires the local patch:
-`code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch`.
-Without it, grouped DeepGEMM may report
-`Unsupported architecture or scaling factor types`.
-
-Apply steps (exact):
-```bash
-cd /home/ubuntu/ai-performance-engineering/code/cluster
-
-export SUITE_ROOT=/path/to/cluster_perf_suite
-export TARGET="${SUITE_ROOT}/standalone/compute/gemm-bench/grouped_gemm_bench.py"
-export PATCH_SRC="code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch"
-export PATCH_TMP="/tmp/deepgemm_gb200_grouped_gemm_ue8m0.${USER}.patch"
-
-test -f "${TARGET}"
-cp "${TARGET}" "${TARGET}.pre_ue8m0.bak"
-
-sed \
-  -e "s|^--- code/cluster_perf_suite_snapshot/standalone/compute/gemm-bench/grouped_gemm_bench.py$|--- ${TARGET}|" \
-  -e "s|^+++ code/cluster_perf_suite/standalone/compute/gemm-bench/grouped_gemm_bench.py$|+++ ${TARGET}|" \
-  "${PATCH_SRC}" > "${PATCH_TMP}"
-
-patch --dry-run -p0 < "${PATCH_TMP}"
-patch -p0 < "${PATCH_TMP}"
-```
+## Local FP4 Attestation Target (for FP4-Enabled Repro)
+FP4 grouped-GEMM attestation now targets:
+`scripts/benchmarks/grouped_gemm_bench.py`.
 
 Verification checks:
 ```bash
 rg -n \
   "use_ue8m0 = arch_major >= 10|disable_ue8m0_cast = not use_ue8m0|m_grouped_fp8_gemm_nt_contiguous|DeepGEMM unsupported|per_token_cast_to_fp8\\(a_bf16, use_ue8m0=use_ue8m0\\)|per_block_cast_to_fp8\\(b_bf16\\[i\\], use_ue8m0=use_ue8m0\\)" \
-  "${TARGET}"
+  scripts/benchmarks/grouped_gemm_bench.py
 
 scripts/run_cluster_perf_grouped_gemm.sh \
-  --suite-dir "${SUITE_ROOT}" \
+  --runtime host \
   --run-id <run_id> \
   --label <label> \
-  --image <image> \
   --preset auto \
   --warmup 2 \
   --iters 5

@@ -65,8 +65,12 @@ Options:
 
   --enable-fp4             Run FP4 checks on all nodes (default: on)
   --disable-fp4            Disable FP4 checks
-  --fp4-suite-dir <dir>    Cluster Perf suite dir on each host (default: auto-detect or $CLUSTER_PERF_SUITE_DIR)
-  --fp4-image <image>      FP4 container image (required when FP4 is enabled, or set CONTAINER_IMAGE)
+  --fp4-runtime <mode>     FP4 execution mode: host|container (default: host)
+  --fp4-stack-profile <name>
+                           FP4 stack profile: old_container|old_parity_container|new_container|host_only
+                           (default: runtime-specific from configs/cluster_perf_stack_profiles.json)
+  --fp4-image <image>      FP4 container image for --fp4-runtime container
+                           (default: fp4-stack-profile image_ref or $CONTAINER_IMAGE)
   --fp4-preset <name>      Grouped-GEMM preset for FP4 check (default: auto; GB-family uses all)
   --fp4-warmup <n>         Grouped-GEMM warmup for FP4 check (default: 5)
   --fp4-iters <n>          Grouped-GEMM measured iterations for FP4 check (default: 30)
@@ -169,6 +173,12 @@ EOF
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -f "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" ]]; then
+  echo "ERROR: missing stack profile helper: ${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" >&2
+  exit 1
+fi
+# shellcheck source=scripts/cluster_perf_stack_profiles.sh
+source "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh"
 
 RUN_ID="$(date +%Y-%m-%d)"
 HOSTS=""
@@ -200,7 +210,8 @@ VLLM_MULTINODE_WORKER_STARTUP_WAIT="10"
 VLLM_MULTINODE_CONCURRENCY_VALUES=()
 
 ENABLE_FP4=1
-FP4_SUITE_DIR="${CLUSTER_PERF_SUITE_DIR:-}"
+FP4_RUNTIME="host"
+FP4_STACK_PROFILE=""
 FP4_IMAGE="${CONTAINER_IMAGE:-}"
 FP4_PRESET="auto"
 FP4_WARMUP="5"
@@ -321,7 +332,8 @@ while [[ $# -gt 0 ]]; do
 
     --enable-fp4) ENABLE_FP4=1; shift ;;
     --disable-fp4) ENABLE_FP4=0; shift ;;
-    --fp4-suite-dir) FP4_SUITE_DIR="$2"; shift 2 ;;
+    --fp4-runtime) FP4_RUNTIME="$2"; shift 2 ;;
+    --fp4-stack-profile) FP4_STACK_PROFILE="$2"; shift 2 ;;
     --fp4-image) FP4_IMAGE="$2"; shift 2 ;;
     --fp4-preset) FP4_PRESET="$2"; shift 2 ;;
     --fp4-warmup) FP4_WARMUP="$2"; shift 2 ;;
@@ -489,95 +501,29 @@ if ! [[ "$VLLM_MULTINODE_WORKER_STARTUP_WAIT" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-resolve_fp4_suite_dir() {
-  local raw="${1:-}"
-  local cand=""
-  local parent=""
-  if [[ -z "$raw" ]]; then
-    return 1
-  fi
-
-  if [[ -d "${raw}/standalone/compute" ]]; then
-    (cd "$raw" && pwd -P)
-    return 0
-  fi
-
-  if [[ -d "$raw" ]]; then
-    if [[ "$(basename "$raw")" == "compute" && "$(basename "$(dirname "$raw")")" == "standalone" ]]; then
-      (cd "$(dirname "$(dirname "$raw")")" && pwd -P)
-      return 0
-    fi
-    if [[ "$(basename "$raw")" == "standalone" && -d "${raw}/compute" ]]; then
-      (cd "$(dirname "$raw")" && pwd -P)
-      return 0
-    fi
-
-    for cand in "${raw}"/* "${raw}"/*/*; do
-      [[ -d "$cand" ]] || continue
-      if [[ -d "${cand}/standalone/compute" ]]; then
-        (cd "$cand" && pwd -P)
-        return 0
-      fi
-    done
-  fi
-
-  parent="$(dirname "$raw")"
-  if [[ -d "$parent" ]]; then
-    local -a sibling_matches=()
-    for cand in "${parent}"/*; do
-      [[ -d "$cand" ]] || continue
-      if [[ -d "${cand}/standalone/compute" && "$(basename "$cand")" == "$(basename "$raw")" ]]; then
-        (cd "$cand" && pwd -P)
-        return 0
-      fi
-      if [[ -d "${cand}/standalone/compute" ]]; then
-        sibling_matches+=("$cand")
-      fi
-    done
-    if [[ "${#sibling_matches[@]}" -eq 1 ]]; then
-      (cd "${sibling_matches[0]}" && pwd -P)
-      return 0
-    fi
-  fi
-  return 1
-}
-
-if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_SUITE_DIR" ]]; then
-  fp4_candidates=(
-    "${ROOT_DIR}/../cluster_perf_suite"
-    "${ROOT_DIR}/../clustermax"
-    "${ROOT_DIR}/../clustermax_from_node2"
-    "${ROOT_DIR}/code/cluster_perf_suite"
-  )
-  for cand in "${fp4_candidates[@]}"; do
-    resolved_cand="$(resolve_fp4_suite_dir "$cand" || true)"
-    if [[ -n "$resolved_cand" ]]; then
-      FP4_SUITE_DIR="$resolved_cand"
-      break
-    fi
-  done
+if [[ "$FP4_RUNTIME" != "host" && "$FP4_RUNTIME" != "container" ]]; then
+  echo "ERROR: --fp4-runtime must be host or container (got: ${FP4_RUNTIME})" >&2
+  exit 2
 fi
-
-if [[ "$ENABLE_FP4" -eq 1 && -n "$FP4_SUITE_DIR" ]]; then
-  resolved_fp4_dir="$(resolve_fp4_suite_dir "$FP4_SUITE_DIR" || true)"
-  if [[ -z "$resolved_fp4_dir" ]]; then
-    echo "ERROR: FP4 suite dir must resolve to a root containing standalone/compute." >&2
-    echo "Provided: ${FP4_SUITE_DIR}" >&2
+if [[ "$ENABLE_FP4" -eq 1 ]]; then
+  if [[ -z "$FP4_STACK_PROFILE" ]]; then
+    FP4_STACK_PROFILE="$(cluster_perf_default_profile_for_runtime "$ROOT_DIR" "$FP4_RUNTIME")"
+  fi
+  if ! cluster_perf_profile_exists "$ROOT_DIR" "$FP4_STACK_PROFILE"; then
+    echo "ERROR: unknown --fp4-stack-profile: ${FP4_STACK_PROFILE}" >&2
     exit 2
   fi
-  FP4_SUITE_DIR="$resolved_fp4_dir"
-fi
-
-if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_IMAGE" ]]; then
-  echo "ERROR: FP4 checks are enabled, but no FP4 container image was provided." >&2
-  echo "Set --fp4-image <image> (or CONTAINER_IMAGE), or pass --disable-fp4." >&2
-  exit 2
-fi
-
-if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_SUITE_DIR" ]]; then
-  echo "ERROR: FP4 checks are enabled by default, but no Cluster Perf suite dir was found." >&2
-  echo "Set --fp4-suite-dir <dir> (or CLUSTER_PERF_SUITE_DIR), or pass --disable-fp4." >&2
-  exit 2
+  if ! cluster_perf_profile_runtime_allowed "$ROOT_DIR" "$FP4_STACK_PROFILE" "$FP4_RUNTIME"; then
+    echo "ERROR: --fp4-stack-profile ${FP4_STACK_PROFILE} does not allow --fp4-runtime ${FP4_RUNTIME}" >&2
+    exit 2
+  fi
+  if [[ "$FP4_RUNTIME" == "container" && -z "$FP4_IMAGE" ]]; then
+    FP4_IMAGE="$(cluster_perf_profile_image_ref "$ROOT_DIR" "$FP4_STACK_PROFILE")"
+  fi
+  if [[ "$FP4_RUNTIME" == "container" && -z "$FP4_IMAGE" ]]; then
+    echo "ERROR: no FP4 container image resolved for profile=${FP4_STACK_PROFILE}" >&2
+    exit 2
+  fi
 fi
 
 if [[ "$MAMF_MODE" != "quick" && "$MAMF_MODE" != "medium" && "$MAMF_MODE" != "thorough" ]]; then
@@ -722,14 +668,15 @@ echo "c2c_memcpy: ${RUN_C2C} (device=${C2C_DEVICE})"
 echo "numa_mem_bw: ${RUN_NUMA_MEM_BW}"
 echo "train_step: ${RUN_TRAIN_STEP} (single_node=${TRAIN_STEP_SINGLE_NODE} multi_node=${TRAIN_STEP_MULTI_NODE})"
 echo "checkpoint_io: ${RUN_CHECKPOINT_IO}"
-echo "fp4_checks: ${ENABLE_FP4} (suite_dir=${FP4_SUITE_DIR:-<unset>} preset=${FP4_PRESET} warmup=${FP4_WARMUP} iters=${FP4_ITERS})"
+echo "fp4_checks: ${ENABLE_FP4} (runtime=${FP4_RUNTIME} stack_profile=${FP4_STACK_PROFILE:-<auto>} preset=${FP4_PRESET} warmup=${FP4_WARMUP} iters=${FP4_ITERS})"
 if [[ "$ENABLE_FP4" -eq 1 ]]; then
-  echo "fp4_smoke: shape=${FP4_SMOKE_M}x${FP4_SMOKE_N}x${FP4_SMOKE_K} warmup=${FP4_SMOKE_WARMUP} iters=${FP4_SMOKE_ITERS} rounds=${FP4_SMOKE_ROUNDS} skew_threshold_pct=${FP4_SMOKE_SKEW_THRESHOLD_PCT} image=${FP4_IMAGE}"
+  if [[ "$FP4_RUNTIME" == "container" ]]; then
+    echo "fp4_smoke: shape=${FP4_SMOKE_M}x${FP4_SMOKE_N}x${FP4_SMOKE_K} warmup=${FP4_SMOKE_WARMUP} iters=${FP4_SMOKE_ITERS} rounds=${FP4_SMOKE_ROUNDS} skew_threshold_pct=${FP4_SMOKE_SKEW_THRESHOLD_PCT} stack_profile=${FP4_STACK_PROFILE} image=${FP4_IMAGE}"
+  else
+    echo "fp4_smoke: shape=${FP4_SMOKE_M}x${FP4_SMOKE_N}x${FP4_SMOKE_K} warmup=${FP4_SMOKE_WARMUP} iters=${FP4_SMOKE_ITERS} rounds=${FP4_SMOKE_ROUNDS} skew_threshold_pct=${FP4_SMOKE_SKEW_THRESHOLD_PCT} stack_profile=${FP4_STACK_PROFILE}"
+  fi
 fi
 echo "bootstrap_nodes: ${BOOTSTRAP_NODES} (sync_code=${BOOTSTRAP_SYNC_CODE} system_packages=${BOOTSTRAP_INSTALL_SYSTEM_PACKAGES} python_deps=${BOOTSTRAP_INSTALL_PYTHON_DEPS})"
-if [[ "$BOOTSTRAP_NODES" -eq 1 && "$ENABLE_FP4" -eq 1 ]]; then
-  echo "bootstrap_fp4_suite_sync: ${FP4_SUITE_DIR:-<unset>}"
-fi
 echo "mamf: ${ENABLE_MAMF} (mode=${MAMF_MODE} concurrent=${MAMF_CONCURRENT})"
 echo "allreduce_stability: ${ENABLE_ALLREDUCE_STABILITY} (payload_gib=${ALLREDUCE_PAYLOAD_GIB} iters=${ALLREDUCE_ITERS} warmup=${ALLREDUCE_WARMUP})"
 echo "allreduce_latency_comp: ${ENABLE_ALLREDUCE_LATENCY_COMP} (payload_gib=${ALLREDUCE_LATENCY_PAYLOAD_GIB} chunks=${ALLREDUCE_LATENCY_CHUNKS} iters=${ALLREDUCE_LATENCY_ITERS} warmup=${ALLREDUCE_LATENCY_WARMUP})"
@@ -768,9 +715,6 @@ if [[ "$BOOTSTRAP_NODES" -eq 1 ]]; then
   fi
   if [[ "$BOOTSTRAP_INSTALL_PYTHON_DEPS" -eq 0 ]]; then
     bootstrap_args+=(--skip-python-deps)
-  fi
-  if [[ "$ENABLE_FP4" -eq 1 ]]; then
-    bootstrap_args+=(--sync-suite-dir "$FP4_SUITE_DIR")
   fi
   run_step "bootstrap_nodes" "${ROOT_DIR}/scripts/bootstrap_cluster_nodes.sh" "${bootstrap_args[@]}"
 fi
@@ -971,8 +915,8 @@ if [[ "$ENABLE_FP4" -eq 1 ]]; then
     --run-id "$RUN_ID"
     --hosts "$HOSTS"
     --ssh-user "$SSH_USER"
-    --suite-dir "$FP4_SUITE_DIR"
-    --image "$FP4_IMAGE"
+    --runtime "$FP4_RUNTIME"
+    --stack-profile "$FP4_STACK_PROFILE"
     --preset "$FP4_PRESET"
     --warmup "$FP4_WARMUP"
     --iters "$FP4_ITERS"
@@ -989,6 +933,9 @@ if [[ "$ENABLE_FP4" -eq 1 ]]; then
   fi
   if [[ -n "$SSH_KEY" ]]; then
     fp4_args+=(--ssh-key "$SSH_KEY")
+  fi
+  if [[ "$FP4_RUNTIME" == "container" ]]; then
+    fp4_args+=(--image "$FP4_IMAGE")
   fi
   run_step "fp4_checks" "${ROOT_DIR}/scripts/run_fp4_checks_all_nodes.sh" "${fp4_args[@]}"
 fi

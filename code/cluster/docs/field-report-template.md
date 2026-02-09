@@ -16,7 +16,7 @@ Last updated: YYYY-MM-DD
 11. [Supporting: Storage (fio)](#supporting-storage-fio)
 12. [Supporting: Health / GDR / NUMA / Train Step / Checkpoint](#supporting-health--gdr--numa--train-step--checkpoint)
 13. [Implications For Small AI Teams](#implications-for-small-ai-teams)
-14. [Clustermax Extension Outcomes](#clustermax-extension-outcomes)
+14. [FP4 Extension Outcomes](#fp4-extension-outcomes)
 15. [Reproducibility Package](#reproducibility-package)
 16. [Repository Handoff (GitHub)](#repository-handoff-github)
 17. [Repro Steps](#repro-steps)
@@ -168,7 +168,7 @@ Evidence data:
 | Field | Content |
 | --- | --- |
 | Why | Add direct host-device and GPU-GPU throughput evidence with strict lock metadata. |
-| Repro | `scripts/repro/run_nvbandwidth_bundle.sh ...`<br/>`python3 analysis/plot_nvbandwidth_sums.py ...` |
+| Repro | `scripts/repro/run_nvbandwidth_bundle.sh --runtime host ...`<br/>`python3 analysis/plot_nvbandwidth_sums.py ...` |
 
 Visualization:
 
@@ -226,7 +226,7 @@ Evidence data:
 | Queue discipline | <guidance> |
 | Observability | <guidance> |
 
-## Clustermax Extension Outcomes
+## FP4 Extension Outcomes
 | Area | What you implemented/prototyped | Why it should be upstreamed |
 | --- | --- | --- |
 | <example> | <script/analysis/doc path> | <impact> |
@@ -266,7 +266,7 @@ Evidence data:
 | Profile | Command |
 | --- | --- |
 | Portable baseline | `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --disable-fp4` |
-| Full GB200 (FP4 enabled) | `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --fp4-suite-dir <dir> --fp4-image ghcr.io/jordannanos/cmax-compute:latest` |
+| Full GB200 (FP4 enabled) | `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --fp4-runtime host` |
 | Multinode vLLM sweep add-on | `--run-vllm-multinode --vllm-multinode-concurrency-range "16 32 64 128" --vllm-multinode-num-prompts <n>` |
 
 ## Appendix

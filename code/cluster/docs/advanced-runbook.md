@@ -38,7 +38,7 @@ scripts/run_cluster_eval_suite.sh \
 ```
 Optional GB200-focused diagnostics can be toggled in the same suite run:
 ```bash
-  --fp4-suite-dir /path/to/cluster_perf_suite \
+  --fp4-runtime host \
   --health-suite extended \
   --health-gdr --health-gdr-gpu 0 --health-gdr-mem-types 0,1 \
   --run-c2c --c2c-device 0 \
@@ -300,14 +300,18 @@ python3 analysis/plot_nvlink_topology.py \
 ```
 
 ### 8d) Dedicated nvbandwidth Bundle
-Run a strict-lock `nvbandwidth` bundle (containerized) and emit structured summaries:
+Run a strict-lock `nvbandwidth` bundle and emit structured summaries:
 ```bash
 scripts/repro/run_nvbandwidth_bundle.sh \
   --run-id <run_id> \
   --label <label> \
-  --suite-dir /path/to/cluster_perf_suite \
-  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --runtime host \
   --quick
+```
+Optional container runtime:
+```bash
+scripts/repro/build_cluster_perf_image.sh --profile open --tag cfregly/cluster_perf:latest
+scripts/repro/run_nvbandwidth_bundle.sh --run-id <run_id> --label <label> --runtime container --image cfregly/cluster_perf@sha256:f9b2f503384d1780206dda1435cc2fb4eebe43bb15ff4b040a3601356af63a42 --quick
 ```
 Artifacts:
 - `results/structured/<run_id>_<label>_nvbandwidth.json`
@@ -469,14 +473,25 @@ scripts/run_fp4_checks_all_nodes.sh \
   --hosts node1,node2 \
   --labels node1,node2 \
   --ssh-key ~/.ssh/ssh_key.pem \
-  --suite-dir /path/to/cluster_perf_suite \
+  --runtime host \
   --preset auto \
   --smoke-rounds 3 \
   --smoke-skew-threshold-pct 5 \
   --warmup 5 \
   --iters 30
 ```
-Example suite path: `e.g. /path/to/clustermax` (set via `--suite-dir` or `CLUSTER_PERF_SUITE_DIR`).
+Host bootstrap installs pinned `deep_gemm` (`DeepGEMM@477618c`) into `env/venv` by default.
+If host bootstrap cannot satisfy prerequisites, switch to container runtime:
+```bash
+scripts/repro/build_cluster_perf_image.sh --profile open --tag cfregly/cluster_perf:latest
+scripts/run_fp4_checks_all_nodes.sh ... --runtime container --stack-profile new_container
+```
+Old-parity open container profile (legacy version matching without `jordannanos` dependency):
+```bash
+scripts/repro/build_cluster_perf_image.sh --profile old_parity --tag cfregly/cluster_perf_old_parity:latest
+IMAGE_ID="$(docker image inspect --format '{{.Id}}' cfregly/cluster_perf_old_parity:latest)"
+scripts/run_fp4_checks_all_nodes.sh ... --runtime container --stack-profile old_parity_container --image "${IMAGE_ID}"
+```
 Outputs:
 `results/structured/<run_id>_<label>_cluster_perf_fp4_platform.json`,
 `results/structured/<run_id>_fp4_attestation_consistency.json`,
@@ -487,51 +502,26 @@ Outputs:
 `docs/figures/<run_id>_<label>_cluster_perf_grouped_gemm_tflops.png`.
 
 Attestation mode is `balanced` by default. This records semantic patch checks,
-container/suite provenance metadata, and cross-host consistency without pinning
+runtime provenance metadata, and cross-host consistency without pinning
 or mutating host state.
 
-#### Local Patch Prerequisite (GB200 DeepGEMM Grouped GEMM)
-FP4 grouped-GEMM reproducibility on GB200 requires the local patch:
-`code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch`.
-Without this patch, grouped DeepGEMM can fail with
-`Unsupported architecture or scaling factor types`.
+#### Local Attestation Target Verification
+The semantic attestation target is in-repo:
+`scripts/benchmarks/grouped_gemm_bench.py`.
 
-Apply steps (exact):
-```bash
-cd /home/ubuntu/ai-performance-engineering/code/cluster
-
-export SUITE_ROOT=/path/to/cluster_perf_suite
-export TARGET="${SUITE_ROOT}/standalone/compute/gemm-bench/grouped_gemm_bench.py"
-export PATCH_SRC="code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch"
-export PATCH_TMP="/tmp/deepgemm_gb200_grouped_gemm_ue8m0.${USER}.patch"
-
-test -f "${TARGET}"
-cp "${TARGET}" "${TARGET}.pre_ue8m0.bak"
-
-# Rewrite patch headers to the real suite location.
-sed \
-  -e "s|^--- code/cluster_perf_suite_snapshot/standalone/compute/gemm-bench/grouped_gemm_bench.py$|--- ${TARGET}|" \
-  -e "s|^+++ code/cluster_perf_suite/standalone/compute/gemm-bench/grouped_gemm_bench.py$|+++ ${TARGET}|" \
-  "${PATCH_SRC}" > "${PATCH_TMP}"
-
-patch --dry-run -p0 < "${PATCH_TMP}"
-patch -p0 < "${PATCH_TMP}"
-```
-
-Static verification checks:
+Static verification check:
 ```bash
 rg -n \
   "use_ue8m0 = arch_major >= 10|disable_ue8m0_cast = not use_ue8m0|m_grouped_fp8_gemm_nt_contiguous|DeepGEMM unsupported|per_token_cast_to_fp8\\(a_bf16, use_ue8m0=use_ue8m0\\)|per_block_cast_to_fp8\\(b_bf16\\[i\\], use_ue8m0=use_ue8m0\\)" \
-  "${TARGET}"
+  scripts/benchmarks/grouped_gemm_bench.py
 ```
 
 Runtime verification checks:
 ```bash
 scripts/run_cluster_perf_grouped_gemm.sh \
-  --suite-dir "${SUITE_ROOT}" \
+  --runtime host \
   --run-id <run_id> \
   --label <label> \
-  --image <image> \
   --preset auto \
   --require-deepgemm \
   --warmup 2 \
@@ -541,21 +531,14 @@ test -f "docs/figures/<run_id>_<label>_cluster_perf_grouped_gemm_tflops.png"
 ```
 
 ### 10l) Bootstrap Nodes (Reproducibility)
-Run node bootstrap directly (code sync + system deps + Python deps + optional suite sync):
+Run node bootstrap directly (code sync + system deps + Python deps):
 ```bash
 scripts/bootstrap_cluster_nodes.sh \
   --run-id <run_id> \
   --hosts node1,node2 \
   --labels node1,node2 \
-  --ssh-key ~/.ssh/ssh_key.pem \
-  --sync-suite-dir /path/to/cluster_perf_suite
+  --ssh-key ~/.ssh/ssh_key.pem
 ```
-Example suite path: `e.g. /path/to/clustermax` (set via `--sync-suite-dir` or `CLUSTER_PERF_SUITE_DIR`).
-Accepted `--sync-suite-dir` forms are:
-- suite root containing `standalone/compute/`
-- `<suite>/standalone`
-- `<suite>/standalone/compute`
-- parent directory containing a suite root
 Outputs:
 `results/structured/<run_id>_<label>_bootstrap_status.json`.
 
@@ -570,7 +553,7 @@ RUN_ID=<run_id>_image_suite scripts/repro/run_image_suite.sh --run-id "$RUN_ID"
 cluster/
   analysis/               # plotting scripts
   docs/figures/           # generated plots
-  env/requirements.txt    # plotting deps
+  env/requirements.txt    # host Python base deps (plotting + analysis)
   results/raw/            # raw logs
   results/structured/     # structured JSON/CSV
   scripts/                # discovery + run helpers
@@ -588,5 +571,5 @@ cluster/
 - vLLM serving sweep (`scripts/repro/run_vllm_serve_sweep_container.sh`) currently depends on Docker + NVIDIA container runtime and `nvidia-persistenced`.
 - vLLM multi-node serving (`scripts/repro/run_vllm_serve_multinode_container.sh`) depends on the same container runtime plus Ray startup across both nodes and synchronized image/runtime contents.
 - NVLink/NVSwitch topology artifact generation (`analysis/plot_nvlink_topology.py`) depends on valid `nvidia-smi topo -m` capture under `results/structured/<run_id>_<label>_meta.json`.
-- FP4 grouped GEMM checks (`scripts/run_cluster_perf_grouped_gemm.sh`, `scripts/run_fp4_checks_all_nodes.sh`, FP4 path in `scripts/run_cluster_eval_suite.sh`) depend on an external suite directory via `--suite-dir` / `CLUSTER_PERF_SUITE_DIR` (e.g. `/path/to/clustermax`) plus a container image via `--image` / `CONTAINER_IMAGE` (e.g. `ghcr.io/jordannanos/cmax-compute:latest`).
+- FP4 grouped GEMM checks (`scripts/run_cluster_perf_grouped_gemm.sh`, `scripts/run_fp4_checks_all_nodes.sh`, FP4 path in `scripts/run_cluster_eval_suite.sh`) use an in-repo benchmark target (`scripts/benchmarks/grouped_gemm_bench.py`) with host-native runtime by default; container runtime is optional via `--runtime container --stack-profile new_container` (digest-pinned). See `docs/cluster-perf-stack-profiles.md`.
 - DeepGEMM smoke (`analysis/smoke_deepgemm_fp8_fp4.py`) requires importable `deep_gemm` in the selected runtime environment.

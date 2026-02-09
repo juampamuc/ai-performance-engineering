@@ -11,9 +11,11 @@ Usage:
 Options:
   --run-id <id>        RUN_ID prefix (default: YYYY-MM-DD)
   --label <label>      Label for artifact names (default: hostname -s)
-  --suite-dir <dir>    Cluster Perf suite root (default: $CLUSTER_PERF_SUITE_DIR or ../clustermax)
-  --image <image>      Container image used to run nvbandwidth (default: ghcr.io/jordannanos/cmax-compute:latest)
-  --quick              Pass --quick to nvbandwidth runner
+  --runtime <mode>     host|container (default: host)
+  --image <image>      Container image for runtime=container
+                       (default: cfregly/cluster_perf@sha256:f9b2f503384d1780206dda1435cc2fb4eebe43bb15ff4b040a3601356af63a42 or $CONTAINER_IMAGE)
+  --nvbw-bin <path>    nvbandwidth executable path (default: nvbandwidth)
+  --quick              Run reduced testcase subset with lower samples for faster turnaround
 
 Artifacts:
   - results/raw/<run_id>_<label>_nvbandwidth/nvbandwidth.log
@@ -26,30 +28,30 @@ EOF
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_ID="$(date +%Y-%m-%d)"
 LABEL="$(hostname -s)"
-SUITE_DIR="${CLUSTER_PERF_SUITE_DIR:-${ROOT_DIR}/../clustermax}"
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-ghcr.io/jordannanos/cmax-compute:latest}"
+RUNTIME="host"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-cfregly/cluster_perf@sha256:f9b2f503384d1780206dda1435cc2fb4eebe43bb15ff4b040a3601356af63a42}"
+NVBW_BIN="${NVBW_BIN:-nvbandwidth}"
 QUICK=0
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --run-id) RUN_ID="${2:-}"; shift 2 ;;
     --label) LABEL="${2:-}"; shift 2 ;;
-    --suite-dir) SUITE_DIR="${2:-}"; shift 2 ;;
+    --runtime) RUNTIME="${2:-}"; shift 2 ;;
     --image) CONTAINER_IMAGE="${2:-}"; shift 2 ;;
+    --nvbw-bin) NVBW_BIN="${2:-}"; shift 2 ;;
     --quick) QUICK=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: ${1}" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-if [[ ! -d "$SUITE_DIR" ]]; then
-  echo "ERROR: suite dir not found: ${SUITE_DIR}" >&2
+if [[ "$RUNTIME" != "host" && "$RUNTIME" != "container" ]]; then
+  echo "ERROR: --runtime must be host or container (got: ${RUNTIME})" >&2
   exit 1
 fi
-
-NVBW_SCRIPT="${SUITE_DIR}/standalone/compute/nvbandwidth/run-nvbandwidth.sh"
-if [[ ! -x "$NVBW_SCRIPT" ]]; then
-  echo "ERROR: nvbandwidth runner not found/executable: ${NVBW_SCRIPT}" >&2
+if [[ "$RUNTIME" == "container" && -z "$CONTAINER_IMAGE" ]]; then
+  echo "ERROR: --image is required for --runtime container." >&2
   exit 1
 fi
 
@@ -61,23 +63,33 @@ RAW_LOG="${RAW_DIR}/nvbandwidth.log"
 SUMMARY_JSON="${STRUCT_DIR}/${RUN_ID}_${LABEL}_nvbandwidth.json"
 SUMS_CSV="${STRUCT_DIR}/${RUN_ID}_${LABEL}_nvbandwidth_sums.csv"
 LOCK_META="${STRUCT_DIR}/${RUN_ID}_${LABEL}_nvbandwidth_clock_lock.json"
-
-# Keep external suite-generated files in its own results subtree with a stable run prefix.
-EXTERNAL_OUTPUT_SUBDIR="results/${RUN_ID}_${LABEL}_nvbandwidth_bundle"
-
-NVBW_ARGS=(--output-dir "$EXTERNAL_OUTPUT_SUBDIR")
+NVBW_ARGS=()
 if [[ "$QUICK" -eq 1 ]]; then
-  NVBW_ARGS=(--quick "${NVBW_ARGS[@]}")
+  NVBW_ARGS+=(
+    -i 1
+    -b 128
+    -t host_to_device_memcpy_ce
+    -t device_to_host_memcpy_ce
+    -t device_to_device_memcpy_read_ce
+    -t device_to_device_memcpy_write_ce
+    -t device_to_device_bidirectional_memcpy_read_ce
+    -t device_to_device_bidirectional_memcpy_write_ce
+    -t all_to_host_memcpy_ce
+    -t host_to_all_memcpy_ce
+  )
 fi
-NVBW_ARGS_STR="$(printf ' %q' "${NVBW_ARGS[@]}")"
 
 echo "========================================"
 echo "nvbandwidth Bundle"
 echo "========================================"
 echo "RUN_ID=${RUN_ID}"
 echo "LABEL=${LABEL}"
-echo "SUITE_DIR=${SUITE_DIR}"
-echo "IMAGE=${CONTAINER_IMAGE}"
+echo "RUNTIME=${RUNTIME}"
+if [[ "$RUNTIME" == "container" ]]; then
+  echo "IMAGE=${CONTAINER_IMAGE}"
+else
+  echo "NVBW_BIN=${NVBW_BIN}"
+fi
 echo "QUICK=${QUICK}"
 echo "RAW_LOG=${RAW_LOG}"
 echo "SUMMARY_JSON=${SUMMARY_JSON}"
@@ -85,36 +97,43 @@ echo "SUMS_CSV=${SUMS_CSV}"
 echo "LOCK_META=${LOCK_META}"
 echo ""
 
-SUITE_COMPUTE_DIR="${SUITE_DIR}/standalone/compute"
-if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker not found; required for containerized nvbandwidth run." >&2
-  exit 1
+if [[ "$RUNTIME" == "host" ]]; then
+  if ! command -v "$NVBW_BIN" >/dev/null 2>&1; then
+    echo "ERROR: nvbandwidth binary not found on PATH: ${NVBW_BIN}" >&2
+    exit 1
+  fi
+  RUN_ID="$RUN_ID" LABEL="$LABEL" \
+    "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
+    --lock-meta-out "$LOCK_META" \
+    -- "$NVBW_BIN" "${NVBW_ARGS[@]}" 2>&1 | tee "$RAW_LOG"
+else
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: docker not found; required for runtime=container." >&2
+    exit 1
+  fi
+  DOCKER_ARGS=(
+    docker run --rm
+    --gpus all
+    --ipc=host
+    --network host
+    --ulimit memlock=-1
+    --ulimit stack=67108864
+  )
+  if [[ -d /dev/infiniband ]]; then
+    DOCKER_ARGS+=( -v /dev/infiniband:/dev/infiniband )
+  fi
+  if [[ -e /dev/nvidia_imex ]]; then
+    DOCKER_ARGS+=( -v /dev/nvidia_imex:/dev/nvidia_imex )
+  fi
+  NVBW_ARGS_STR="$(printf ' %q' "${NVBW_ARGS[@]}")"
+  DOCKER_ARGS+=( "${CONTAINER_IMAGE}" bash -lc "set -euo pipefail; ${NVBW_BIN}${NVBW_ARGS_STR}" )
+  RUN_ID="$RUN_ID" LABEL="$LABEL" \
+    "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
+    --lock-meta-out "$LOCK_META" \
+    -- "${DOCKER_ARGS[@]}" 2>&1 | tee "$RAW_LOG"
 fi
 
-DOCKER_ARGS=(
-  docker run --rm
-  --gpus all
-  --ipc=host
-  --network host
-  --ulimit memlock=-1
-  --ulimit stack=67108864
-  -v "${SUITE_COMPUTE_DIR}:/workspace"
-  -w /workspace
-)
-if [[ -d /dev/infiniband ]]; then
-  DOCKER_ARGS+=( -v /dev/infiniband:/dev/infiniband )
-fi
-if [[ -e /dev/nvidia_imex ]]; then
-  DOCKER_ARGS+=( -v /dev/nvidia_imex:/dev/nvidia_imex )
-fi
-DOCKER_ARGS+=( "${CONTAINER_IMAGE}" bash -lc "./nvbandwidth/run-nvbandwidth.sh${NVBW_ARGS_STR}" )
-
-RUN_ID="$RUN_ID" LABEL="$LABEL" \
-  "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
-  --lock-meta-out "$LOCK_META" \
-  -- "${DOCKER_ARGS[@]}" 2>&1 | tee "$RAW_LOG"
-
-python3 - <<'PY' "$RUN_ID" "$LABEL" "$RAW_LOG" "$LOCK_META" "$SUMMARY_JSON" "$SUMS_CSV" "$SUITE_DIR" "$EXTERNAL_OUTPUT_SUBDIR" "$QUICK"
+python3 - <<'PY' "$RUN_ID" "$LABEL" "$RAW_LOG" "$LOCK_META" "$SUMMARY_JSON" "$SUMS_CSV" "$RUNTIME" "$NVBW_BIN" "$CONTAINER_IMAGE" "$QUICK"
 import csv
 import json
 import re
@@ -128,8 +147,9 @@ from pathlib import Path
     lock_meta_path,
     summary_json_path,
     sums_csv_path,
-    suite_dir,
-    external_output_subdir,
+    runtime_mode,
+    nvbw_bin,
+    container_image,
     quick_flag,
 ) = sys.argv[1:]
 
@@ -204,9 +224,10 @@ payload = {
     "run_id": run_id,
     "label": label,
     "status": "ok" if sums and clock_summary["all_devices_locked"] else "failed",
-    "suite_dir": suite_dir,
+    "runtime": runtime_mode,
+    "image": container_image if runtime_mode == "container" else None,
+    "nvbandwidth_bin": nvbw_bin if runtime_mode == "host" else None,
     "quick": quick_flag == "1",
-    "external_output_dir": str(Path(suite_dir) / "standalone" / "compute" / external_output_subdir),
     "artifacts": {
         "raw_log": str(raw_log),
         "clock_lock": str(lock_meta),

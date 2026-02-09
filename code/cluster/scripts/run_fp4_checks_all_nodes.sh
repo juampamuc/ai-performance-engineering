@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF' >&2
 Usage:
-  scripts/run_fp4_checks_all_nodes.sh --hosts <h1,h2,...> --suite-dir <dir> [options]
+  scripts/run_fp4_checks_all_nodes.sh --hosts <h1,h2,...> [options]
 
 Runs FP4 checks:
   1) Cluster Perf grouped GEMM benchmark (DeepGEMM path) per host
@@ -22,16 +22,14 @@ Options:
   --run-id <id>          RUN_ID prefix (default: YYYY-MM-DD)
   --hosts <h1,h2,...>    Comma-separated host list (required)
   --labels <l1,l2,...>   Optional labels (must match host count)
-  --suite-dir <dir>      Cluster Perf suite path on each host (required).
-                         Accepted forms:
-                           - suite root containing standalone/compute/
-                           - standalone/ directory
-                           - standalone/compute/ directory
-                           - parent directory containing a single suite root
   --ssh-user <user>      SSH user (default: ubuntu)
   --ssh-key <path>       SSH key (default: $SSH_KEY)
   --remote-root <path>   Repo root on remote hosts (default: this repo root)
-  --image <image>        Container image (required; or set CONTAINER_IMAGE)
+  --runtime <mode>       host|container (default: host)
+  --stack-profile <name> Stack profile: old_container|old_parity_container|new_container|host_only
+                         (default: runtime-specific from configs/cluster_perf_stack_profiles.json)
+  --image <image>        Container image for runtime=container
+                         (default: stack-profile image_ref or $CONTAINER_IMAGE)
   --preset <name>        Grouped-GEMM preset (default: auto; GB-family hosts use all)
   --warmup <n>           Grouped-GEMM warmup (default: 5)
   --iters <n>            Grouped-GEMM measured iterations (default: 30)
@@ -60,13 +58,21 @@ EOF
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -f "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" ]]; then
+  echo "ERROR: missing stack profile helper: ${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" >&2
+  exit 1
+fi
+# shellcheck source=scripts/cluster_perf_stack_profiles.sh
+source "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh"
+
 RUN_ID="${RUN_ID:-$(date +%Y-%m-%d)}"
 HOSTS=""
 LABELS=""
-SUITE_DIR=""
 SSH_USER="ubuntu"
 SSH_KEY="${SSH_KEY:-}"
 REMOTE_ROOT="${REMOTE_ROOT:-$ROOT_DIR}"
+RUNTIME="host"
+STACK_PROFILE=""
 IMAGE="${CONTAINER_IMAGE:-}"
 PRESET="auto"
 WARMUP="5"
@@ -87,17 +93,18 @@ BOOTSTRAP_TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
 BOOTSTRAP_TORCH_VERSION="2.9.1+cu130"
 ATTESTATION_MODE="balanced"
 ATTESTATION_PROFILE="gb200_grouped_gemm_balanced_v1"
-ATTESTATION_TARGET_REL="standalone/compute/gemm-bench/grouped_gemm_bench.py"
+ATTESTATION_TARGET_REL="scripts/benchmarks/grouped_gemm_bench.py"
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --run-id) RUN_ID="${2:-}"; shift 2 ;;
     --hosts) HOSTS="${2:-}"; shift 2 ;;
     --labels) LABELS="${2:-}"; shift 2 ;;
-    --suite-dir) SUITE_DIR="${2:-}"; shift 2 ;;
     --ssh-user) SSH_USER="${2:-}"; shift 2 ;;
     --ssh-key) SSH_KEY="${2:-}"; shift 2 ;;
     --remote-root) REMOTE_ROOT="${2:-}"; shift 2 ;;
+    --runtime) RUNTIME="${2:-}"; shift 2 ;;
+    --stack-profile) STACK_PROFILE="${2:-}"; shift 2 ;;
     --image) IMAGE="${2:-}"; shift 2 ;;
     --preset) PRESET="${2:-}"; shift 2 ;;
     --warmup) WARMUP="${2:-}"; shift 2 ;;
@@ -139,76 +146,30 @@ if [[ -z "$HOSTS" ]]; then
   usage >&2
   exit 2
 fi
-if [[ -z "$SUITE_DIR" ]]; then
-  echo "ERROR: --suite-dir is required" >&2
+if [[ "$RUNTIME" != "host" && "$RUNTIME" != "container" ]]; then
+  echo "ERROR: --runtime must be host or container (got: ${RUNTIME})" >&2
   usage >&2
   exit 2
 fi
-if [[ -z "$IMAGE" ]]; then
-  echo "ERROR: --image is required (or set CONTAINER_IMAGE)." >&2
+if [[ -z "$STACK_PROFILE" ]]; then
+  STACK_PROFILE="$(cluster_perf_default_profile_for_runtime "$ROOT_DIR" "$RUNTIME")"
+fi
+if ! cluster_perf_profile_exists "$ROOT_DIR" "$STACK_PROFILE"; then
+  echo "ERROR: unknown --stack-profile: ${STACK_PROFILE}" >&2
+  exit 2
+fi
+if ! cluster_perf_profile_runtime_allowed "$ROOT_DIR" "$STACK_PROFILE" "$RUNTIME"; then
+  echo "ERROR: --stack-profile ${STACK_PROFILE} does not allow runtime=${RUNTIME}" >&2
+  exit 2
+fi
+if [[ "$RUNTIME" == "container" && -z "$IMAGE" ]]; then
+  IMAGE="$(cluster_perf_profile_image_ref "$ROOT_DIR" "$STACK_PROFILE")"
+fi
+if [[ "$RUNTIME" == "container" && -z "$IMAGE" ]]; then
+  echo "ERROR: no container image resolved for runtime=container/profile=${STACK_PROFILE}" >&2
   usage >&2
   exit 2
 fi
-
-resolve_suite_dir() {
-  local raw="${1:-}"
-  local cand=""
-  if [[ -z "$raw" ]]; then
-    return 1
-  fi
-  if [[ -d "${raw}/standalone/compute" ]]; then
-    (cd "$raw" && pwd -P)
-    return 0
-  fi
-  if [[ -d "$raw" ]]; then
-    if [[ "$(basename "$raw")" == "compute" && "$(basename "$(dirname "$raw")")" == "standalone" ]]; then
-      (cd "$(dirname "$(dirname "$raw")")" && pwd -P)
-      return 0
-    fi
-    if [[ "$(basename "$raw")" == "standalone" && -d "${raw}/compute" ]]; then
-      (cd "$(dirname "$raw")" && pwd -P)
-      return 0
-    fi
-    for cand in "${raw}"/* "${raw}"/*/*; do
-      [[ -d "$cand" ]] || continue
-      if [[ -d "${cand}/standalone/compute" ]]; then
-        (cd "$cand" && pwd -P)
-        return 0
-      fi
-    done
-  fi
-  local parent
-  parent="$(dirname "$raw")"
-  if [[ -d "$parent" ]]; then
-    local -a sibling_matches=()
-    for cand in "${parent}"/*; do
-      [[ -d "$cand" ]] || continue
-      if [[ -d "${cand}/standalone/compute" && "$(basename "$cand")" == "$(basename "$raw")" ]]; then
-        (cd "$cand" && pwd -P)
-        return 0
-      fi
-      if [[ -d "${cand}/standalone/compute" ]]; then
-        sibling_matches+=("$cand")
-      fi
-    done
-    if [[ "${#sibling_matches[@]}" -eq 1 ]]; then
-      (cd "${sibling_matches[0]}" && pwd -P)
-      return 0
-    fi
-  fi
-  return 1
-}
-
-resolved_suite_dir="$(resolve_suite_dir "$SUITE_DIR" || true)"
-if [[ -z "$resolved_suite_dir" ]]; then
-  echo "ERROR: --suite-dir must resolve to a suite root containing standalone/compute." >&2
-  echo "Provided: ${SUITE_DIR}" >&2
-  exit 2
-fi
-if [[ "$resolved_suite_dir" != "$SUITE_DIR" ]]; then
-  echo "Resolved --suite-dir: ${SUITE_DIR} -> ${resolved_suite_dir}"
-fi
-SUITE_DIR="$resolved_suite_dir"
 
 IFS=',' read -r -a HOST_ARR <<<"$HOSTS"
 IFS=',' read -r -a LABEL_ARR <<<"$LABELS"
@@ -223,7 +184,6 @@ if [[ "$BOOTSTRAP_NODES" -eq 1 ]]; then
     --hosts "${HOSTS}"
     --ssh-user "${SSH_USER}"
     --remote-root "${REMOTE_ROOT}"
-    --sync-suite-dir "${SUITE_DIR}"
     --torch-index-url "${BOOTSTRAP_TORCH_INDEX_URL}"
     --torch-version "${BOOTSTRAP_TORCH_VERSION}"
   )
@@ -292,18 +252,19 @@ trim_ws() {
   printf '%s' "$s"
 }
 
-copy_suite_target_snapshot() {
+copy_attestation_target_snapshot() {
   local host="$1"
   local label="$2"
-  local suite_target_abs="${SUITE_DIR}/${ATTESTATION_TARGET_REL}"
+  local local_target_abs="${ROOT_DIR}/${ATTESTATION_TARGET_REL}"
+  local remote_target_abs="${REMOTE_ROOT}/${ATTESTATION_TARGET_REL}"
   local rel_path="results/raw/${RUN_ID}_${label}_grouped_gemm_bench.snapshot.py"
   local abs_path="${ROOT_DIR}/${rel_path}"
 
   mkdir -p "$(dirname "$abs_path")"
   if [[ "$host" == "localhost" || "$host" == "$(hostname)" ]]; then
-    cp "$suite_target_abs" "$abs_path"
+    cp "$local_target_abs" "$abs_path"
   else
-    scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${suite_target_abs}" "$abs_path" >/dev/null
+    scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${remote_target_abs}" "$abs_path" >/dev/null
   fi
 
   echo "$rel_path"
@@ -396,23 +357,26 @@ write_platform_meta() {
   local requested_preset="$4"
   local selected_preset="$5"
   local gb_sku="$6"
-  local suite_dir="$7"
-  local image="$8"
-  local gpu_names_b64="$9"
-  local semantic_json_b64="${10}"
-  local suite_target_rel="${11}"
-  local suite_target_snapshot_rel="${12}"
-  local suite_git_commit="${13}"
-  local suite_git_dirty="${14}"
-  local image_id="${15}"
-  local image_repo_digests_b64="${16}"
-  local driver_version="${17}"
-  local cuda_version="${18}"
-  local grouped_summary_rel="${19}"
-  local grouped_log_rel="${20}"
-  local grouped_clock_rel="${21}"
+  local runtime="$7"
+  local stack_profile="$8"
+  local image="$9"
+  local gpu_names_b64="${10}"
+  local semantic_json_b64="${11}"
+  local attestation_target_rel="${12}"
+  local attestation_target_snapshot_rel="${13}"
+  local repo_git_commit="${14}"
+  local repo_git_dirty="${15}"
+  local image_id="${16}"
+  local image_repo_digests_b64="${17}"
+  local driver_version="${18}"
+  local cuda_version="${19}"
+  local torch_version="${20}"
+  local deep_gemm_version="${21}"
+  local grouped_summary_rel="${22}"
+  local grouped_log_rel="${23}"
+  local grouped_clock_rel="${24}"
 
-  python3 - "$out_path" "$host" "$label" "$requested_preset" "$selected_preset" "$gb_sku" "$suite_dir" "$image" "$gpu_names_b64" "$semantic_json_b64" "$suite_target_rel" "$suite_target_snapshot_rel" "$suite_git_commit" "$suite_git_dirty" "$image_id" "$image_repo_digests_b64" "$driver_version" "$cuda_version" "$grouped_summary_rel" "$grouped_log_rel" "$grouped_clock_rel" <<'PY'
+  python3 - "$out_path" "$host" "$label" "$requested_preset" "$selected_preset" "$gb_sku" "$runtime" "$stack_profile" "$image" "$gpu_names_b64" "$semantic_json_b64" "$attestation_target_rel" "$attestation_target_snapshot_rel" "$repo_git_commit" "$repo_git_dirty" "$image_id" "$image_repo_digests_b64" "$driver_version" "$cuda_version" "$torch_version" "$deep_gemm_version" "$grouped_summary_rel" "$grouped_log_rel" "$grouped_clock_rel" <<'PY'
 import base64
 import json
 import sys
@@ -426,18 +390,21 @@ from pathlib import Path
     requested_preset,
     selected_preset,
     gb_sku,
-    suite_dir,
+    runtime,
+    stack_profile,
     image,
     gpu_names_b64,
     semantic_json_b64,
-    suite_target_rel,
-    suite_target_snapshot_rel,
-    suite_git_commit,
-    suite_git_dirty,
+    attestation_target_rel,
+    attestation_target_snapshot_rel,
+    repo_git_commit,
+    repo_git_dirty,
     image_id,
     image_repo_digests_b64,
     driver_version,
     cuda_version,
+    torch_version,
+    deep_gemm_version,
     grouped_summary_rel,
     grouped_log_rel,
     grouped_clock_rel,
@@ -465,24 +432,29 @@ payload = {
     "fp4": {
         "requested_preset": requested_preset,
         "selected_preset": selected_preset,
-        "suite_dir": suite_dir,
-        "image": image,
+        "runtime": runtime,
+        "stack_profile": stack_profile,
+        "image": image if runtime == "container" else None,
         "attestation": {
             "mode": "balanced",
-            "target_relative_path": suite_target_rel,
-            "snapshot_relative_path": suite_target_snapshot_rel,
+            "target_relative_path": attestation_target_rel,
+            "snapshot_relative_path": attestation_target_snapshot_rel,
             "semantic": semantic,
         },
         "provenance": {
-            "suite": {
-                "path": suite_dir,
-                "git_commit": suite_git_commit or None,
-                "git_dirty": None if suite_git_dirty == "unknown" else (suite_git_dirty == "true"),
+            "repo": {
+                "path": ".",
+                "git_commit": repo_git_commit or None,
+                "git_dirty": None if repo_git_dirty == "unknown" else (repo_git_dirty == "true"),
             },
             "container": {
-                "image_ref": image,
+                "image_ref": image if runtime == "container" else None,
                 "image_id": image_id or None,
                 "repo_digests": repo_digests,
+            },
+            "python": {
+                "torch_version": torch_version or None,
+                "deep_gemm_version": deep_gemm_version or None,
             },
             "runtime": {
                 "driver_version": driver_version or None,
@@ -508,7 +480,7 @@ write_attestation_consistency() {
   local root_dir="$1"
   local run_id="$2"
   local labels_csv="$3"
-  local out_path="$4"
+    local out_path="$4"
 
   python3 - "$root_dir" "$run_id" "$labels_csv" "$out_path" <<'PY'
 import json
@@ -533,15 +505,19 @@ for label in labels:
     sem = att.get("semantic") or {}
     prov = fp4.get("provenance") or {}
     container = prov.get("container") or {}
+    py = prov.get("python") or {}
     entries.append(
         {
             "label": label,
             "platform_file": str(path),
+            "runtime": fp4.get("runtime"),
             "semantic_status": sem.get("status"),
             "semantic_signature": sem.get("semantic_signature"),
             "source_sha256": sem.get("source_sha256"),
             "image_id": container.get("image_id"),
             "repo_digests": container.get("repo_digests") or [],
+            "torch_version": py.get("torch_version"),
+            "deep_gemm_version": py.get("deep_gemm_version"),
         }
     )
 
@@ -563,31 +539,45 @@ if len(semantic_signatures) > 1:
     status = "fail"
     reasons.append("semantic_signature_mismatch")
 
+runtimes = {e.get("runtime") for e in entries if e.get("runtime")}
+if len(runtimes) > 1:
+    status = "fail"
+    reasons.append("runtime_mode_mismatch")
+
+runtime_mode = next(iter(runtimes)) if runtimes else None
 image_ids = {e["image_id"] for e in entries if e.get("image_id")}
-if len(image_ids) > 1:
-    status = "fail"
-    reasons.append("image_id_mismatch")
-if len(image_ids) == 0:
-    status = "fail"
-    reasons.append("missing_image_id_provenance")
+if runtime_mode == "container":
+    if len(image_ids) > 1:
+        status = "fail"
+        reasons.append("image_id_mismatch")
+    if len(image_ids) == 0:
+        status = "fail"
+        reasons.append("missing_image_id_provenance")
 
 source_hashes = {e["source_sha256"] for e in entries if e.get("source_sha256")}
 if len(source_hashes) > 1:
     warnings.append("source_sha256_differs_across_hosts")
 
+deep_gemm_versions = {e["deep_gemm_version"] for e in entries if e.get("deep_gemm_version")}
+if len(deep_gemm_versions) > 1:
+    warnings.append("deep_gemm_version_differs_across_hosts")
+
 payload = {
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     "run_id": run_id,
     "mode": "balanced",
+    "runtime_mode": runtime_mode,
     "labels": labels,
     "status": status,
     "reasons": reasons,
     "warnings": warnings,
     "missing_platform_files": missing_platform_files,
     "consistency": {
+        "runtimes": sorted(x for x in runtimes if x),
         "semantic_signatures": sorted(x for x in semantic_signatures if x),
         "image_ids": sorted(x for x in image_ids if x),
         "source_sha256": sorted(x for x in source_hashes if x),
+        "deep_gemm_versions": sorted(x for x in deep_gemm_versions if x),
     },
     "hosts": entries,
 }
@@ -794,8 +784,11 @@ for idx in "${!HOST_ARR[@]}"; do
   echo "========================================"
   echo "FP4 checks: host=${host} label=${label}"
   echo "RUN_ID=${RUN_ID}"
-  echo "SUITE_DIR=${SUITE_DIR}"
-  echo "IMAGE=${IMAGE}"
+  echo "RUNTIME=${RUNTIME}"
+  echo "STACK_PROFILE=${STACK_PROFILE}"
+  if [[ "$RUNTIME" == "container" ]]; then
+    echo "IMAGE=${IMAGE}"
+  fi
   echo "========================================"
 
   gpu_names="$(run_host_cmd "$host" "nvidia-smi --query-gpu=name --format=csv,noheader")"
@@ -821,18 +814,57 @@ for idx in "${!HOST_ARR[@]}"; do
   echo "Detected GB family SKU: ${gb_sku}"
   echo "FP4 grouped preset: ${host_preset} (requested: ${PRESET})"
 
-  suite_target_abs="${SUITE_DIR}/${ATTESTATION_TARGET_REL}"
-  if ! run_host_cmd "$host" "test -f $(printf '%q' "$suite_target_abs")"; then
-    echo "ERROR: required suite target missing on ${host}: ${suite_target_abs}" >&2
+if [[ "$RUNTIME" == "host" ]]; then
+    ensure_deep_gemm_cmd="
+set -euo pipefail
+cd $(printf '%q' "${REMOTE_ROOT}")
+if [[ ! -x ./env/venv/bin/python ]]; then
+  echo 'ERROR: missing env/venv/bin/python; run bootstrap with --bootstrap-install-python-deps.' >&2
+  exit 2
+fi
+if ! ./env/venv/bin/python -c 'import deep_gemm' >/dev/null 2>&1; then
+  if [[ -f ./env/requirements.txt ]]; then
+    echo 'INFO: deep_gemm missing in env/venv; installing host requirements first.' >&2
+    ./env/venv/bin/pip install -r ./env/requirements.txt
+  fi
+  cuda_home=\"\${CUDA_HOME:-}\"
+  if [[ -z \"\${cuda_home}\" ]]; then
+    if [[ -d /usr/local/cuda ]]; then
+      cuda_home=/usr/local/cuda
+    elif command -v nvcc >/dev/null 2>&1; then
+      nvcc_path=\"\$(command -v nvcc)\"
+      cuda_home=\"\$(cd \"\$(dirname \"\${nvcc_path}\")/..\" && pwd -P)\"
+    fi
+  fi
+  if [[ -z \"\${cuda_home}\" || ! -f \"\${cuda_home}/include/cuda.h\" ]]; then
+    echo 'ERROR: CUDA toolkit headers not found; cannot self-install pinned deep_gemm.' >&2
+    echo \"Resolved CUDA_HOME=\${cuda_home:-<empty>}\" >&2
+    exit 2
+  fi
+  echo 'INFO: installing pinned deep_gemm (DeepGEMM@477618c) for host-only FP4 parity.' >&2
+  CUDA_HOME=\"\${cuda_home}\" CUDACXX=\"\${cuda_home}/bin/nvcc\" ./env/venv/bin/pip install --no-build-isolation --upgrade 'deep_gemm @ git+https://github.com/deepseek-ai/DeepGEMM.git@477618c'
+fi
+if ! ./env/venv/bin/python -c 'import deep_gemm' >/dev/null 2>&1; then
+  echo 'ERROR: deep_gemm is still not importable in env/venv on this host.' >&2
+  echo 'Run bootstrap with --bootstrap-install-python-deps or use --runtime container with a digest-pinned open image.' >&2
+  exit 2
+fi
+"
+    run_host_cmd "$host" "$ensure_deep_gemm_cmd"
+  fi
+
+  attestation_target_abs="${REMOTE_ROOT}/${ATTESTATION_TARGET_REL}"
+  if ! run_host_cmd "$host" "test -f $(printf '%q' "$attestation_target_abs")"; then
+    echo "ERROR: required attestation target missing on ${host}: ${attestation_target_abs}" >&2
     exit 2
   fi
 
-  suite_snapshot_rel="$(copy_suite_target_snapshot "$host" "$label")"
-  suite_snapshot_abs="${ROOT_DIR}/${suite_snapshot_rel}"
-  verify_local_artifact "${suite_snapshot_rel}"
+  attestation_snapshot_rel="$(copy_attestation_target_snapshot "$host" "$label")"
+  attestation_snapshot_abs="${ROOT_DIR}/${attestation_snapshot_rel}"
+  verify_local_artifact "${attestation_snapshot_rel}"
 
-  if ! semantic_json="$(build_semantic_attestation "$suite_snapshot_abs" "$ATTESTATION_PROFILE")"; then
-    echo "ERROR: semantic attestation failed for host=${host} label=${label} target=${suite_target_abs}" >&2
+  if ! semantic_json="$(build_semantic_attestation "$attestation_snapshot_abs" "$ATTESTATION_PROFILE")"; then
+    echo "ERROR: semantic attestation failed for host=${host} label=${label} target=${attestation_target_abs}" >&2
     exit 1
   fi
   semantic_signature="$(python3 -c 'import json,sys; print((json.loads(sys.stdin.read()) or {}).get("semantic_signature",""))' <<<"$semantic_json")"
@@ -845,15 +877,18 @@ for idx in "${!HOST_ARR[@]}"; do
   grouped_plot_rel="docs/figures/${RUN_ID}_${label}_cluster_perf_grouped_gemm_tflops.png"
   grouped_args=(
     scripts/run_cluster_perf_grouped_gemm.sh
-    --suite-dir "${SUITE_DIR}"
+    --runtime "${RUNTIME}"
+    --stack-profile "${STACK_PROFILE}"
     --run-id "${RUN_ID}"
     --label "${label}"
     --preset "${host_preset}"
     --warmup "${WARMUP}"
     --iters "${ITERS}"
-    --image "${IMAGE}"
     --require-deepgemm
   )
+  if [[ "$RUNTIME" == "container" ]]; then
+    grouped_args+=(--image "${IMAGE}")
+  fi
 
   grouped_str="$(printf '%q ' "${grouped_args[@]}")"
   remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && ${grouped_str}"
@@ -864,25 +899,29 @@ for idx in "${!HOST_ARR[@]}"; do
   fetch_and_verify_if_remote "$host" "$grouped_clock_rel"
   fetch_and_verify_if_remote "$host" "$grouped_plot_rel"
 
-  suite_git_commit="$(trim_ws "$(run_host_cmd "$host" "git -C $(printf '%q' "$SUITE_DIR") rev-parse HEAD 2>/dev/null || true" | head -n 1)")"
-  suite_git_dirty="unknown"
-  if [[ -n "$suite_git_commit" ]]; then
-    suite_git_dirty_line="$(trim_ws "$(run_host_cmd "$host" "git -C $(printf '%q' "$SUITE_DIR") status --porcelain --untracked-files=no 2>/dev/null | head -n 1" | head -n 1)")"
-    if [[ -n "$suite_git_dirty_line" ]]; then
-      suite_git_dirty="true"
+  repo_git_commit="$(trim_ws "$(run_host_cmd "$host" "git -C $(printf '%q' "$REMOTE_ROOT") rev-parse HEAD 2>/dev/null || true" | head -n 1)")"
+  repo_git_dirty="unknown"
+  if [[ -n "$repo_git_commit" ]]; then
+    repo_git_dirty_line="$(trim_ws "$(run_host_cmd "$host" "git -C $(printf '%q' "$REMOTE_ROOT") status --porcelain --untracked-files=no 2>/dev/null | head -n 1" | head -n 1)")"
+    if [[ -n "$repo_git_dirty_line" ]]; then
+      repo_git_dirty="true"
     else
-      suite_git_dirty="false"
+      repo_git_dirty="false"
     fi
   fi
 
-  image_id="$(trim_ws "$(run_host_cmd "$host" "docker image inspect --format '{{.Id}}' $(printf '%q' "$IMAGE") 2>/dev/null || true" | head -n 1)")"
-  if [[ -z "$image_id" ]]; then
-    echo "ERROR: unable to capture container image ID for ${IMAGE} on host ${host}" >&2
-    exit 1
-  fi
-  image_repo_digests_json="$(trim_ws "$(run_host_cmd "$host" "docker image inspect --format '{{json .RepoDigests}}' $(printf '%q' "$IMAGE") 2>/dev/null || true" | head -n 1)")"
-  if [[ -z "$image_repo_digests_json" ]]; then
-    image_repo_digests_json="[]"
+  image_id=""
+  image_repo_digests_json="[]"
+  if [[ "$RUNTIME" == "container" ]]; then
+    image_id="$(trim_ws "$(run_host_cmd "$host" "docker image inspect --format '{{.Id}}' $(printf '%q' "$IMAGE") 2>/dev/null || true" | head -n 1)")"
+    if [[ -z "$image_id" ]]; then
+      echo "ERROR: unable to capture container image ID for ${IMAGE} on host ${host}" >&2
+      exit 1
+    fi
+    image_repo_digests_json="$(trim_ws "$(run_host_cmd "$host" "docker image inspect --format '{{json .RepoDigests}}' $(printf '%q' "$IMAGE") 2>/dev/null || true" | head -n 1)")"
+    if [[ -z "$image_repo_digests_json" ]]; then
+      image_repo_digests_json="[]"
+    fi
   fi
 
   driver_version="$(trim_ws "$(run_host_cmd "$host" "nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1" | head -n 1)")"
@@ -890,6 +929,8 @@ for idx in "${!HOST_ARR[@]}"; do
     driver_version="$(trim_ws "$(run_host_cmd "$host" "nvidia-smi 2>/dev/null | sed -n 's/.*Driver Version: \\([0-9.]*\\).*/\\1/p' | head -n 1" | head -n 1)")"
   fi
   cuda_version="$(trim_ws "$(run_host_cmd "$host" "nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \\([0-9.]*\\).*/\\1/p' | head -n 1" | head -n 1)")"
+  torch_version="$(trim_ws "$(run_host_cmd "$host" "cd $(printf '%q' "$REMOTE_ROOT") && ./env/venv/bin/python -c 'import torch; print(torch.__version__)' 2>/dev/null || true" | head -n 1)")"
+  deep_gemm_version="$(trim_ws "$(run_host_cmd "$host" "cd $(printf '%q' "$REMOTE_ROOT") && ./env/venv/bin/python -c 'import importlib.metadata as m; print(m.version(\"deep_gemm\"))' 2>/dev/null || true" | head -n 1)")"
 
   platform_meta_rel="results/structured/${RUN_ID}_${label}_cluster_perf_fp4_platform.json"
   platform_meta_abs="${ROOT_DIR}/${platform_meta_rel}"
@@ -903,18 +944,21 @@ for idx in "${!HOST_ARR[@]}"; do
     "$PRESET" \
     "$host_preset" \
     "$gb_sku" \
-    "$SUITE_DIR" \
+    "$RUNTIME" \
+    "$STACK_PROFILE" \
     "$IMAGE" \
     "$gpu_names_b64" \
     "$semantic_json_b64" \
     "$ATTESTATION_TARGET_REL" \
-    "$suite_snapshot_rel" \
-    "$suite_git_commit" \
-    "$suite_git_dirty" \
+    "$attestation_snapshot_rel" \
+    "$repo_git_commit" \
+    "$repo_git_dirty" \
     "$image_id" \
     "$image_repo_digests_b64" \
     "$driver_version" \
     "$cuda_version" \
+    "$torch_version" \
+    "$deep_gemm_version" \
     "$grouped_summary_rel" \
     "$grouped_log_rel" \
     "$grouped_clock_rel"
@@ -955,13 +999,17 @@ if [[ "$SKIP_SMOKE" -eq 0 ]]; then
         scripts/run_cluster_perf_fp4_smoke.sh
         --run-id "${round_run_id}"
         --label "${label}"
-        --image "${IMAGE}"
+        --runtime "${RUNTIME}"
+        --stack-profile "${STACK_PROFILE}"
         --m "${SMOKE_M}"
         --n "${SMOKE_N}"
         --k "${SMOKE_K}"
         --warmup "${SMOKE_WARMUP}"
         --iters "${SMOKE_ITERS}"
       )
+      if [[ "$RUNTIME" == "container" ]]; then
+        smoke_args+=(--image "${IMAGE}")
+      fi
       smoke_str="$(printf '%q ' "${smoke_args[@]}")"
       remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && ${smoke_str}"
       run_host_cmd "$host" "$remote_cmd"
