@@ -27,7 +27,6 @@ PASS plot_allreduce_latency
 Saved: docs/figures/2026-02-09_gb200_fullflags_all_0117_allgather_control_plane.png
 PASS plot_allgather_control
 === plot_nccl_algo
-WARNING: No results in results/structured/2026-02-09_gb200_fullflags_all_0117_nccl_algo_comparison.json, skipping
 Saved: docs/figures/2026-02-09_gb200_fullflags_all_0117_nccl_algo_comparison.png
 PASS plot_nccl_algo
 === plot_c2c
@@ -69,8 +68,7 @@ PASS plot_gemm_generic
 === plot_vllm_generic
 PASS plot_vllm_generic
 === plot_nccl_overlay
-results/structured/2026-02-07_140642_cluster_health_suite_node1node2_cluster_health_suite_summary.json: expected non-empty JSON key 'results'
-FAIL plot_nccl_overlay
+PASS plot_nccl_overlay
 === plot_cluster_health_variance
 PASS plot_cluster_health_variance
 === plot_gpu_telemetry
@@ -84,4 +82,4 @@ PASS plot_grouped_gemm_torch_fp16_vs_fp8
 PASS plot_p2p_bandwidth_matrix_before_after
 === plot_scratch_nvme_readonly
 PASS plot_scratch_nvme_readonly
-SUMMARY pass=33 fail=1 skip=0
+SUMMARY pass=34 fail=0 skip=0
