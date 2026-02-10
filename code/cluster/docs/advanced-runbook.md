@@ -7,13 +7,15 @@ Key rule (GPU benchmarks):
 - Practically, this usually means you must configure passwordless sudo for `nvidia-smi` clock locking (so `sudo -n true` succeeds).
 
 ## Validated Reference Package
-- Canonical validated run (used by the current field report): `2026-02-09_fresh_full_suite_e2e_green_rootfix`.
-- Manifest: `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_manifest.json`.
-- Sanitized cluster metadata: `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_meta.json`, `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_meta.json`.
-- Multi-node vLLM path result (strict-lock + digest-pinned image parity): `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_multinode_serve.json`.
-- NVLink/NVSwitch topology summaries: `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_meta_nvlink_topology.json`, `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_meta_nvlink_topology.json`.
-- Dedicated nvbandwidth bundle: `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth.json`, `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_nvbandwidth.json`.
-- Storage parity fio artifacts: `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_fio.json`, `results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_fio.json`.
+- Canonical validated run (used by the current field report): `2026-02-10_full_suite_e2e_wire_qf_mon`.
+- Manifest: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json`.
+- Sanitized cluster metadata: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_meta.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_meta.json`.
+- Multi-node vLLM path result (strict-lock + digest-pinned image parity): `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_vllm_multinode_serve.json`.
+- NVLink/NVSwitch topology summaries: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_meta_nvlink_topology.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_meta_nvlink_topology.json`.
+- Dedicated nvbandwidth bundle: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_nvbandwidth.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_nvbandwidth.json`.
+- Storage parity fio artifacts: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_fio.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_fio.json`.
+- Required operator friction artifacts: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_quick_friction.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_quick_friction.json`.
+- Required monitoring expectation artifacts: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_monitoring_expectations.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_monitoring_expectations.json`.
 - Narrative report: `field-report.md`.
 - Claim-to-evidence ledger: `field-report-notes.md`.
 
@@ -40,6 +42,10 @@ The full suite now also includes three required reliability gates by default:
 - Hang triage readiness bundle (`py-spy` + `strace`) on all hosts.
 - Fast torchrun connectivity probe before network benchmarks.
 - NCCL env sensitivity sweep (`NCCL_CROSS_NIC`, `NCCL_IB_QPS_PER_CONNECTION`, `NCCL_MIN_CTAS/NCCL_MAX_CTAS`).
+
+The full suite also includes two required operator checks by default:
+- Quick friction battery (`scripts/run_quick_friction_all_nodes.sh`) on all hosts.
+- Monitoring expectations snapshot (`scripts/collect_monitoring_expectations_all_nodes.sh`) on all hosts.
 
 New explicit knobs for those required gates:
 ```bash
@@ -265,19 +271,19 @@ Artifacts:
 - `results/structured/<run_id>_nccl_env_sensitivity.json`
 - `docs/figures/<run_id>_nccl_env_sensitivity.png` (via suite plot phase)
 
-### 4d) Validated Smoke Example (`2026-02-10_required_gates_smoke_node1node2_v2`)
-Command sequence used on in-scope hosts (`node1,node2`):
+### 4d) Validated Canonical Gate + Operator Check Outputs (`2026-02-10_full_suite_e2e_wire_qf_mon`)
+Command sequence used on in-scope hosts (`node1,node2`) for standalone repro:
 ```bash
-SMOKE_RUN_ID=2026-02-10_required_gates_smoke_node1node2_v2
+RUN_ID=2026-02-10_full_suite_e2e_wire_qf_mon
 
 scripts/collect_hang_triage_bundle.sh \
-  --run-id "${SMOKE_RUN_ID}" \
+  --run-id "${RUN_ID}" \
   --hosts node1,node2 \
   --labels node1,node2 \
   --ssh-key ~/.ssh/ssh_key.pem
 
 scripts/run_torchrun_connectivity_probe.sh \
-  --run-id "${SMOKE_RUN_ID}" \
+  --run-id "${RUN_ID}" \
   --hosts node1,node2 \
   --ssh-key ~/.ssh/ssh_key.pem \
   --oob-if enP22p3s0f3 \
@@ -288,7 +294,7 @@ scripts/run_torchrun_connectivity_probe.sh \
   --timeout-sec 180
 
 scripts/run_nccl_env_sensitivity.sh \
-  --run-id "${SMOKE_RUN_ID}" \
+  --run-id "${RUN_ID}" \
   --hosts node1,node2 \
   --ssh-key ~/.ssh/ssh_key.pem \
   --oob-if enP22p3s0f3 \
@@ -299,24 +305,40 @@ scripts/run_nccl_env_sensitivity.sh \
   --warmup 2 \
   --iters 5
 
+scripts/run_quick_friction_all_nodes.sh \
+  --run-id "${RUN_ID}" \
+  --hosts node1,node2 \
+  --labels node1,node2 \
+  --ssh-key ~/.ssh/ssh_key.pem
+
+scripts/collect_monitoring_expectations_all_nodes.sh \
+  --run-id "${RUN_ID}" \
+  --hosts node1,node2 \
+  --labels node1,node2 \
+  --ssh-key ~/.ssh/ssh_key.pem
+
 python3 analysis/plot_nccl_env_sensitivity.py \
-  --input "results/structured/${SMOKE_RUN_ID}_nccl_env_sensitivity.json" \
-  --output "docs/figures/${SMOKE_RUN_ID}_nccl_env_sensitivity.png" \
-  --title "NCCL Env Sensitivity (${SMOKE_RUN_ID})"
+  --input "results/structured/${RUN_ID}_nccl_env_sensitivity.json" \
+  --output "docs/figures/${RUN_ID}_nccl_env_sensitivity.png" \
+  --title "NCCL Env Sensitivity (${RUN_ID})"
 
 python3 scripts/write_manifest.py \
-  --run-id "${SMOKE_RUN_ID}" \
+  --run-id "${RUN_ID}" \
   --hosts node1,node2 \
   --labels node1,node2 \
   --include-figures
 ```
 Expected package output:
-- `results/structured/2026-02-10_required_gates_smoke_node1node2_v2_manifest.json`
-- `results/structured/2026-02-10_required_gates_smoke_node1node2_v2_node1_hang_triage_readiness.json`
-- `results/structured/2026-02-10_required_gates_smoke_node1node2_v2_node2_hang_triage_readiness.json`
-- `results/structured/2026-02-10_required_gates_smoke_node1node2_v2_torchrun_connectivity_probe.json`
-- `results/structured/2026-02-10_required_gates_smoke_node1node2_v2_nccl_env_sensitivity.json`
-- `docs/figures/2026-02-10_required_gates_smoke_node1node2_v2_nccl_env_sensitivity.png`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_hang_triage_readiness.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_hang_triage_readiness.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_torchrun_connectivity_probe.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_nccl_env_sensitivity.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_quick_friction.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_quick_friction.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_monitoring_expectations.json`
+- `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_monitoring_expectations.json`
+- `docs/figures/2026-02-10_full_suite_e2e_wire_qf_mon_nccl_env_sensitivity.png`
 
 ### 4e) Debug-Only Playbook (Non-Canonical)
 Use these only for root-cause debugging, not for canonical performance numbers:
@@ -332,7 +354,7 @@ with torch.autograd.detect_anomaly():
 Operational rule:
 - If these debug modes are required to make a run complete, treat that run as diagnostic-only and rerun canonical collection without debug-mode side effects.
 
-### 4f) Quick Friction Checks (Recommended)
+### 4f) Quick Friction Checks (Required For Canonical Runs)
 Use the executable battery script to catch provider friction before long benchmark runs:
 ```bash
 scripts/run_quick_friction_all_nodes.sh \
@@ -347,7 +369,7 @@ Artifacts:
 - `results/structured/<run_id>_<label>_quick_friction.json`
 - `results/raw/<run_id>_<label>_quick_friction.log`
 
-### 4g) Monitoring Expectations Snapshot (Recommended)
+### 4g) Monitoring Expectations Snapshot (Required For Canonical Runs)
 Use the executable collection script for stakeholder monitoring expectations:
 ```bash
 scripts/collect_monitoring_expectations_all_nodes.sh \
@@ -440,7 +462,7 @@ Artifacts:
 - `results/structured/<run_id>_<worker_label>_vllm_multinode_worker_clock_lock.json`
 - `results/raw/<run_id>_<leader_label>_vllm_multinode_serve/leader.log`
 
-Latest known state for the canonical run (`2026-02-09_fresh_full_suite_e2e_green_rootfix`):
+Latest known state for the canonical run (`2026-02-10_full_suite_e2e_wire_qf_mon`):
 - command path executed correctly with strict lock on both nodes
 - benchmark completed successfully (`status=ok`) at TP=8 across both nodes
 - result includes image provenance showing identical digest on both nodes (`sha256:2338992e8e6413ba65a768e8e767a8092037316107739fa41057be3b0aaa0f90`)

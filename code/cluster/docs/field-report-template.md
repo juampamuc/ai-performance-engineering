@@ -2,32 +2,42 @@
 
 Last updated: YYYY-MM-DD
 
+## Current Canonical Example
+| Item | Value |
+| --- | --- |
+| RUN_ID | `2026-02-10_full_suite_e2e_wire_qf_mon` |
+| Manifest | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json` |
+| Suite steps | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_suite_steps.json` |
+| Required reliability gates | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_torchrun_connectivity_probe.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_nccl_env_sensitivity.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_hang_triage_readiness.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_hang_triage_readiness.json` |
+| Required operator checks | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_quick_friction.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_quick_friction.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_monitoring_expectations.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_monitoring_expectations.json` |
+
 ## Table of Contents
 1. [TL;DR](#tldr)
 2. [Scope + Artifacts](#scope--artifacts)
 3. [Required Reliability Gates (Smoke Validation)](#required-reliability-gates-smoke-validation)
-4. [Cluster Story (First Contact)](#cluster-story-first-contact)
-5. [Weird / New / Interesting (with Normal Baseline)](#weird--new--interesting-with-normal-baseline)
-6. [Capability Demonstration (Causal Debugging Workflow)](#capability-demonstration-causal-debugging-workflow)
-7. [Benchmark A (Networking Story): NCCL `all_reduce_perf`](#benchmark-a-networking-story-nccl-all_reduce_perf)
-8. [Benchmark B (Inference Story): vLLM Online Serving](#benchmark-b-inference-story-vllm-online-serving)
-9. [Supporting: nvbandwidth Bundle](#supporting-nvbandwidth-bundle)
-10. [Supporting: Compute Sanity (BF16 GEMM)](#supporting-compute-sanity-bf16-gemm)
-11. [Supporting: Storage (fio)](#supporting-storage-fio)
-12. [Supporting: Health / GDR / NUMA / Train Step / Checkpoint](#supporting-health--gdr--numa--train-step--checkpoint)
-13. [Required Issues (Explicit)](#required-issues-explicit)
-14. [Root Cause + Fix Mapping](#root-cause--fix-mapping)
-15. [Report Completeness Delta](#report-completeness-delta)
-16. [Gaps, Risks, and Smell Checks](#gaps-risks-and-smell-checks)
-17. [Canonical Cleanup + Artifact Hygiene](#canonical-cleanup--artifact-hygiene)
-18. [Implications For Small AI Teams](#implications-for-small-ai-teams)
-19. [FP4 Extension Outcomes](#fp4-extension-outcomes)
-20. [Reproducibility Package](#reproducibility-package)
-21. [Repository Handoff (GitHub)](#repository-handoff-github)
-22. [Case Study Requirement Mapping](#case-study-requirement-mapping)
-23. [Repro Steps](#repro-steps)
-24. [Appendix](#appendix)
-25. [Activity Log](#activity-log)
+4. [Operator Friction + Monitoring Expectations (Required)](#operator-friction--monitoring-expectations-required)
+5. [Cluster Story (First Contact)](#cluster-story-first-contact)
+6. [Weird / New / Interesting (with Normal Baseline)](#weird--new--interesting-with-normal-baseline)
+7. [Capability Demonstration (Causal Debugging Workflow)](#capability-demonstration-causal-debugging-workflow)
+8. [Benchmark A (Networking Story): NCCL `all_reduce_perf`](#benchmark-a-networking-story-nccl-all_reduce_perf)
+9. [Benchmark B (Inference Story): vLLM Online Serving](#benchmark-b-inference-story-vllm-online-serving)
+10. [Supporting: nvbandwidth Bundle](#supporting-nvbandwidth-bundle)
+11. [Supporting: Compute Sanity (BF16 GEMM)](#supporting-compute-sanity-bf16-gemm)
+12. [Supporting: Storage (fio)](#supporting-storage-fio)
+13. [Supporting: Health / GDR / NUMA / Train Step / Checkpoint](#supporting-health--gdr--numa--train-step--checkpoint)
+14. [Required Issues (Explicit)](#required-issues-explicit)
+15. [Root Cause + Fix Mapping](#root-cause--fix-mapping)
+16. [Report Completeness Delta](#report-completeness-delta)
+17. [Gaps, Risks, and Smell Checks](#gaps-risks-and-smell-checks)
+18. [Canonical Cleanup + Artifact Hygiene](#canonical-cleanup--artifact-hygiene)
+19. [Implications For Small AI Teams](#implications-for-small-ai-teams)
+20. [FP4 Extension Outcomes](#fp4-extension-outcomes)
+21. [Reproducibility Package](#reproducibility-package)
+22. [Repository Handoff (GitHub)](#repository-handoff-github)
+23. [Case Study Requirement Mapping](#case-study-requirement-mapping)
+24. [Repro Steps](#repro-steps)
+25. [Appendix](#appendix)
+26. [Activity Log](#activity-log)
 
 | Rule | Requirement |
 | --- | --- |
@@ -39,6 +49,7 @@ Last updated: YYYY-MM-DD
 | Table preference | Use tables for all high-value sections; narrative is additive and should not replace tables. |
 | Chart quality gate | Any curve chart should have at least 3 unique x-values; if fewer, label as `canary/sparse` and state why. |
 | Required-gate smoke evidence | Include one post-change smoke run proving semantic `ok` for `hang_triage_bundle`, `torchrun_connectivity_probe`, and `nccl_env_sensitivity` (with artifacts + env-sensitivity visual). |
+| Required operator checks evidence | Include `quick_friction` and `monitoring_expectations` artifacts for every in-scope host and summarize degraded/missing-tool diagnostics explicitly. |
 
 ## Section Retention Gate (CRITICAL)
 | Gate | Requirement |
@@ -46,6 +57,7 @@ Last updated: YYYY-MM-DD
 | Mandatory sections | Do not remove or collapse required sections. Keep all ToC entries listed in this template. |
 | Weird/normal structure | Keep a single merged section `Weird / New / Interesting (with Normal Baseline)` with both subsections: `Baseline vs Weird Log` and `Deep-Dive Findings`. |
 | Required issue ledger | Include the `Required Issues (Explicit)` section with the 5 required issue lines verbatim, each with current status + evidence links. |
+| Operator checks retention | Keep `Operator Friction + Monitoring Expectations (Required)` as a standalone section and include node-level structured artifacts + raw logs. |
 | Report parity | Include `Report Completeness Delta` section comparing prior report revision vs current report so section/visual loss is visible. |
 | Risk transparency | Include `Gaps, Risks, and Smell Checks` even when suite is green. |
 | Cleanup disclosure | Include `Canonical Cleanup + Artifact Hygiene` showing what superseded artifacts were removed and what canonical set was preserved. |
@@ -108,6 +120,19 @@ Evidence data:
 `results/structured/<RUN_ID>_torchrun_connectivity_probe.json`<br/>
 `results/structured/<RUN_ID>_nccl_env_sensitivity.json`<br/>
 `results/structured/<RUN_ID>_<label>_hang_triage_readiness.json`
+
+## Operator Friction + Monitoring Expectations (Required)
+| Check | Status | Key diagnostics | Structured artifacts |
+| --- | --- | --- | --- |
+| quick_friction | <ok/degraded/error> | <pass/fail counts, missing external tools, install/pull timing> | `results/structured/<RUN_ID>_<label>_quick_friction.json` |
+| monitoring_expectations | <ok/degraded/error> | <category status: control_plane, gpu_telemetry, system_signals> | `results/structured/<RUN_ID>_<label>_monitoring_expectations.json` |
+
+Evidence data:
+
+`results/structured/<RUN_ID>_<label>_quick_friction.json`<br/>
+`results/raw/<RUN_ID>_<label>_quick_friction.log`<br/>
+`results/structured/<RUN_ID>_<label>_monitoring_expectations.json`<br/>
+`results/raw/<RUN_ID>_<label>_monitoring_expectations.log`
 
 ## Cluster Story (First Contact)
 | UTC time | Milestone |
@@ -264,8 +289,8 @@ Evidence data:
 | C2C/NUMA probes | `scripts/run_c2c_memcpy_bench.sh ...`<br/>`scripts/run_numa_mem_bw_all_nodes.sh ...` | `results/structured/<RUN_ID>_<label>_c2c_memcpy.json`<br/>`results/structured/<RUN_ID>_<label>_numa_mem_bw.json` |
 | Train step | `scripts/run_torchrun_transformer_train_step.sh ...` | `results/structured/<RUN_ID>_<label>_torchrun_train_step.json` |
 | Checkpoint I/O | `scripts/run_checkpoint_io_all_nodes.sh ...` | `results/structured/<RUN_ID>_<label>_checkpoint_io.json` |
-| Quick friction check | `scripts/run_quick_friction_all_nodes.sh --run-id <RUN_ID> --hosts <hosts> --labels <labels> ...` | `results/structured/<RUN_ID>_<label>_quick_friction.json`<br/>`results/raw/<RUN_ID>_<label>_quick_friction.log` |
-| Monitoring expectations alignment | `scripts/collect_monitoring_expectations_all_nodes.sh --run-id <RUN_ID> --hosts <hosts> --labels <labels> ...` | `results/structured/<RUN_ID>_<label>_monitoring_expectations.json`<br/>`results/raw/<RUN_ID>_<label>_monitoring_expectations.log` |
+| Quick friction check (required) | `scripts/run_quick_friction_all_nodes.sh --run-id <RUN_ID> --hosts <hosts> --labels <labels> ...` | `results/structured/<RUN_ID>_<label>_quick_friction.json`<br/>`results/raw/<RUN_ID>_<label>_quick_friction.log` |
+| Monitoring expectations alignment (required) | `scripts/collect_monitoring_expectations_all_nodes.sh --run-id <RUN_ID> --hosts <hosts> --labels <labels> ...` | `results/structured/<RUN_ID>_<label>_monitoring_expectations.json`<br/>`results/raw/<RUN_ID>_<label>_monitoring_expectations.log` |
 
 ## Required Issues (Explicit)
 | Required issue (verbatim) | Current status | Evidence |
