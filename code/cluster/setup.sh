@@ -10,8 +10,8 @@ Options:
   --label <label>          Node label for discovery metadata (default: node1)
   --venv <path>            Python venv path (default: cluster/env/venv)
   --nccl-tests-dir <path>  nccl-tests checkout path (default: cluster/tools/nccl-tests)
-  --torch-index-url <url>  PyTorch wheel index URL (default: https://download.pytorch.org/whl/cu130)
-  --torch-version <ver>    Torch version to install (default: 2.9.1+cu130)
+  --torch-index-url <url>  PyTorch wheel index URL (default: https://pypi.ngc.nvidia.com)
+  --torch-version <ver>    Torch version to install (default: 2.10.0a0+a36e1d39eb.nv26.01.42222806)
   --skip-discovery         Skip discovery metadata capture
   --skip-apt               Skip apt package installs
   --skip-python            Skip Python venv + torch install
@@ -25,6 +25,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_ID="$(date +%Y-%m-%d)"
 LABEL="node1"
 VENV_DIR="${ROOT_DIR}/env/venv"
+VENV_PY="${VENV_DIR}/bin/python"
 NCCL_TESTS_DIR="${ROOT_DIR}/tools/nccl-tests"
 TORCH_INDEX_URL="https://pypi.ngc.nvidia.com"
 TORCH_VERSION="2.10.0a0+a36e1d39eb.nv26.01.42222806"
@@ -91,6 +92,74 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+resolve_torch_lib_dir() {
+  local py_bin="$1"
+  if [[ ! -x "$py_bin" ]]; then
+    return 0
+  fi
+
+  "$py_bin" - <<'PY'
+import os
+import site
+import sys
+from pathlib import Path
+
+roots = []
+py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+roots.append(Path(sys.prefix) / "lib" / py_version / "site-packages")
+
+venv = os.environ.get("VIRTUAL_ENV")
+if venv:
+    roots.append(Path(venv) / "lib" / py_version / "site-packages")
+
+try:
+    roots.extend(Path(p) for p in site.getsitepackages())
+except Exception:
+    pass
+
+try:
+    roots.append(Path(site.getusersitepackages()))
+except Exception:
+    pass
+
+seen = set()
+for root in roots:
+    candidate = root / "torch" / "lib"
+    key = str(candidate)
+    if key in seen:
+        continue
+    seen.add(key)
+    if candidate.is_dir():
+        print(candidate)
+        raise SystemExit(0)
+
+print("")
+PY
+}
+
+write_runtime_env_file() {
+  local runtime_env_file="$1"
+  local torch_lib_dir="$2"
+  mkdir -p "$(dirname "$runtime_env_file")"
+
+  if [[ -n "$torch_lib_dir" ]]; then
+    cat >"${runtime_env_file}" <<EOF
+#!/usr/bin/env bash
+export AISP_CUDNN_RUNTIME_POLICY="\${AISP_CUDNN_RUNTIME_POLICY:-auto}"
+if [[ -d "${torch_lib_dir}" ]]; then
+  export LD_LIBRARY_PATH="${torch_lib_dir}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
+fi
+EOF
+  else
+    cat >"${runtime_env_file}" <<'EOF'
+#!/usr/bin/env bash
+export AISP_CUDNN_RUNTIME_POLICY="${AISP_CUDNN_RUNTIME_POLICY:-auto}"
+EOF
+  fi
+
+  chmod 0755 "${runtime_env_file}"
+}
 
 OUT_STRUCT_DIR="${ROOT_DIR}/results/structured"
 OUT_RAW_DIR="${ROOT_DIR}/results/raw/setup"
@@ -175,6 +244,7 @@ fi
 
 export PATH="$CUDA_HOME/bin:$PATH"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+export AISP_CUDNN_RUNTIME_POLICY="${AISP_CUDNN_RUNTIME_POLICY:-auto}"
 
 MPI_HOME=""
 if command -v mpicc >/dev/null 2>&1; then
@@ -190,6 +260,7 @@ fi
 if [[ "$SKIP_PYTHON" -eq 0 ]]; then
   echo "== Python venv + torch =="
   python3 -m venv "$VENV_DIR"
+  VENV_PY="${VENV_DIR}/bin/python"
   "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
   "$VENV_DIR/bin/pip" install --index-url "$TORCH_INDEX_URL" "torch==${TORCH_VERSION}"
 
@@ -200,13 +271,30 @@ if [[ "$SKIP_PYTHON" -eq 0 ]]; then
     "$VENV_DIR/bin/pip" install --index-url "$TORCH_INDEX_URL" --upgrade --force-reinstall --no-deps "torch==${TORCH_VERSION}"
   fi
 
+  TORCH_LIB_DIR="$(resolve_torch_lib_dir "$VENV_PY")"
+  if [[ -n "$TORCH_LIB_DIR" ]]; then
+    export LD_LIBRARY_PATH="${TORCH_LIB_DIR}:${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:${LD_LIBRARY_PATH:-}"
+    echo "Using torch runtime libraries from: $TORCH_LIB_DIR"
+  else
+    echo "WARNING: torch/lib was not found under ${VENV_DIR}; setup sanity checks may use system runtime libs."
+  fi
+
   echo "== Python sanity =="
   "$VENV_DIR/bin/python" - <<'PY'
+import os
 import torch
 print("torch", torch.__version__)
 print("torch.cuda.is_available", torch.cuda.is_available())
 print("torch.version.cuda", torch.version.cuda)
 print("torch.version.git", torch.version.git_version)
+print("AISP_CUDNN_RUNTIME_POLICY", os.environ.get("AISP_CUDNN_RUNTIME_POLICY", ""))
+if torch.cuda.is_available():
+    print("torch.backends.cudnn.version", torch.backends.cudnn.version())
+    nccl_v = torch.cuda.nccl.version()
+    if nccl_v:
+        print("torch.cuda.nccl.version", ".".join(str(x) for x in nccl_v))
+    else:
+        print("torch.cuda.nccl.version", "")
 PY
 
   if [[ "$INSTALL_VLLM" -eq 1 ]]; then
@@ -217,6 +305,15 @@ PY
   fi
   echo "== pip check =="
   "$VENV_DIR/bin/pip" check || true
+fi
+
+TORCH_LIB_DIR="${TORCH_LIB_DIR:-$(resolve_torch_lib_dir "$VENV_PY")}"
+RUNTIME_ENV_FILE="${VENV_DIR}/orig_parity_runtime_env.sh"
+write_runtime_env_file "$RUNTIME_ENV_FILE" "$TORCH_LIB_DIR"
+if [[ -n "$TORCH_LIB_DIR" ]]; then
+  echo "Wrote runtime env helper: ${RUNTIME_ENV_FILE} (torch/lib=${TORCH_LIB_DIR})"
+else
+  echo "Wrote runtime env helper: ${RUNTIME_ENV_FILE} (torch/lib unresolved)"
 fi
 
 if [[ "$SKIP_NCCL_TESTS" -eq 0 ]]; then
