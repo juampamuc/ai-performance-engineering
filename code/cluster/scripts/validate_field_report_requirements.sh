@@ -4,7 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REPORT="${ROOT_DIR}/cluster/field-report.md"
 NOTES="${ROOT_DIR}/cluster/field-report-notes.md"
+TEMPLATE="${ROOT_DIR}/cluster/docs/field-report-template.md"
+RUNBOOK="${ROOT_DIR}/cluster/docs/advanced-runbook.md"
 CANONICAL_RUN_ID=""
+ALLOW_RUN_IDS=()
 
 usage() {
   cat <<'USAGE'
@@ -13,7 +16,10 @@ Usage: cluster/scripts/validate_field_report_requirements.sh [options]
 Options:
   --report <path>          Path to field-report.md (default: cluster/field-report.md)
   --notes <path>           Path to field-report-notes.md (default: cluster/field-report-notes.md)
+  --template <path>        Path to field-report-template.md (default: cluster/docs/field-report-template.md)
+  --runbook <path>         Path to advanced-runbook.md (default: cluster/docs/advanced-runbook.md)
   --canonical-run-id <id>  Expected canonical run id (optional)
+  --allow-run-id <id>      Additional run id to keep during stale-artifact cleanup checks (repeatable)
   -h, --help               Show this help
 USAGE
 }
@@ -28,8 +34,20 @@ while [[ $# -gt 0 ]]; do
       NOTES="$2"
       shift 2
       ;;
+    --template)
+      TEMPLATE="$2"
+      shift 2
+      ;;
+    --runbook)
+      RUNBOOK="$2"
+      shift 2
+      ;;
     --canonical-run-id)
       CANONICAL_RUN_ID="$2"
+      shift 2
+      ;;
+    --allow-run-id)
+      ALLOW_RUN_IDS+=("$2")
       shift 2
       ;;
     -h|--help)
@@ -50,6 +68,12 @@ if [[ "$REPORT" != /* ]]; then
 fi
 if [[ "$NOTES" != /* ]]; then
   NOTES="${ROOT_DIR}/${NOTES}"
+fi
+if [[ "$TEMPLATE" != /* ]]; then
+  TEMPLATE="${ROOT_DIR}/${TEMPLATE}"
+fi
+if [[ "$RUNBOOK" != /* ]]; then
+  RUNBOOK="${ROOT_DIR}/${RUNBOOK}"
 fi
 
 failures=0
@@ -152,6 +176,8 @@ check_table_forward_section() {
 
 require_file "$REPORT"
 require_file "$NOTES"
+require_file "$TEMPLATE"
+require_file "$RUNBOOK"
 
 if [[ $failures -gt 0 ]]; then
   echo "Validation aborted due to missing input files."
@@ -162,6 +188,8 @@ required_headers=(
   "## Table of Contents"
   "## TL;DR"
   "## Scope + Canonical Artifacts"
+  "## Required Reliability Gates (Canonical Run)"
+  "## Operator Friction + Monitoring Expectations (New Checks)"
   "## Cluster Story (First Contact)"
   "## Weird / New / Interesting (with Normal Baseline)"
   "## Benchmark A (Networking Story)"
@@ -193,6 +221,8 @@ done
 table_forward_headers=(
   "## TL;DR"
   "## Scope + Canonical Artifacts"
+  "## Required Reliability Gates (Canonical Run)"
+  "## Operator Friction + Monitoring Expectations (New Checks)"
   "## Weird / New / Interesting (with Normal Baseline)"
   "## Benchmark A (Networking Story)"
   "## Benchmark B (Inference Story)"
@@ -208,6 +238,7 @@ for header in "${table_forward_headers[@]}"; do
 done
 
 visual_sections=(
+  "## Required Reliability Gates (Canonical Run)"
   "## Benchmark A (Networking Story)"
   "## Benchmark B (Inference Story)"
   "## Weird / New / Interesting (with Normal Baseline)"
@@ -242,6 +273,15 @@ require_contains "$REPORT" "## Benchmark A (Networking Story)" "benchmark A sect
 require_contains "$REPORT" "## Benchmark B (Inference Story)" "benchmark B section present"
 require_contains "$REPORT" "## Repro Steps" "repro steps section present"
 require_contains "$REPORT" "## Reproducibility Package" "reproducibility package section present"
+require_contains "$REPORT" "_quick_friction.json" "quick friction artifact links present in report"
+require_contains "$REPORT" "_monitoring_expectations.json" "monitoring expectations artifact links present in report"
+require_contains "$NOTES" "_quick_friction.json" "quick friction artifact links present in notes"
+require_contains "$NOTES" "_monitoring_expectations.json" "monitoring expectations artifact links present in notes"
+require_contains "$TEMPLATE" "## Operator Friction + Monitoring Expectations (Required)" "template includes required operator section"
+require_contains "$TEMPLATE" "Quick friction check (required)" "template marks quick friction as required"
+require_contains "$TEMPLATE" "Monitoring expectations alignment (required)" "template marks monitoring expectations as required"
+require_contains "$RUNBOOK" "### 4f) Quick Friction Checks (Required For Canonical Runs)" "runbook marks quick friction as required for canonical runs"
+require_contains "$RUNBOOK" "### 4g) Monitoring Expectations Snapshot (Required For Canonical Runs)" "runbook marks monitoring expectations as required for canonical runs"
 
 forbid_contains "$REPORT" "## Normal vs Weird Log" "legacy split header absent: ## Normal vs Weird Log"
 forbid_contains "$REPORT" "## Weird / New / Interesting Findings" "legacy split header absent: ## Weird / New / Interesting Findings"
@@ -281,6 +321,78 @@ if [[ -n "$CANONICAL_RUN_ID" ]]; then
     pass "report canonical run id matches expected (${CANONICAL_RUN_ID})"
   else
     fail "report canonical run id does not match expected (${CANONICAL_RUN_ID})"
+  fi
+fi
+
+# Stale artifact hygiene:
+# For any run id discovered via *_manifest.json (except canonical and allowlisted),
+# fail if artifacts remain while that run id is not linked by report/notes markdown links.
+effective_canonical_run_id="$report_run_id"
+if [[ -n "$CANONICAL_RUN_ID" ]]; then
+  effective_canonical_run_id="$CANONICAL_RUN_ID"
+fi
+
+if [[ -z "$effective_canonical_run_id" ]]; then
+  fail "cannot run stale-artifact hygiene check without canonical run id"
+else
+  stale_output="$(python3 - "$ROOT_DIR" "$REPORT" "$NOTES" "$effective_canonical_run_id" "${ALLOW_RUN_IDS[@]}" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+report = pathlib.Path(sys.argv[2]).read_text()
+notes = pathlib.Path(sys.argv[3]).read_text()
+canonical = sys.argv[4]
+allow = set(sys.argv[5:])
+
+link_targets = []
+for text in (report, notes):
+    for m in re.finditer(r'\[[^\]]+\]\(([^)]+)\)', text):
+        t = m.group(1).strip()
+        if not t or t.startswith('#') or '://' in t or t.startswith('mailto:'):
+            continue
+        t = t.split()[0]
+        t = t.split('#', 1)[0]
+        if t:
+            link_targets.append(t)
+
+manifest_runs = []
+for p in (root / "cluster" / "results" / "structured").glob("*_manifest.json"):
+    name = p.name
+    if re.match(r"20\d{2}-\d{2}-\d{2}_", name):
+        manifest_runs.append(name[:-len("_manifest.json")])
+
+stale = []
+for run_id in sorted(set(manifest_runs)):
+    if run_id == canonical or run_id in allow:
+        continue
+    linked = any(run_id in target for target in link_targets)
+    if linked:
+        continue
+
+    structured = list((root / "cluster" / "results" / "structured").glob(f"{run_id}*"))
+    raw = list((root / "cluster" / "results" / "raw").glob(f"{run_id}*"))
+    figures = list((root / "cluster" / "docs" / "figures").glob(f"{run_id}*"))
+    total = len(structured) + len(raw) + len(figures)
+    if total > 0:
+        stale.append((run_id, len(structured), len(raw), len(figures), total))
+
+if stale:
+    for run_id, s_cnt, r_cnt, f_cnt, total in stale:
+        print(f"STALE {run_id} structured={s_cnt} raw={r_cnt} figures={f_cnt} total={total}")
+    sys.exit(2)
+
+print("STALE none")
+PY
+)" || stale_rc=$?
+  stale_rc="${stale_rc:-0}"
+  if [[ "$stale_rc" -eq 0 ]]; then
+    pass "stale-artifact hygiene check passed (${stale_output})"
+  else
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && fail "stale artifacts detected: ${line}"
+    done <<< "$stale_output"
   fi
 fi
 

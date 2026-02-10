@@ -41,6 +41,18 @@
 - If report numbers diverge from current canonical artifacts, treat that as a blocker and fix the report (or rerun collection) before sign-off.
 - Explicitly include required issue ledgers (missing artifacts, GDR requested vs effective, latency knees) and verify each claim against canonical structured artifacts.
 
+#### Report Update Checklist (CRITICAL)
+- Whenever you update any of these files, complete the full checklist in the same change:
+  - `cluster/field-report.md`
+  - `cluster/field-report-notes.md`
+  - `cluster/docs/field-report-template.md`
+  - `cluster/docs/advanced-runbook.md`
+- Keep canonical run id + artifact links synchronized across all four docs.
+- Run the field-report validator and treat failures as blockers:
+  - `cluster/scripts/validate_field_report_requirements.sh --report cluster/field-report.md --notes cluster/field-report-notes.md --template cluster/docs/field-report-template.md --runbook cluster/docs/advanced-runbook.md --canonical-run-id <RUN_ID>`
+- Validator stale-artifact hygiene failures are blockers: remove unreferenced non-canonical run artifacts (structured/raw/figures) or explicitly allow requested historical baselines with `--allow-run-id <RUN_ID>`.
+- Do not leave old run artifacts on disk that are not referenced by the latest canonical report package.
+
 ### Case Study Contract (CRITICAL)
 - Treat the cluster case study prompt as a hard contract, not guidance.
 - Mandatory narrative outcomes:
