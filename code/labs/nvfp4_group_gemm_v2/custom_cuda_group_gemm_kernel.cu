@@ -1170,12 +1170,6 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   __shared__ alignas(128) uint8_t sB[PIPELINE_STAGES][UnrollN][TILE_N][K_TILE_BYTES];
   __shared__ alignas(16) uint8_t sSFA[PIPELINE_STAGES][SFA_ROWS][SF_BYTES_PER_ROW];
   __shared__ alignas(16) uint8_t sSFB[PIPELINE_STAGES][UnrollN][SFB_ROWS][SF_BYTES_PER_ROW];
-  // Warp-specialized CTA1 pipeline state (used only in the cta_group::1 fast path).
-  // `stage_sf_ready_iter[stage]` holds the k_tile_idx whose SFA/SFB have been copied into TMEM
-  // for that stage.
-  __shared__ volatile int stage_sf_ready_iter[PIPELINE_STAGES];
-  // `consumer_done_iter` holds the last k_tile_idx for which MMA has been issued (the stage can be reused).
-  __shared__ volatile int consumer_done_iter;
   // UMMA completion barrier (cta_group::2 only). tcgen05.mma is asynchronous; tcgen05.commit +
   // mbarrier wait ensures the accumulator tile is fully materialized in TMEM before epilogue loads.
   __shared__ alignas(8) uint64_t umma_done_barrier;
@@ -1197,9 +1191,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   #pragma unroll
     for (int stage = 0; stage < PIPELINE_STAGES; ++stage) {
       init(bars[stage], /*expected_count=*/1);
-      stage_sf_ready_iter[stage] = -1;
     }
-    consumer_done_iter = -1;
     cuda_device::fence_proxy_async_shared_cta();
   }
   __syncthreads();
@@ -1929,6 +1921,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       }
     } else {
       if (warp == 0) {
+        // Debug bring-up path: keep the simple warp0-only mainloop.
         // Prologue: preload the first K tile into stage0.
         if (k_tiles_total > 0) {
           const int k_tile_idx = 0;
@@ -1957,8 +1950,9 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
             const int next_tile = k_tile_idx + 1;
             const int next_k_byte = next_tile * K_TILE_BYTES;
             const int sfa_row_offset_next = (sfa_tile_m * k_tiles_total + next_tile) * SFA_ROWS;
-            const int sfb_row_offset_next =
-                (UnrollN == 2) ? ((next_tile * n_tiles_tma + tile_n) * SFB_ROWS) : ((tile_n * k_tiles_total + next_tile) * SFB_ROWS);
+            const int sfb_row_offset_next = (UnrollN == 2)
+                                                ? ((next_tile * n_tiles_tma + tile_n) * SFB_ROWS)
+                                                : ((tile_n * k_tiles_total + next_tile) * SFB_ROWS);
             tok_next = issue_tma_tile(stage_next, next_k_byte, sfa_row_offset_next, sfb_row_offset_next);
           }
 
