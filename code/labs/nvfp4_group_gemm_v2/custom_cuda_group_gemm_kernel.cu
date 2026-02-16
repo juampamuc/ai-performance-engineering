@@ -31,6 +31,16 @@
 #define NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B 0
 #endif
 
+#ifndef NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFA
+// Optional per-operand override: use 64x128b UTCCP only for SFA.
+#define NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFA 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFB
+// Optional per-operand override: use 64x128b UTCCP only for SFB.
+#define NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFB 0
+#endif
+
 #ifndef NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE
 // 0: legacy bring-up (02_13, src +32, dst seg0/seg1)
 // 1: contiguous pairs (01_23, src +64, dst seg0/seg2)
@@ -39,32 +49,104 @@
 #define NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE 0
 #endif
 
-#ifndef NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA
-#define NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA 0
-#endif
-
-#ifndef NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE
-#define NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE 64
-#endif
-
-#ifndef NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0
-#define NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0 0
-#endif
-
-#ifndef NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET
-#define NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET 0
-#endif
-
-#ifndef NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128
-#define NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128 64
-#endif
+// NOTE: The earlier experimental "N=256" (single UMMA covering two N128 tiles) path was removed.
+// It produced incorrect results for `mxf4nvf4.block_scale.block16` (second N128 half was zero).
 
 #ifndef NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF
 #define NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF 0
 #endif
 
+#ifndef NVFP4_GROUP_GEMM_V2_MULTICAST_A
+// Debug knob: when TMA multicast is enabled, allow disabling the multicast load for A only
+// to isolate correctness issues (defaults to enabled).
+#define NVFP4_GROUP_GEMM_V2_MULTICAST_A 1
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_MULTICAST_SFA
+// Debug knob: when TMA multicast is enabled, allow disabling the multicast load for SFA only
+// to isolate correctness issues (defaults to enabled).
+#define NVFP4_GROUP_GEMM_V2_MULTICAST_SFA 1
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA
+// When enabled (and UnrollN==2), use warp1 lane0 to issue the u=1 MMAs while warp0 lane0
+// issues scale copies + u=0 MMAs. This can reduce the serial issue bottleneck on a single lane.
+#define NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WS_SFB1_SEGMENT_HELPERS
+// Experimental: for WS_UNROLL2_MMA (UnrollN==2, cta_group::1), use helper warps to copy the
+// SFB(u=1) scale segments 2 and 3 while warp1 lane0 copies segments 0 and 1 and issues u=1 MMAs.
+// This reduces warp1's serial UTCCP issue pressure without introducing extra CTA-wide barriers.
+#define NVFP4_GROUP_GEMM_V2_WS_SFB1_SEGMENT_HELPERS 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+// Spin-wait backoff (in cycles) for the warp-specialized UnrollN=2 path.
+// Smaller values can reduce latency but may increase contention.
+#define NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES 8
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER
+// Experimental: overlap TMA issue overhead with UMMA issue overhead by having an idle warp
+// (warp2 lane0) issue TMA loads for the next stage while warp0/warp1 issue MMAs for the current
+// stage. This is intended to mirror CUTLASS' producer/consumer pipeline structure.
+#define NVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WS_SPLIT_U0_SEGS
+// Experimental: for WS_UNROLL2_MMA (UnrollN==2, CtaGroup==1), use an additional warp
+// (warp2 lane0) to issue the u=0 MMAs for seg=1..3 while warp0 lane0 issues seg=0.
+// This reduces single-thread UMMA issue pressure at the cost of extra shared-memory spin/waits.
+#define NVFP4_GROUP_GEMM_V2_WS_SPLIT_U0_SEGS 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WS_SEGMENT_PARALLEL
+// Experimental: for cta_group::1, UnrollN==1, use 4 warps to issue:
+// - UTCCP scale copies (one K64 segment per warp)
+// - UMMA (one K64 segment per warp)
+// This reduces single-lane issue pressure and helps utilization when TMEM limits occupancy.
+#define NVFP4_GROUP_GEMM_V2_WS_SEGMENT_PARALLEL 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_CTA1_COMMIT_BARRIER
+// Experimental: for cta_group::1, use tcgen05.commit + mbarrier wait once before epilogue TMEM loads.
+// Without an explicit commit, tcgen05.mma completion can manifest as stalls on the first TMEM loads.
+#define NVFP4_GROUP_GEMM_V2_CTA1_COMMIT_BARRIER 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_STAGE1_PREFETCH
+// Experimental: for PIPELINE_STAGES==1 (cta_group::1), overlap the next tile's TMA load with
+// the current tile's asynchronous UMMA execution by reusing the single shared-memory stage
+// immediately after issuing the MMAs. This mirrors CUTLASS' `num_ab_stage=1` scheduling intent.
+// Disabled by default because it assumes UMMA consumes shared memory at issue time (not later).
+#define NVFP4_GROUP_GEMM_V2_STAGE1_PREFETCH 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP
+// For cta_group::1 without multicast, use a warp0-only mainloop to reduce synchronization overhead.
+// This is a performance knob: warp0-only can underutilize UMMA issue if tcgen05.mma requires
+// warpgroup participation. Set to 0 to force the full-CTA mainloop.
+#define NVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP 1
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS
+// Experimental: issue UMMA from lane0 of every warp (instead of thread0 only) in the full-CTA mainloop.
+// CUTLASS uses per-warp `elect_one_sync()` for tcgen05.mma; this knob lets us validate whether tcgen05.mma
+// needs multi-warp participation for good performance (and/or correctness on some tiles).
+#define NVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS 0
+#endif
+
 #ifndef NVFP4_GROUP_GEMM_V2_DEBUG_STAGE
 #define NVFP4_GROUP_GEMM_V2_DEBUG_STAGE 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X16
+#define NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X16 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32
+#define NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32 0
 #endif
 
 namespace {
@@ -432,6 +514,10 @@ __device__ __forceinline__ uint64_t make_runtime_instr_desc_block_scaled(
 
 namespace tcgen05 {
 
+// CUTLASS: cute/arch/copy_sm100_tma.hpp
+// Clear the peer bit so both CTAs in a cta_group::2 cluster update CTA0's mbarrier state.
+constexpr uint32_t Sm100MmaPeerBitMask = 0xFEFFFFFFu;
+
 __device__ __forceinline__ uint32_t cast_smem_ptr_to_uint(const void* ptr) {
   // Prefer NVCC builtin to avoid PTX inline-asm operand width issues on SM100.
   return static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
@@ -754,6 +840,178 @@ __device__ __forceinline__ void tmem_ld_32dp32b_x8_pack16b(
 #endif
 }
 
+__device__ __forceinline__ void tmem_ld_32dp32b_x16(
+    uint32_t src_addr,
+    uint32_t& dst0,
+    uint32_t& dst1,
+    uint32_t& dst2,
+    uint32_t& dst3,
+    uint32_t& dst4,
+    uint32_t& dst5,
+    uint32_t& dst6,
+    uint32_t& dst7,
+    uint32_t& dst8,
+    uint32_t& dst9,
+    uint32_t& dst10,
+    uint32_t& dst11,
+    uint32_t& dst12,
+    uint32_t& dst13,
+    uint32_t& dst14,
+    uint32_t& dst15) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
+  asm volatile("tcgen05.ld.sync.aligned.32x32b.x16.b32"
+               "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15},"
+               "[%16];\n"
+               : "=r"(dst0),
+                 "=r"(dst1),
+                 "=r"(dst2),
+                 "=r"(dst3),
+                 "=r"(dst4),
+                 "=r"(dst5),
+                 "=r"(dst6),
+                 "=r"(dst7),
+                 "=r"(dst8),
+                 "=r"(dst9),
+                 "=r"(dst10),
+                 "=r"(dst11),
+                 "=r"(dst12),
+                 "=r"(dst13),
+                 "=r"(dst14),
+                 "=r"(dst15)
+               : "r"(src_addr)
+               : "memory");
+#else
+  dst0 = 0;
+  dst1 = 0;
+  dst2 = 0;
+  dst3 = 0;
+  dst4 = 0;
+  dst5 = 0;
+  dst6 = 0;
+  dst7 = 0;
+  dst8 = 0;
+  dst9 = 0;
+  dst10 = 0;
+  dst11 = 0;
+  dst12 = 0;
+  dst13 = 0;
+  dst14 = 0;
+  dst15 = 0;
+  (void)src_addr;
+#endif
+}
+
+__device__ __forceinline__ void tmem_ld_32dp32b_x32(
+    uint32_t src_addr,
+    uint32_t& dst0,
+    uint32_t& dst1,
+    uint32_t& dst2,
+    uint32_t& dst3,
+    uint32_t& dst4,
+    uint32_t& dst5,
+    uint32_t& dst6,
+    uint32_t& dst7,
+    uint32_t& dst8,
+    uint32_t& dst9,
+    uint32_t& dst10,
+    uint32_t& dst11,
+    uint32_t& dst12,
+    uint32_t& dst13,
+    uint32_t& dst14,
+    uint32_t& dst15,
+    uint32_t& dst16,
+    uint32_t& dst17,
+    uint32_t& dst18,
+    uint32_t& dst19,
+    uint32_t& dst20,
+    uint32_t& dst21,
+    uint32_t& dst22,
+    uint32_t& dst23,
+    uint32_t& dst24,
+    uint32_t& dst25,
+    uint32_t& dst26,
+    uint32_t& dst27,
+    uint32_t& dst28,
+    uint32_t& dst29,
+    uint32_t& dst30,
+    uint32_t& dst31) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
+  asm volatile(
+      "tcgen05.ld.sync.aligned.32x32b.x32.b32"
+      "{%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, "
+      "%23, %24, %25, %26, %27, %28, %29, %30, %31},"
+      "[%32];\n"
+      : "=r"(dst0),
+        "=r"(dst1),
+        "=r"(dst2),
+        "=r"(dst3),
+        "=r"(dst4),
+        "=r"(dst5),
+        "=r"(dst6),
+        "=r"(dst7),
+        "=r"(dst8),
+        "=r"(dst9),
+        "=r"(dst10),
+        "=r"(dst11),
+        "=r"(dst12),
+        "=r"(dst13),
+        "=r"(dst14),
+        "=r"(dst15),
+        "=r"(dst16),
+        "=r"(dst17),
+        "=r"(dst18),
+        "=r"(dst19),
+        "=r"(dst20),
+        "=r"(dst21),
+        "=r"(dst22),
+        "=r"(dst23),
+        "=r"(dst24),
+        "=r"(dst25),
+        "=r"(dst26),
+        "=r"(dst27),
+        "=r"(dst28),
+        "=r"(dst29),
+        "=r"(dst30),
+        "=r"(dst31)
+      : "r"(src_addr)
+      : "memory");
+#else
+  dst0 = 0;
+  dst1 = 0;
+  dst2 = 0;
+  dst3 = 0;
+  dst4 = 0;
+  dst5 = 0;
+  dst6 = 0;
+  dst7 = 0;
+  dst8 = 0;
+  dst9 = 0;
+  dst10 = 0;
+  dst11 = 0;
+  dst12 = 0;
+  dst13 = 0;
+  dst14 = 0;
+  dst15 = 0;
+  dst16 = 0;
+  dst17 = 0;
+  dst18 = 0;
+  dst19 = 0;
+  dst20 = 0;
+  dst21 = 0;
+  dst22 = 0;
+  dst23 = 0;
+  dst24 = 0;
+  dst25 = 0;
+  dst26 = 0;
+  dst27 = 0;
+  dst28 = 0;
+  dst29 = 0;
+  dst30 = 0;
+  dst31 = 0;
+  (void)src_addr;
+#endif
+}
+
 __device__ __forceinline__ uint32_t tmem_ld_32dp32b_x1(uint32_t src_addr) {
   uint32_t dst0;
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
@@ -788,7 +1046,8 @@ __device__ __forceinline__ uint32_t tmem_addr_add(uint32_t base, uint32_t dp_add
   const uint32_t base_dp = (base >> 16) & 0x000000FFu;
   const uint32_t base_idx = base & 0xFF000000u;
   const uint32_t col = base_col + col_add;
-  const uint32_t dp = base_dp + dp_add;
+  // dp is an 8-bit field; always wrap to avoid corrupting the idx bits on overflow.
+  const uint32_t dp = (base_dp + dp_add) & 0x000000FFu;
   return base_idx | (dp << 16) | (col & 0x0000FFFFu);
 }
 
@@ -815,20 +1074,31 @@ static EncodeFn load_cuTensorMapEncodeTiled() {
   return reinterpret_cast<EncodeFn>(func_ptr);
 }
 
-static void encode_2d_u8_tensor_map_or_throw(
-    CUtensorMap* out_desc, EncodeFn encode, void* base, uint64_t width, uint64_t height, uint64_t ld_bytes,
-    uint32_t box_width, uint32_t box_height, CUtensorMapSwizzle swizzle_mode, CUtensorMapL2promotion promotion) {
+static void encode_2d_tensor_map_or_throw(
+    CUtensorMap* out_desc,
+    EncodeFn encode,
+    CUtensorMapDataType dtype,
+    void* base,
+    uint64_t dim0,
+    uint64_t dim1,
+    uint64_t stride0_bytes,
+    uint32_t box0,
+    uint32_t box1,
+    CUtensorMapSwizzle swizzle_mode,
+    CUtensorMapL2promotion promotion) {
   constexpr uint32_t rank = 2;
-  uint64_t dims[rank] = {width, height};
-  uint64_t stride[rank - 1] = {ld_bytes};
-  uint32_t box[rank] = {box_width, box_height};
+  // CUDA tensor maps treat dimension 0 as the innermost (contiguous) dimension.
+  // `globalStrides[0]` is the stride in bytes to advance dimension 1 by 1.
+  uint64_t dims[rank] = {dim0, dim1};
+  uint64_t stride[rank - 1] = {stride0_bytes};
+  uint32_t box[rank] = {box0, box1};
   uint32_t elem_stride[rank] = {1, 1};
 
   constexpr auto interleave = CU_TENSOR_MAP_INTERLEAVE_NONE;
   constexpr auto oob_fill = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
 
   auto fn = encode ? encode : cuTensorMapEncodeTiled;
-  CUresult res = fn(out_desc, CU_TENSOR_MAP_DATA_TYPE_UINT8, rank, base, dims, stride, box, elem_stride, interleave,
+  CUresult res = fn(out_desc, dtype, rank, base, dims, stride, box, elem_stride, interleave,
                     swizzle_mode, promotion, oob_fill);
   if (res != CUDA_SUCCESS) {
     const char* err_str = nullptr;
@@ -881,6 +1151,7 @@ static std::pair<torch::Tensor, torch::Tensor> build_ab_tma_descs_cuda(
 
   TORCH_CHECK(b_box_height_rows == 64 || b_box_height_rows == 128 || b_box_height_rows == 256,
               "b_box_height_rows must be 64, 128, or 256. Got b_box_height_rows=", b_box_height_rows);
+  constexpr uint32_t a_box_height = 128u;
   const uint32_t b_box_height = static_cast<uint32_t>(b_box_height_rows);
 
   const int64_t groups = m_sizes_cpu.numel();
@@ -916,16 +1187,31 @@ static std::pair<torch::Tensor, torch::Tensor> build_ab_tma_descs_cuda(
     const int32_t m_padded = m;
     const int32_t n_padded = n;
 
-    encode_2d_u8_tensor_map_or_throw(&a_descs_host[static_cast<size_t>(i)], encode,
-                                     reinterpret_cast<void*>(a_ptrs[i]), static_cast<uint64_t>(k_bytes),
-                                     static_cast<uint64_t>(m_padded), static_cast<uint64_t>(k_bytes),
-                                     /*box_width=*/128, /*box_height=*/128, CU_TENSOR_MAP_SWIZZLE_128B, promotion);
+    // Encode A/B tensor maps as packed U4 (NVFP4) rather than raw bytes. This matches CUTLASS'
+    // FP4 TMA encoding and avoids extra unpack/format overhead.
+    const uint64_t k_elems = static_cast<uint64_t>(k_bytes) * 2ull;  // 2 fp4 values per byte
+    constexpr CUtensorMapDataType kAbDtype = CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B;
+    constexpr uint32_t kBoxK = 256u;  // MMA tile K=256 elements (4-bit)
 
-    encode_2d_u8_tensor_map_or_throw(&b_descs_host[static_cast<size_t>(i)], encode,
-                                     reinterpret_cast<void*>(b_ptrs[i]), static_cast<uint64_t>(k_bytes),
-                                     static_cast<uint64_t>(n_padded), static_cast<uint64_t>(k_bytes),
-                                     /*box_width=*/128, /*box_height=*/b_box_height, CU_TENSOR_MAP_SWIZZLE_128B,
-                                     promotion);
+    encode_2d_tensor_map_or_throw(&a_descs_host[static_cast<size_t>(i)], encode, kAbDtype,
+                                 reinterpret_cast<void*>(a_ptrs[i]),
+                                 /*dim0=*/k_elems,
+                                 /*dim1=*/static_cast<uint64_t>(m_padded),
+                                 /*stride0_bytes=*/static_cast<uint64_t>(k_bytes),
+                                 /*box0=*/kBoxK,
+                                 /*box1=*/a_box_height,
+                                 CU_TENSOR_MAP_SWIZZLE_128B,
+                                 promotion);
+
+    encode_2d_tensor_map_or_throw(&b_descs_host[static_cast<size_t>(i)], encode, kAbDtype,
+                                 reinterpret_cast<void*>(b_ptrs[i]),
+                                 /*dim0=*/k_elems,
+                                 /*dim1=*/static_cast<uint64_t>(n_padded),
+                                 /*stride0_bytes=*/static_cast<uint64_t>(k_bytes),
+                                 /*box0=*/kBoxK,
+                                 /*box1=*/b_box_height,
+                                 CU_TENSOR_MAP_SWIZZLE_128B,
+                                 promotion);
   }
 
   auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
@@ -1003,25 +1289,25 @@ static std::pair<torch::Tensor, torch::Tensor> build_scale_tma_descs_cuda(
     const int64_t sfa_height = static_cast<int64_t>(m_tiles) * static_cast<int64_t>(k_tiles) * sfaRowsPerTile;
     const int64_t sfb_height = static_cast<int64_t>(n_tiles) * static_cast<int64_t>(k_tiles) * sfbRowsPerTile;
 
-    encode_2d_u8_tensor_map_or_throw(&sfa_descs_host[static_cast<size_t>(i)], encode,
-                                     reinterpret_cast<void*>(sfa_ptrs[i]),
-                                     static_cast<uint64_t>(sfRowBytes),
-                                     static_cast<uint64_t>(sfa_height),
-                                     static_cast<uint64_t>(sfRowBytes),
-                                     /*box_width=*/sfRowBytes,
-                                     /*box_height=*/sfaRowsPerTile,
-                                     CU_TENSOR_MAP_SWIZZLE_NONE,
-                                     promotion);
+    encode_2d_tensor_map_or_throw(&sfa_descs_host[static_cast<size_t>(i)], encode, CU_TENSOR_MAP_DATA_TYPE_UINT8,
+                                 reinterpret_cast<void*>(sfa_ptrs[i]),
+                                 /*dim0=*/static_cast<uint64_t>(sfRowBytes),
+                                 /*dim1=*/static_cast<uint64_t>(sfa_height),
+                                 /*stride0_bytes=*/static_cast<uint64_t>(sfRowBytes),
+                                 /*box0=*/sfRowBytes,
+                                 /*box1=*/sfaRowsPerTile,
+                                 CU_TENSOR_MAP_SWIZZLE_NONE,
+                                 promotion);
 
-    encode_2d_u8_tensor_map_or_throw(&sfb_descs_host[static_cast<size_t>(i)], encode,
-                                     reinterpret_cast<void*>(sfb_ptrs[i]),
-                                     static_cast<uint64_t>(sfRowBytes),
-                                     static_cast<uint64_t>(sfb_height),
-                                     static_cast<uint64_t>(sfRowBytes),
-                                     /*box_width=*/sfRowBytes,
-                                     /*box_height=*/sfb_box_height,
-                                     CU_TENSOR_MAP_SWIZZLE_NONE,
-                                     promotion);
+    encode_2d_tensor_map_or_throw(&sfb_descs_host[static_cast<size_t>(i)], encode, CU_TENSOR_MAP_DATA_TYPE_UINT8,
+                                 reinterpret_cast<void*>(sfb_ptrs[i]),
+                                 /*dim0=*/static_cast<uint64_t>(sfRowBytes),
+                                 /*dim1=*/static_cast<uint64_t>(sfb_height),
+                                 /*stride0_bytes=*/static_cast<uint64_t>(sfRowBytes),
+                                 /*box0=*/sfRowBytes,
+                                 /*box1=*/sfb_box_height,
+                                 CU_TENSOR_MAP_SWIZZLE_NONE,
+                                 promotion);
   }
 
   auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
@@ -1046,7 +1332,7 @@ static std::pair<torch::Tensor, torch::Tensor> build_scale_tma_descs_cuda(
 
 namespace cuda_device = cuda::device::experimental;
 
-template <int CtaGroup, int UnrollN>
+template <int CtaGroup, int UnrollN, int CtaTileM, bool EnableTmaMulticast>
 __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     const uint64_t* __restrict__ a_ptrs,
     const uint64_t* __restrict__ b_ptrs,
@@ -1084,24 +1370,23 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     int debug_print_ptrs,
     int cta2_idesc_m_dim_override,
     int cta2_idesc_n_dim_override,
-    int cluster_dim_x,
-    int enable_tma_multicast
+    int cluster_dim_x
 ) {
   // cta_group::2 note:
   // We intentionally operate on a 256x128 *cluster* tile so each participating CTA owns a full
   // 128-row fragment (M_MMA=128) and we can reuse the known-correct 1SM TMEM accumulator layout.
   // This matches CUTLASS's SM100 blockscaled 2SM builder constraints (TileShape_M == 256) and avoids
   // the much trickier M=128 (M_MMA=64) 2SM accumulator/scale-factor layouts.
-  constexpr int CTA_TILE_M = 128;
+  // CtaTileM controls the per-CTA M dimension (and the per-CTA A tile height). For cta_group::1
+  // we intentionally keep the packed CTA map's tile_m indexing in 128-row units
+  // (CLUSTER_TILE_M=128) and use CtaTileM=64 only for tail tiles where remaining rows <= 64.
+  // This avoids runtime-masked UMMA descriptor tweaks (which can trigger illegal instruction
+  // faults on SM100 for block-scaled UMMA).
+  constexpr int CTA_TILE_M = CtaTileM;
   constexpr int CLUSTER_TILE_M = (CtaGroup == 2) ? 256 : 128;
   constexpr int TILE_M = CTA_TILE_M;
   constexpr int TILE_N = 128;
-  // Optional perf path for UnrollN=2: issue a single 1CTA UMMA for N=256 rather than two N=128
-  // UMMA ops per K64 segment. This keeps the same TMEM layout (two 128-col accumulator tiles and
-  // two 64-col SFB tiles laid out contiguously) but cuts MMA issue count ~2x for UnrollN=2.
-  constexpr bool USE_N256_MMA =
-      (CtaGroup == 1) && (UnrollN == 2) && (NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA != 0);
-  constexpr int TILE_N_MMA = USE_N256_MMA ? 256 : TILE_N;
+  constexpr int TILE_N_MMA = TILE_N;
   constexpr int K_TILE_BYTES = 128;   // 256 FP4 elems
   constexpr int K_SEG_BYTES = 32;     // 64 FP4 elems
   // TMEM allocation: use the full 512-column TMEM slice, matching the GPU MODE reference.
@@ -1113,15 +1398,18 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   constexpr int SFB_ROWS = 128;         // 4 chunks * 32 rows
   constexpr int SFA_TILE_BYTES = SFA_ROWS * SF_BYTES_PER_ROW;
   constexpr int SFB_TILE_BYTES = SFB_ROWS * SF_BYTES_PER_ROW;
-  // CUTLASS `tmem_sf_frg` for SFVecSize=16 (ScaleFactorDuplicated4by1) uses:
-  // - 16 TMEM columns per K64 segment
-  // - 4 K64 segments per K256 tile
-  // => 64 columns per operand tile (SFA or SFB) per CTA.
+  // Scale-factor layout in TMEM (CUTLASS `tmem_sf_frg<uint8_t,16,...>`):
+  // The fragment is tightly packed in *word columns* (TMEM `col` field). For the shape:
+  //   tmem_shape = ((128, (VecSize=16, NSF=4)), NumMmaMN, NumMmaK=4)
+  // CUTLASS' `find_tmem_tensor_col_offset()` reports:
+  //   - 4 word-columns per K64 block per MN tile
+  //   - 16 word-columns per full K256 tile per MN tile
+  // and for NumMmaMN>1 the MN tiles are interleaved:
+  //   addr(mn, k_block) = base + k_block * (4 * NumMmaMN) + mn * 4.
   //
-  // Verified via `UMMA::tmem_sf_frg<uint8_t,16,1,...>::make(((128,(16,4)),1,4))`:
-  // `k_tile` (segment) stride = +16 columns and total col extent = 64.
-  constexpr uint32_t SF_COLS_PER_SEG = 16u;
-  constexpr uint32_t SF_COLS_PER_TILE = 64u;
+  // We mirror that mapping so UTCCP (32x128b.warpx4) and UMMA consume the expected scale layout.
+  constexpr uint32_t SF_COLS_PER_KBLOCK_PER_MN = 4u;
+  constexpr uint32_t SF_COLS_PER_TILE_PER_MN = SF_COLS_PER_KBLOCK_PER_MN * 4u;  // 4 K64 blocks.
   // Bring-up knob:
   //   0 = full (TMA + scales + UTCCP + MMA + epilogue)
   //   2 = TMA-only sanity (alloc TMEM, load A/B once, then dealloc + return)
@@ -1130,38 +1418,73 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   constexpr int DEBUG_STAGE = NVFP4_GROUP_GEMM_V2_DEBUG_STAGE;
   // Shared-memory stages: 2-stage double-buffered pipeline across K tiles.
   constexpr int PIPELINE_STAGES = NVFP4_GROUP_GEMM_V2_PIPELINE_STAGES;
-  static_assert(PIPELINE_STAGES == 1 || PIPELINE_STAGES == 2, "PIPELINE_STAGES must be 1 or 2");
+  static_assert(PIPELINE_STAGES >= 1 && PIPELINE_STAGES <= 4, "PIPELINE_STAGES must be 1..4");
+  // Warp-specialized issue path for UnrollN=2:
+  // - warp0 lane0: TMA + UTCCP scales + MMAs for u=0
+  // - warp1 lane0: MMAs for u=1 (after warp0 has copied scales)
+  //
+  // NOTE: disabled for DEBUG_STAGE bring-up modes to avoid deadlocks when loops break early.
+  constexpr bool WS_UNROLL2_MMA =
+      (CtaGroup == 1) && (UnrollN == 2) && (NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA != 0) && (DEBUG_STAGE == 0) &&
+      (!EnableTmaMulticast);
+  constexpr bool WS_SPLIT_U0_SEGS = WS_UNROLL2_MMA && (NVFP4_GROUP_GEMM_V2_WS_SPLIT_U0_SEGS != 0);
+  constexpr bool WS_SEGMENT_PARALLEL =
+      (CtaGroup == 1) && (UnrollN == 1) && (NVFP4_GROUP_GEMM_V2_WS_SEGMENT_PARALLEL != 0) && (DEBUG_STAGE == 0) &&
+      (!EnableTmaMulticast) && (NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B == 0) &&
+      (NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF == 0);
+  constexpr bool WS_TMA_PRODUCER = (CtaGroup == 1) && (NVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER != 0) && (DEBUG_STAGE == 0) &&
+                                   (PIPELINE_STAGES > 1) && (!EnableTmaMulticast) && (!WS_SPLIT_U0_SEGS);
+  constexpr bool WS_SFB1_SEGMENT_HELPERS =
+      WS_UNROLL2_MMA && (NVFP4_GROUP_GEMM_V2_WS_SFB1_SEGMENT_HELPERS != 0) && (!WS_SPLIT_U0_SEGS) &&
+      (!WS_TMA_PRODUCER) && (NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B == 0) &&
+      (NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF == 0);
+  constexpr bool STAGE1_PREFETCH = (PIPELINE_STAGES == 1) && (NVFP4_GROUP_GEMM_V2_STAGE1_PREFETCH != 0) &&
+                                   (!WS_UNROLL2_MMA) && (!WS_SPLIT_U0_SEGS) &&
+                                   (!EnableTmaMulticast);
+  constexpr bool CTA1_COMMIT_BARRIER =
+      (CtaGroup == 1) && (NVFP4_GROUP_GEMM_V2_CTA1_COMMIT_BARRIER != 0) && (DEBUG_STAGE == 0);
 
   static_assert(CtaGroup == 1 || CtaGroup == 2, "CtaGroup must be 1 or 2");
   static_assert(UnrollN == 1 || UnrollN == 2, "UnrollN must be 1 or 2");
+  static_assert(CtaTileM == 128,
+                "SM100 tcgen05.mma.kind::mxf4nvf4.block_scale.block16 requires M=128 per CTA (CtaTileM=128).");
+  static_assert((CtaGroup != 2) || (CtaTileM == 128),
+                "cta_group::2 requires CtaTileM=128 (each CTA contributes 128 rows to the 256-row cluster tile).");
   if constexpr (CtaGroup == 2) {
-    // With the current CUTLASS-aligned TMEM scale-factor layout, cta_group::2 fits exactly into a
-    // 512-column TMEM allocation only when UnrollN=1:
-    //   accumulators: 2 ranks * 128 cols = 256 cols
-    //   scales:       2 ranks * (64 SFA + 64 SFB) = 256 cols
-    // Total: 512 cols. UnrollN=2 would require an additional 64 cols of SFB per rank and would
-    // overflow the allocation, leading to illegal TMEM accesses.
-    static_assert(UnrollN == 1, "cta_group::2 currently supports only UnrollN=1 (TMEM scale layout capacity).");
+    // cta_group::2 supports UnrollN in {1,2}; UnrollN=2 remains experimental and is validated
+    // via runtime correctness checks in the microbench/harness flow.
   }
 
   // Optional cluster-mode optimization: multicast A + SFA across CTAs that share (tile_m, k_tile).
   // This reduces redundant L2 traffic for A/SFA across the N tiles of the same M tile.
-  // NOTE: Requires cluster_dim_x > 1 and that the grid's N-CTA dimension is an exact multiple
-  // of cluster_dim_x (otherwise partial clusters could deadlock on cluster sync).
-  const bool use_tma_multicast = (CtaGroup == 1) && (enable_tma_multicast != 0) && (cluster_dim_x > 1);
-  const uint16_t tma_multicast_mask =
-      use_tma_multicast ? static_cast<uint16_t>((1u << static_cast<unsigned>(cluster_dim_x)) - 1u) : uint16_t{0};
+  //
+  // IMPORTANT: Keep multicast a compile-time specialization to avoid polluting the non-multicast
+  // kernel with extra register pressure (we're latency-bound and very sensitive to occupancy).
+  static_assert(!EnableTmaMulticast || (CtaGroup == 1), "TMA multicast is supported only for cta_group::1.");
+  if constexpr (EnableTmaMulticast) {
+    // Host-side validation should prevent this, but keep a defensive runtime check.
+    if (cluster_dim_x <= 1) {
+      return;
+    }
+  }
+  constexpr bool use_tma_multicast = EnableTmaMulticast;
+  uint16_t tma_multicast_mask = 0;
+  if constexpr (EnableTmaMulticast) {
+    tma_multicast_mask = static_cast<uint16_t>((1u << static_cast<unsigned>(cluster_dim_x)) - 1u);
+  }
 
   int group_idx = 0;
   const int cluster_rank =
-      (CtaGroup == 2 || use_tma_multicast) ? static_cast<int>(tcgen05::block_rank_in_cluster()) : 0;
+      (CtaGroup == 2 || EnableTmaMulticast) ? static_cast<int>(tcgen05::block_rank_in_cluster()) : 0;
   const int cluster_rank_b = cluster_rank;
   cg::cluster_group cluster = cg::this_cluster();
   int tile_n = 0;
   int tile_m = 0;
   if (cta_group_idx_map != nullptr && cta_tile_m_map != nullptr && cta_tile_n_map != nullptr) {
     // Packed-CTA mode: the host launches exactly the required CTAs per group (no early-return CTAs).
-    const int cta_linear = static_cast<int>(blockIdx.z);
+    // Non-cluster packed launch uses grid.z as the linear CTA dimension. Cluster launch needs
+    // grid.x for clustering, so it passes the linear CTA index via blockIdx.x.
+    const int cta_linear = (cluster_dim_x > 1) ? static_cast<int>(blockIdx.x) : static_cast<int>(blockIdx.z);
     group_idx = cta_group_idx_map[cta_linear];
     tile_m = cta_tile_m_map[cta_linear];
     tile_n = cta_tile_n_map[cta_linear];
@@ -1182,7 +1505,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   const int k_bytes_total = k_halves[group_idx];
   const int k_tiles_total = ceil_div_int(k_bytes_total, K_TILE_BYTES);
   const int n_tiles_group = ceil_div_int(n_size, TILE_N);
-  const int n_tiles_tma = (UnrollN == 2) ? ((n_tiles_group + 1) & ~1) : n_tiles_group;
+  const bool ws_u1_active = WS_UNROLL2_MMA && ((tile_n + 1) < n_tiles_group);
   // cta_group::2 bring-up:
   // For UnrollN=2 we currently keep B/SFB duplicated across the two CTAs to avoid
   // any N/2 partitioning complexity while scale/TMEM layouts are still being tuned.
@@ -1240,24 +1563,49 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   }
 
   if (threadIdx.x == 0) {
-  #pragma unroll
+    // Barrier expected-arrival policy:
+    // - non-multicast: only thread0 arrives+writes tx count (fast path)
+    // - multicast: follow the cluster-safe pattern where every CTA thread joins the barrier
+    //   generation before rank0 issues the multicast transaction.
+    const int expected_arrivals = EnableTmaMulticast ? static_cast<int>(blockDim.x) : 1;
+#pragma unroll
     for (int stage = 0; stage < PIPELINE_STAGES; ++stage) {
-      init(bars[stage], /*expected_count=*/1);
+      init(bars[stage], expected_arrivals);
     }
     cuda_device::fence_proxy_async_shared_cta();
   }
   __syncthreads();
-  if constexpr (CtaGroup == 2) {
-    // Initialize the UMMA completion barrier once per CTA. We always wait for parity=1 since the
-    // barrier is freshly initialized for this kernel invocation.
+  if constexpr (CtaGroup == 2 || CTA1_COMMIT_BARRIER) {
+    // UMMA completion barrier:
+    // - cta_group::1: per-CTA barrier is sufficient.
+    // - cta_group::2: both CTAs must update the *same* barrier, otherwise each barrier only sees
+    //   one arrival and `try_wait` deadlocks. CUTLASS clears the peer bit so both CTAs target
+    //   CTA0's barrier (Sm100MmaPeerBitMask).
+    //
+    // mbarrier parity starts at 1 after init; the first completion flips parity to 0.
     if (threadIdx.x == 0) {
-      const uint32_t bar_addr = tcgen05::cast_smem_ptr_to_uint(&umma_done_barrier);
-      // cta_group::2 MMAs logically involve 2 CTAs; require 2 arrivals before the barrier flips.
-      asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n" : : "r"(bar_addr), "r"(2) : "memory");
-      asm volatile("fence.mbarrier_init.release.cluster;\n" : : : "memory");
+      uint32_t bar_addr = tcgen05::cast_smem_ptr_to_uint(&umma_done_barrier);
+      if constexpr (CtaGroup == 2) {
+        bar_addr &= tcgen05::Sm100MmaPeerBitMask;
+        if (cluster_rank == 0) {
+          asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n"
+                       :
+                       : "r"(bar_addr), "r"(2)
+                       : "memory");
+          asm volatile("fence.mbarrier_init.release.cluster;\n" : : : "memory");
+        }
+      } else {
+        asm volatile("mbarrier.init.shared::cta.b64 [%0], %1;\n"
+                     :
+                     : "r"(bar_addr), "r"(1)
+                     : "memory");
+        asm volatile("fence.mbarrier_init.release.cluster;\n" : : : "memory");
+      }
     }
     __syncthreads();
-    cg::this_cluster().sync();
+    if constexpr (CtaGroup == 2) {
+      cg::this_cluster().sync();
+    }
   }
 
   // TMA expects the tensor map descriptor in global/const memory (not shared). Our descriptors are
@@ -1347,42 +1695,17 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       desc_b_base[stage][u].start_address_ = static_cast<uint16_t>(sB_addr >> 4);
       desc_b_base[stage][u].leading_byte_offset_ = 1;
       // Major-K descriptor stride is in units of uint128 (4 LSB dropped).
-      // Keep N128 fixed and expose an explicit N256 tuning knob.
-      desc_b_base[stage][u].stride_byte_offset_ =
-          USE_N256_MMA ? static_cast<uint16_t>(NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128) : 64;
+      desc_b_base[stage][u].stride_byte_offset_ = 64;
 
       const uint32_t sSFB_addr = tcgen05::cast_smem_ptr_to_uint(&sSFB[stage][u][0][0]);
       desc_sfb[stage][u].version_ = 1;
       desc_sfb[stage][u].lbo_mode_ = 0;
       desc_sfb[stage][u].base_offset_ = 0;
       desc_sfb[stage][u].layout_type_ = static_cast<uint8_t>(umma::LayoutType::SWIZZLE_NONE);
-      if constexpr (UnrollN == 2) {
-        // UnrollN=2 packs two adjacent N tiles consecutively in shared memory.
-        // For u==1, offset descriptors by 128 rows into the same [256,128] buffer.
-        constexpr uint32_t kSFBUnroll2RowOffsetRows = SFB_ROWS;
-        constexpr uint32_t kSFBUnroll2BRowOffsetRows = TILE_N;
-        const bool use_unroll2_tma_pack = (CtaGroup == 1) || (CtaGroup == 2);
-        if (use_unroll2_tma_pack) {
-          if (u == 0) {
-            desc_b_base[stage][u].start_address_ = static_cast<uint16_t>(sB_addr >> 4);
-            desc_sfb[stage][u].start_address_ = static_cast<uint16_t>(sSFB_addr >> 4);
-          } else {
-            const uint32_t sB_unroll2_base = tcgen05::cast_smem_ptr_to_uint(&sB[stage][0][0][0]);
-            const uint32_t sSFB_unroll2_base = tcgen05::cast_smem_ptr_to_uint(&sSFB[stage][0][0][0]);
-            const uint32_t b_row_offset_bytes = sw128_major_k_row_offset_bytes(
-                static_cast<int>(kSFBUnroll2BRowOffsetRows),
-                USE_N256_MMA ? static_cast<uint32_t>(NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128) : 64u);
-            desc_b_base[stage][u].start_address_ = static_cast<uint16_t>((sB_unroll2_base + b_row_offset_bytes) >> 4u);
-            desc_sfb[stage][u].start_address_ = static_cast<uint16_t>((sSFB_unroll2_base >> 4u) + kSFBUnroll2RowOffsetRows);
-          }
-        } else {
-          desc_b_base[stage][u].start_address_ = static_cast<uint16_t>(sB_addr >> 4);
-          desc_sfb[stage][u].start_address_ = static_cast<uint16_t>(sSFB_addr >> 4);
-        }
-      } else {
-        desc_b_base[stage][u].start_address_ = static_cast<uint16_t>(sB_addr >> 4);
-        desc_sfb[stage][u].start_address_ = static_cast<uint16_t>(sSFB_addr >> 4);
-      }
+      // The B/SFB tiles for each unrolled-N operand live at `&sB[stage][u]` / `&sSFB[stage][u]`.
+      // Any packed TMA experiments must update both the load ops and these descriptors together.
+      desc_b_base[stage][u].start_address_ = static_cast<uint16_t>(sB_addr >> 4);
+      desc_sfb[stage][u].start_address_ = static_cast<uint16_t>(sSFB_addr >> 4);
       desc_sfb[stage][u].leading_byte_offset_ = 1;
       desc_sfb[stage][u].stride_byte_offset_ = 8;
     }
@@ -1398,15 +1721,51 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 
   // Allocate TMEM once per CTA.
   __shared__ uint32_t tmem_base;
+  __shared__ volatile int ws_scales_ready_tile;
+  __shared__ volatile int ws_u1_done_tile;
+  __shared__ volatile int ws_u0_ready_tile;
+  __shared__ volatile int ws_u0_done_tile;
+  __shared__ volatile int ws_sfb1_seg2_ready_tile;
+  __shared__ volatile int ws_sfb1_seg3_ready_tile;
+  __shared__ volatile int ws_seg0_done_tile;
+  __shared__ volatile int ws_tma_req_tile;
+  __shared__ volatile int ws_tma_req_stage;
+  __shared__ volatile int ws_tma_req_k_byte;
+  __shared__ volatile int ws_tma_req_sfa_row_offset;
+  __shared__ volatile int ws_tma_req_sfb_row_offset;
   // NOTE: tcgen05.alloc/dealloc are warp-synchronous: issue from a single fully-active warp.
   if constexpr (CtaGroup == 2) {
     // Ensure the 2 participating CTAs reach alloc together (requirement for cta_group::2).
     cluster.sync();
   }
-  if (threadIdx.x < 32) {
-    // Columns must be power-of-2, 32..512.
-    tcgen05::tmem_alloc<CtaGroup>(&tmem_base, /*num_columns=*/TMEM_COLUMNS);
-  }
+		  if (threadIdx.x < 32) {
+		    // Columns must be power-of-2, 32..512.
+		    tcgen05::tmem_alloc<CtaGroup>(&tmem_base, /*num_columns=*/TMEM_COLUMNS);
+			    if constexpr (WS_UNROLL2_MMA) {
+			      if (threadIdx.x == 0) {
+		        ws_scales_ready_tile = -1;
+		        ws_u1_done_tile = -1;
+		        if constexpr (WS_SFB1_SEGMENT_HELPERS) {
+		          ws_sfb1_seg2_ready_tile = -1;
+		          ws_sfb1_seg3_ready_tile = -1;
+		        }
+		        if constexpr (WS_SPLIT_U0_SEGS) {
+		          ws_u0_ready_tile = -1;
+		          ws_u0_done_tile = -1;
+		        }
+			      }
+			    }
+	    if constexpr (WS_SEGMENT_PARALLEL) {
+	      if (threadIdx.x == 0) {
+	        ws_seg0_done_tile = -1;
+	      }
+	    }
+	    if constexpr (WS_TMA_PRODUCER) {
+	      if (threadIdx.x == 0) {
+	        ws_tma_req_tile = -1;
+	      }
+	    }
+	  }
   __syncthreads();
   if constexpr (CtaGroup == 2) {
     cluster.sync();
@@ -1436,14 +1795,17 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   uint32_t tmem_sfa_ptrs[4];
   uint32_t tmem_sfb_ptrs[4 * UnrollN];
   // Scale-factor layout in TMEM (CUTLASS `tmem_sf_frg`, ScaleFactorDuplicated4by1):
-  // - Each operand tile (SFA or SFB) consumes 64 TMEM columns (4 K64 segments * 16 cols/seg).
+  // - Each operand tile consumes 16 TMEM word-columns per MN tile (4 K64 blocks * 4 cols/block).
   // - cta_group::1:
-  //     UnrollN=1: accum uses 128 cols, so place SFA at +128, SFB at +192 (64 cols each).
-  //     UnrollN=2: accum uses 256 cols (2x 128-col tiles), so place SFA at +256, then SFB at +320
-  //               (reserve 64 cols per unrolled N tile => +320/+384).
+  //     UnrollN=1: accum uses 128 cols, place SFA at +128, SFB at +128+16.
+  //     UnrollN=2: accum uses 256 cols, place SFA at +256, SFB at +256+16 (SFB has 2 MN tiles => 32 cols total).
   // - cta_group::2:
-  //     We allocate disjoint accumulator windows per rank (rank0 at +0, rank1 at +128), so the
-  //     group consumes 256 cols. Place scales at +256, then reserve 128 cols per rank (64 SFA + 64 SFB).
+  //     Accumulators: 2 ranks * 128 cols = 256 cols. Place scales at +256, then reserve per-rank scale
+  //     windows (SFA=16 + SFB=16 for UnrollN=1 => 32 cols/rank) using `cta2_tmem_sf_rank_word_offset`.
+  constexpr uint32_t SFA_NUM_MN = 1u;
+  constexpr uint32_t SFB_NUM_MN = static_cast<uint32_t>(UnrollN);
+  constexpr uint32_t SFA_COL_EXTENT = SF_COLS_PER_TILE_PER_MN * SFA_NUM_MN;
+  constexpr uint32_t SFB_COL_EXTENT = SF_COLS_PER_TILE_PER_MN * SFB_NUM_MN;
   const uint32_t tmem_sf_base =
       (CtaGroup == 2)
           ? tcgen05::tmem_addr_add(
@@ -1460,22 +1822,22 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
           : tmem_sf_base;
 
   const uint32_t tmem_sfa_base = tmem_sf_rank_base;
-  const uint32_t tmem_sfb_base = tcgen05::tmem_addr_add(tmem_sfa_base, /*dp_add=*/0u, /*col_add=*/SF_COLS_PER_TILE);
+  const uint32_t tmem_sfb_base = tcgen05::tmem_addr_add(tmem_sfa_base, /*dp_add=*/0u, /*col_add=*/SFA_COL_EXTENT);
 #pragma unroll
   for (int seg = 0; seg < 4; ++seg) {
-    tmem_sfa_ptrs[seg] = tcgen05::tmem_addr_add(
-        tmem_sfa_base, /*dp_add=*/0u, /*col_add=*/static_cast<uint32_t>(seg) * SF_COLS_PER_SEG);
+    tmem_sfa_ptrs[seg] = tcgen05::tmem_addr_add(tmem_sfa_base,
+                                                /*dp_add=*/0u,
+                                                /*col_add=*/static_cast<uint32_t>(seg) * (SF_COLS_PER_KBLOCK_PER_MN * SFA_NUM_MN));
   }
 #pragma unroll
   for (int u = 0; u < UnrollN; ++u) {
-    constexpr uint32_t kSfbTileColStride =
-        USE_N256_MMA ? static_cast<uint32_t>(NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE) : SF_COLS_PER_TILE;
-    const uint32_t tmem_sfb_base_u =
-        tcgen05::tmem_addr_add(tmem_sfb_base, /*dp_add=*/0u, /*col_add=*/static_cast<uint32_t>(u) * kSfbTileColStride);
 #pragma unroll
     for (int seg = 0; seg < 4; ++seg) {
-      tmem_sfb_ptrs[u * 4 + seg] = tcgen05::tmem_addr_add(
-          tmem_sfb_base_u, /*dp_add=*/0u, /*col_add=*/static_cast<uint32_t>(seg) * SF_COLS_PER_SEG);
+      // Interleave MN tiles for SFB when UnrollN>1:
+      //   addr(u,seg) = base + seg*(4*NumMN) + u*4.
+      const uint32_t col_add = static_cast<uint32_t>(seg) * (SF_COLS_PER_KBLOCK_PER_MN * SFB_NUM_MN) +
+                               static_cast<uint32_t>(u) * SF_COLS_PER_KBLOCK_PER_MN;
+      tmem_sfb_ptrs[u * 4 + seg] = tcgen05::tmem_addr_add(tmem_sfb_base, /*dp_add=*/0u, /*col_add=*/col_add);
     }
   }
 
@@ -1487,6 +1849,15 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       const uint32_t sfb_id = (tsfb0 & 0xC0000000u) >> 30;
       printf("cta2 rank=%d tmem_base=0x%08x tmem_c=0x%08x tsfa0=0x%08x(tsfa_id=%u) tsfb0=0x%08x(tsfb_id=%u)\\n",
              cluster_rank, tmem_base, tmem_c_rank, tsfa0, sfa_id, tsfb0, sfb_id);
+    }
+  } else {
+    if (debug_print_ptrs != 0 && group_idx == 0 && tile_m == 0 && tile_n == 0 && threadIdx.x == 0) {
+      const uint32_t tsfa0 = tmem_sfa_ptrs[0];
+      const uint32_t tsfb0 = tmem_sfb_ptrs[0];
+      const uint32_t tmem_c0 = tmem_c_tiles[0];
+      const uint32_t tmem_c1 = (UnrollN == 2) ? tmem_c_tiles[1] : 0u;
+      printf("cta1 tmem_base=0x%08x tmem_c0=0x%08x tmem_c1=0x%08x tsfa0=0x%08x tsfb0=0x%08x\\n",
+             tmem_base, tmem_c0, tmem_c1, tsfa0, tsfb0);
     }
   }
 
@@ -1526,7 +1897,10 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   uint32_t tmem_sfa_seg[4];
   uint32_t tmem_sfb_seg[UnrollN][4];
   uint32_t idesc_hi_seg[UnrollN][4];
-  if (threadIdx.x == 0) {
+  // tcgen05.mma is a warpgroup collective; CUTLASS issues it from one lane per warp
+  // (via `cute::elect_one_sync()`). Mirror that here so any warp that issues UMMA
+  // also has the precomputed descriptor fragments in registers.
+  if ((threadIdx.x & 31) == 0) {
 #pragma unroll
     for (int seg = 0; seg < 4; ++seg) {
       const uint32_t tmem_sfa =
@@ -1554,8 +1928,22 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 #if NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF
     // Experimental: copy the entire 128-row scale tile (4x 32-row segments) in one UTCCP op.
     // This is cta_group::1-only; cta_group::2 does not have a 128x128b UTCCP variant in our wrappers.
+    //
+    // IMPORTANT (UnrollN=2): SFB tiles use an interleaved TMEM column layout across MN tiles:
+    //   addr(u, seg) = base + seg * (4 * NumMN) + u * 4, with NumMN=2.
+    // A single contiguous 128x128b copy only matches contiguous 16-column layout, so it is
+    // valid for SFA (NumMN=1) but not for per-u SFB copies when UnrollN=2.
+    // Keep SFB on 32x128b in that case to preserve correctness.
     if constexpr (CtaGroup == 1) {
-      tcgen05::utccp_cp_cta1_128x128b(src_desc_base, tmem_ptrs[0]);
+      if (!is_sfb || (UnrollN == 1)) {
+        tcgen05::utccp_cp_cta1_128x128b(src_desc_base, tmem_ptrs[0]);
+      } else {
+        constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+        for (int seg = 0; seg < 4; ++seg) {
+          const uint64_t src_desc = src_desc_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP);
+          tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(src_desc, tmem_ptrs[seg]);
+        }
+      }
     } else {
       constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
       for (int seg = 0; seg < 4; ++seg) {
@@ -1563,31 +1951,59 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
         tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(src_desc, tmem_ptrs[seg]);
       }
     }
-#elif NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B
-    // Copy two 32-row segments at a time (64 rows total) using the warp-specialized UTCCP primitive.
-    // Our SMEM scale tiles are laid out as 4 contiguous 32-row segments (K64 blocks) stacked along rows:
-    //   seg0 rows 0..31, seg1 rows 32..63, seg2 rows 64..95, seg3 rows 96..127.
-    // The CUTLASS `tmem_sf_frg` layout maps these segments to TMEM columns with a +16 col stride, so:
-    //   seg0 -> tmem_ptrs[0], seg1 -> tmem_ptrs[1], seg2 -> tmem_ptrs[2], seg3 -> tmem_ptrs[3].
-    //
-    // `tcgen05.cp.*.64x128b.*` operates on 64 rows, so issue it twice.
-    constexpr int kDescStep32 = 32;  // 32 * 16B = 512B = 1 segment.
-    constexpr int kDescStep64 = 64;  // 64 * 16B = 1024B = 2 segments.
+#elif NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B || NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFA || NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFB
+    const bool use64 = is_sfb
+                           ? ((NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFB != 0) ||
+                              (NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B != 0))
+                           : ((NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFA != 0) ||
+                              (NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B != 0));
+    if (use64) {
+      // Copy two 32-row segments at a time (64 rows total) using the warp-specialized UTCCP primitive.
+      // Our SMEM scale tiles are laid out as 4 contiguous 32-row segments (K64 blocks) stacked along rows:
+      //   seg0 rows 0..31, seg1 rows 32..63, seg2 rows 64..95, seg3 rows 96..127.
+      // The CUTLASS `tmem_sf_frg` layout maps these segments to TMEM columns with a +16 col stride, so:
+      //   seg0 -> tmem_ptrs[0], seg1 -> tmem_ptrs[1], seg2 -> tmem_ptrs[2], seg3 -> tmem_ptrs[3].
+      //
+      // `tcgen05.cp.*.64x128b.*` operates on 64 rows, so issue it twice.
+      constexpr int kDescStep64 = 64;  // 64 * 16B = 1024B = 2 segments.
+      const uint64_t src_desc01 = src_desc_base;
+      const uint64_t src_desc23 = src_desc_base + static_cast<uint64_t>(kDescStep64);
 #if NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 0
-    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base, tmem_ptrs[0]);
-    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep32), tmem_ptrs[1]);
+      // ::01_23 for both operands.
+      tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc01, tmem_ptrs[0]);
+      tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc23, tmem_ptrs[2]);
 #elif NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 1
-    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base, tmem_ptrs[0]);
-    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep64), tmem_ptrs[2]);
+      // ::02_13 for both operands.
+      tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc01, tmem_ptrs[0]);
+      tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc23, tmem_ptrs[2]);
 #elif NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 2
-    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base, tmem_ptrs[0]);
-    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep64), tmem_ptrs[2]);
+      // SFA uses ::01_23, SFB uses ::02_13.
+      if (is_sfb) {
+        tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc01, tmem_ptrs[0]);
+        tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc23, tmem_ptrs[2]);
+      } else {
+        tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc01, tmem_ptrs[0]);
+        tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc23, tmem_ptrs[2]);
+      }
 #elif NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 3
-    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base, tmem_ptrs[0]);
-    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep32), tmem_ptrs[1]);
+      // SFA uses ::02_13, SFB uses ::01_23.
+      if (is_sfb) {
+        tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc01, tmem_ptrs[0]);
+        tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc23, tmem_ptrs[2]);
+      } else {
+        tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc01, tmem_ptrs[0]);
+        tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc23, tmem_ptrs[2]);
+      }
 #else
 #error "Unsupported NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE"
 #endif
+    } else {
+      constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+      for (int seg = 0; seg < 4; ++seg) {
+        const uint64_t src_desc = src_desc_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP);
+        tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(src_desc, tmem_ptrs[seg]);
+      }
+    }
 #else
     constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
     for (int seg = 0; seg < 4; ++seg) {
@@ -1600,137 +2016,232 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 
   // TMA helper: issue a single-stage load for the given K tile into the selected pipeline stage.
   // Only thread0 participates in the barrier (expected_count=1) and owns the returned token.
-  auto issue_tma_tile = [&](int stage, int k_byte, int sfa_row_offset, int sfb_row_offset) -> block_barrier::arrival_token {
-    block_barrier* bar = bars[stage];
-    block_barrier::arrival_token tok;
-    // Stage all async TMA work under a single barrier generation.
-    // When enabled, multicast A + SFA from the cluster leader (rank0) to all CTAs in the cluster.
-    if (threadIdx.x == 0) {
-      constexpr size_t kBytesA = sizeof(sA[0]);
-      int unroll_n_valid = 0;
+	  auto issue_tma_tile = [&](int stage, int k_byte, int sfa_row_offset, int sfb_row_offset) -> block_barrier::arrival_token {
+	    block_barrier* bar = bars[stage];
+	    block_barrier::arrival_token tok;
+	    // Stage all async TMA work under a single barrier generation.
+	    // When enabled, multicast A + SFA from the cluster leader (rank0) to all CTAs in the cluster.
+    if constexpr (EnableTmaMulticast) {
+      if (threadIdx.x == 0) {
+        constexpr size_t kBytesA = sizeof(sA[0]);
+        int unroll_n_valid = 0;
 #pragma unroll
-      for (int u = 0; u < UnrollN; ++u) {
-        if ((tile_n + u) < n_tiles_group) {
-          ++unroll_n_valid;
-        }
+	        for (int u = 0; u < UnrollN; ++u) {
+	          if ((tile_n + u) < n_tiles_group) {
+	            ++unroll_n_valid;
+	          }
+	        }
+	        const int unroll_n_tx = unroll_n_valid;
+	        size_t kBytesB =
+	            static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N) * static_cast<size_t>(K_TILE_BYTES);
+	        if constexpr (CtaGroup == 2 && UnrollN == 1) {
+	          // For legacy cta2_partition_b=1, each CTA loads only N/2 rows.
+	          if (cta2_partition_b_mode == 1) {
+	            kBytesB =
+	                static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N / 2) * static_cast<size_t>(K_TILE_BYTES);
+	          }
+	        }
+	        if constexpr (UnrollN == 2) {
+	          // UnrollN=2 uses a 256-row B tensormap load (2 tiles) regardless of tail validity.
+	          kBytesB = static_cast<size_t>(2) * static_cast<size_t>(TILE_N) * static_cast<size_t>(K_TILE_BYTES);
+	        }
+	        // UnrollN=2 uses a 256-row SFB tensormap load (2 tiles) regardless of tail validity.
+	        const size_t kBytesSFB = (UnrollN == 2)
+	                                     ? (static_cast<size_t>(2) * static_cast<size_t>(SFB_TILE_BYTES))
+	                                     : (static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(SFB_TILE_BYTES));
+	        const size_t kBytesSF = static_cast<size_t>(SFA_TILE_BYTES) + kBytesSFB;
+        tok = cuda::device::barrier_arrive_tx(*bar, 1, kBytesA + kBytesB + kBytesSF);
+      } else {
+        // In multicast mode, all threads join this barrier generation before
+        // rank0 issues cp.async.bulk.tensor.cluster multicast.
+        tok = bar->arrive();
       }
-      int unroll_n_tx = unroll_n_valid;
-      if constexpr (UnrollN == 2) {
-        const bool use_unroll2_tma_pack = (CtaGroup == 1) || (CtaGroup == 2);
-        // UnrollN=2 always issues a single 256-row TMA load for B and SFB (2 adjacent N tiles).
-        // The host pads N to a multiple of 256 so this stays in-bounds even for odd tile counts.
-        if (use_unroll2_tma_pack) {
-          unroll_n_tx = 2;
-        }
-      }
-      size_t kBytesB = static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N) * static_cast<size_t>(K_TILE_BYTES);
-      if constexpr (CtaGroup == 2 && UnrollN == 1) {
-        // For legacy cta2_partition_b=1, each CTA loads only N/2 rows.
-        if (cta2_partition_b_mode == 1) {
-          kBytesB =
-              static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N / 2) * static_cast<size_t>(K_TILE_BYTES);
-        }
-      }
-      const size_t kBytesSFB = static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(SFB_TILE_BYTES);
-      const size_t kBytesSF = static_cast<size_t>(SFA_TILE_BYTES) + kBytesSFB;
-      tok = cuda::device::barrier_arrive_tx(*bar, 1, kBytesA + kBytesB + kBytesSF);
+	    } else if (threadIdx.x == 0) {
+	      constexpr size_t kBytesA = sizeof(sA[0]);
+	      int unroll_n_valid = 0;
+#pragma unroll
+	      for (int u = 0; u < UnrollN; ++u) {
+	        if ((tile_n + u) < n_tiles_group) {
+	          ++unroll_n_valid;
+	        }
+	      }
+	      const int unroll_n_tx = unroll_n_valid;
+	      size_t kBytesB =
+	          static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N) * static_cast<size_t>(K_TILE_BYTES);
+	      if constexpr (CtaGroup == 2 && UnrollN == 1) {
+	        // For legacy cta2_partition_b=1, each CTA loads only N/2 rows.
+	        if (cta2_partition_b_mode == 1) {
+	          kBytesB =
+	              static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N / 2) * static_cast<size_t>(K_TILE_BYTES);
+	        }
+	      }
+	      if constexpr (UnrollN == 2) {
+	        // UnrollN=2 uses a 256-row B tensormap load (2 tiles) regardless of tail validity.
+	        kBytesB = static_cast<size_t>(2) * static_cast<size_t>(TILE_N) * static_cast<size_t>(K_TILE_BYTES);
+	      }
+	      // UnrollN=2 uses a 256-row SFB tensormap load (2 tiles) regardless of tail validity.
+	      const size_t kBytesSFB = (UnrollN == 2)
+	                                   ? (static_cast<size_t>(2) * static_cast<size_t>(SFB_TILE_BYTES))
+	                                   : (static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(SFB_TILE_BYTES));
+	      const size_t kBytesSF = static_cast<size_t>(SFA_TILE_BYTES) + kBytesSFB;
+	      tok = cuda::device::barrier_arrive_tx(*bar, 1, kBytesA + kBytesB + kBytesSF);
 
       // For cta_group::2, CUTLASS partitions B across the two CTAs along N. In mode 1 we shift
       // the global N coordinate by N/2 so each CTA loads only one half. In other modes we keep the
       // global N coordinate and shift the shared-memory descriptor base per rank.
       //
       // Debug knob: allow disabling this shift to validate whether B is truly partitioned along N/2.
-      const bool partition_b_global_shift = (CtaGroup == 2) && (cta2_partition_b_mode == 1);
-      const int b_n_offset_base = partition_b_global_shift ? (n_offset + cluster_rank_b * (TILE_N / 2)) : n_offset;
-      // B/SFB vary with tile_n, so always load them per-CTA.
-      if constexpr (UnrollN == 2) {
-        const bool use_unroll2_tma_pack = (CtaGroup == 1) || (CtaGroup == 2);
-        if (use_unroll2_tma_pack) {
-          // Load 2 adjacent N tiles in a single TMA transaction (box_height=256).
-          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][0][0][0], b_desc, k_byte, b_n_offset_base, *bar);
-          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][0][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
-        } else {
+	      const bool partition_b_global_shift = (CtaGroup == 2) && (cta2_partition_b_mode == 1);
+	      const int b_n_offset_base = partition_b_global_shift ? (n_offset + cluster_rank_b * (TILE_N / 2)) : n_offset;
+	      // B/SFB vary with tile_n, so always load them per-CTA.
+	      if constexpr (UnrollN == 2) {
+	        // UnrollN=2: B tensormap uses box_height=256, so load both N tiles in one transaction.
+	        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][0][0][0], b_desc, k_byte * 2, b_n_offset_base, *bar);
+	      } else {
 #pragma unroll
-          for (int u = 0; u < UnrollN; ++u) {
-            if ((tile_n + u) >= n_tiles_group) {
-              continue;
-            }
-            const int k_tile_idx = k_byte / K_TILE_BYTES;
-            const int b_n_offset = b_n_offset_base + u * TILE_N;
-            const int sfb_row_offset_u =
-                (UnrollN == 2) ? ((k_tile_idx * n_tiles_tma + tile_n + u) * SFB_ROWS)
-                               : (sfb_row_offset + u * k_tiles_total * SFB_ROWS);
-            cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][u][0][0], b_desc, k_byte, b_n_offset, *bar);
-            cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][u][0][0], sfb_desc, /*x=*/0, sfb_row_offset_u, *bar);
-          }
-        }
-      } else {
-#pragma unroll
-        for (int u = 0; u < UnrollN; ++u) {
-          if ((tile_n + u) >= n_tiles_group) {
-            continue;
-          }
-          const int k_tile_idx = k_byte / K_TILE_BYTES;
-          const int b_n_offset = b_n_offset_base + u * TILE_N;
-          const int sfb_row_offset_u =
-              (UnrollN == 2) ? ((k_tile_idx * n_tiles_tma + tile_n + u) * SFB_ROWS)
-                             : (sfb_row_offset + u * k_tiles_total * SFB_ROWS);
-          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][u][0][0], b_desc, k_byte, b_n_offset, *bar);
-          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][u][0][0], sfb_desc, /*x=*/0, sfb_row_offset_u, *bar);
-        }
+	        for (int u = 0; u < UnrollN; ++u) {
+	          if ((tile_n + u) >= n_tiles_group) {
+	            continue;
+	          }
+	          const int b_n_offset = b_n_offset_base + u * TILE_N;
+	          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][u][0][0], b_desc, k_byte * 2, b_n_offset, *bar);
+	          if constexpr (UnrollN == 1) {
+	            cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][u][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
+	          }
+	        }
+	      }
+	      if constexpr (UnrollN == 2) {
+	        // UnrollN=2: SFB is packed K-major in global memory and TMA uses box_height=256,
+	        // so we can load both N tiles in one transaction into contiguous shared memory.
+	        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][0][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
+	      }
+
+	      if (!use_tma_multicast) {
+	        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sA[stage][0][0], a_desc, k_byte * 2, m_offset, *bar);
+	        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFA[stage][0][0], sfa_desc, /*x=*/0, sfa_row_offset, *bar);
       }
 
-      if (!use_tma_multicast) {
-        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sA[stage][0][0], a_desc, k_byte, m_offset, *bar);
-        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFA[stage][0][0], sfa_desc, /*x=*/0, sfa_row_offset, *bar);
-      }
-
-      cuda_device::cp_async_bulk_commit_group();
+      // NOTE: cp.async.bulk.tensor completion is tracked via the mbarrier; no commit_group is required.
     }
 
     // TMA multicast requires all CTAs to have joined the barrier generation before the
     // leader issues the multicast op, otherwise some CTAs can miss completions.
     // See `ch10/tma_multicast_cluster.cu` for the required sync pattern.
-    if (use_tma_multicast) {
+    if constexpr (EnableTmaMulticast) {
       __syncthreads();
       cg::this_cluster().sync();
     }
 
-    if (use_tma_multicast && cluster_rank == 0 && threadIdx.x == 0) {
-      // Coordinates are in the descriptor's dimension order. For A: (x=k_byte, y=m_offset).
-      const int coords_a[2] = {k_byte, m_offset};
-      cptx::cp_async_bulk_tensor(cptx::space_cluster,
-                                 cptx::space_global,
-                                 &sA[stage][0][0],
-                                 a_desc,
-                                 coords_a,
-                                 cuda::device::barrier_native_handle(*bar),
-                                 tma_multicast_mask);
+    if constexpr (EnableTmaMulticast) {
+      if (cluster_rank == 0 && threadIdx.x == 0) {
+      // Coordinates are in the descriptor's dimension order. A is encoded as 16U4 elements
+      // (2 fp4 values/byte), so x is in fp4 elements, not bytes.
+      const int coords_a[2] = {k_byte * 2, m_offset};
+      if constexpr (NVFP4_GROUP_GEMM_V2_MULTICAST_A != 0) {
+        cptx::cp_async_bulk_tensor(cptx::space_cluster,
+                                   cptx::space_global,
+                                   &sA[stage][0][0],
+                                   a_desc,
+                                   coords_a,
+                                   cuda::device::barrier_native_handle(*bar),
+                                   tma_multicast_mask);
+      }
 
       // For packed SFA: (x=0, y=row_offset).
       const int coords_sfa[2] = {0, sfa_row_offset};
-      cptx::cp_async_bulk_tensor(cptx::space_cluster,
-                                 cptx::space_global,
-                                 &sSFA[stage][0][0],
-                                 sfa_desc,
-                                 coords_sfa,
-                                 cuda::device::barrier_native_handle(*bar),
-                                 tma_multicast_mask);
+      if constexpr (NVFP4_GROUP_GEMM_V2_MULTICAST_SFA != 0) {
+        cptx::cp_async_bulk_tensor(cptx::space_cluster,
+                                   cptx::space_global,
+                                   &sSFA[stage][0][0],
+                                   sfa_desc,
+                                   coords_sfa,
+                                   cuda::device::barrier_native_handle(*bar),
+                                   tma_multicast_mask);
+      }
     }
-    return tok;
-  };
+    }
+
+    // Load B/SFB per-CTA after all CTAs have joined the barrier generation and the leader has
+    // issued the multicast. This matches the reference sync pattern and avoids missed completions.
+    if constexpr (EnableTmaMulticast) {
+      if (threadIdx.x == 0) {
+        // Optional debug: if a given operand isn't multicast, fall back to per-CTA TMA loads.
+        if constexpr (NVFP4_GROUP_GEMM_V2_MULTICAST_A == 0) {
+          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sA[stage][0][0], a_desc, k_byte * 2, m_offset, *bar);
+        }
+        if constexpr (NVFP4_GROUP_GEMM_V2_MULTICAST_SFA == 0) {
+          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFA[stage][0][0], sfa_desc, /*x=*/0, sfa_row_offset, *bar);
+        }
+
+        // For cta_group::2, CUTLASS partitions B across the two CTAs along N. In mode 1 we shift
+        // the global N coordinate by N/2 so each CTA loads only one half. In other modes we keep the
+        // global N coordinate and shift the shared-memory descriptor base per rank.
+	        const bool partition_b_global_shift = (CtaGroup == 2) && (cta2_partition_b_mode == 1);
+	        const int b_n_offset_base = partition_b_global_shift ? (n_offset + cluster_rank_b * (TILE_N / 2)) : n_offset;
+	        // B/SFB vary with tile_n, so always load them per-CTA.
+	        if constexpr (UnrollN == 2) {
+	          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][0][0][0], b_desc, k_byte * 2, b_n_offset_base, *bar);
+	        } else {
+#pragma unroll
+	          for (int u = 0; u < UnrollN; ++u) {
+	            if ((tile_n + u) >= n_tiles_group) {
+	              continue;
+	            }
+	            const int b_n_offset = b_n_offset_base + u * TILE_N;
+	            cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][u][0][0], b_desc, k_byte * 2, b_n_offset, *bar);
+	            if constexpr (UnrollN == 1) {
+	              cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][u][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
+	            }
+	          }
+	        }
+	        if constexpr (UnrollN == 2) {
+	          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][0][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
+	        }
+	      }
+	    }
+	    return tok;
+	  };
+
+  // TMA helper (ops-only): issue the async TMA copies for a tile assuming the barrier generation
+  // has already been armed via `barrier_arrive_tx` by another thread (warp-specialized producer).
+	  auto issue_tma_tile_ops_only = [&](int stage, int k_byte, int sfa_row_offset, int sfb_row_offset) -> void {
+	    block_barrier* bar = bars[stage];
+
+	    const bool partition_b_global_shift = (CtaGroup == 2) && (cta2_partition_b_mode == 1);
+	    const int b_n_offset_base = partition_b_global_shift ? (n_offset + cluster_rank_b * (TILE_N / 2)) : n_offset;
+
+	    if constexpr (UnrollN == 2) {
+	      cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][0][0][0], b_desc, k_byte * 2, b_n_offset_base, *bar);
+	    } else {
+#pragma unroll
+	      for (int u = 0; u < UnrollN; ++u) {
+	        if ((tile_n + u) >= n_tiles_group) {
+	          continue;
+	        }
+	        const int b_n_offset = b_n_offset_base + u * TILE_N;
+	        cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sB[stage][u][0][0], b_desc, k_byte * 2, b_n_offset, *bar);
+	        if constexpr (UnrollN == 1) {
+	          cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][u][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
+	        }
+	      }
+	    }
+	    if constexpr (UnrollN == 2) {
+	      cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFB[stage][0][0][0], sfb_desc, /*x=*/0, sfb_row_offset, *bar);
+	    }
+
+	    // A/SFA are always loaded per-CTA in the non-multicast path.
+	    cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sA[stage][0][0], a_desc, k_byte * 2, m_offset, *bar);
+	    cuda_device::cp_async_bulk_tensor_2d_global_to_shared(&sSFA[stage][0][0], sfa_desc, /*x=*/0, sfa_row_offset, *bar);
+	  };
 
   auto wait_tma_tile = [&](int stage, block_barrier::arrival_token& tok) {
     block_barrier* bar = bars[stage];
     if (threadIdx.x == 0) {
       // Wait for the outstanding TMA transactions associated with this barrier generation.
       bar->wait(std::move(tok));
-      cuda_device::cp_async_bulk_wait_group_read<0>();
     }
     __syncthreads();
     if constexpr (CtaGroup == 2) {
-      cg::this_cluster().sync();
-    } else if (use_tma_multicast) {
       cg::this_cluster().sync();
     }
   };
@@ -1741,45 +2252,73 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     block_barrier* bar = bars[stage];
     if (threadIdx.x == 0) {
       bar->wait(std::move(tok));
-      cuda_device::cp_async_bulk_wait_group_read<0>();
     }
     __syncwarp();
   };
 
-  const int warp = static_cast<int>(threadIdx.x) >> 5;
-  const int lane = static_cast<int>(threadIdx.x) & 31;
+	  const int warp = static_cast<int>(threadIdx.x) >> 5;
+	  const int lane = static_cast<int>(threadIdx.x) & 31;
 
-  // Full-CTA bring-up path (used for cta_group::2 and for optional TMA multicast mode).
-  auto run_full_cta_mainloop = [&]() {
-    if constexpr (PIPELINE_STAGES == 1) {
-      // Sequential K-tile loop (1 stage): load -> scales -> MMA.
+	  // SFB row addressing:
+	  // - UnrollN=1 uses the canonical N-major packing: [n_tiles, k_tiles, 128, 16]
+	  //     row_offset = (tile_n * k_tiles_total + k_tile_idx) * 128
+	  // - UnrollN=2 uses K-major packing so (tile_n, tile_n+1) are contiguous for a fixed k_tile:
+	  //     [k_tiles, n_tiles_tma, 128, 16] with n_tiles_tma rounded up to an even tile count.
+	  //     row_offset = (k_tile_idx * n_tiles_tma + tile_n) * 128
+	  const int n_tiles_tma = (UnrollN == 2) ? ((n_tiles_group + 1) & ~1) : n_tiles_group;
+	  auto sfb_row_offset_for = [&](int tile_n_start, int k_tile_idx) -> int {
+	    if constexpr (UnrollN == 2) {
+	      return (k_tile_idx * n_tiles_tma + tile_n_start) * SFB_ROWS;
+	    } else {
+	      return (tile_n_start * k_tiles_total + k_tile_idx) * SFB_ROWS;
+	    }
+	  };
+
+	  // Full-CTA bring-up path (used for cta_group::2 and for optional TMA multicast mode).
+	  auto run_full_cta_mainloop = [&]() {
+	    if constexpr (PIPELINE_STAGES == 1) {
+	      // Sequential K-tile loop (1 stage): load -> scales -> MMA.
       for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
-        const int k_byte = k_tile_idx * K_TILE_BYTES;
-        const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
-        const int sfb_row_offset =
-            (UnrollN == 2) ? ((k_tile_idx * n_tiles_tma + tile_n) * SFB_ROWS) : ((tile_n * k_tiles_total + k_tile_idx) * SFB_ROWS);
-        auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
-        wait_tma_tile(/*stage=*/0, tok0);
+	        const int k_byte = k_tile_idx * K_TILE_BYTES;
+	        const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
+	        const int sfb_row_offset = sfb_row_offset_for(tile_n, k_tile_idx);
+	        auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
+	        wait_tma_tile(/*stage=*/0, tok0);
 
         if constexpr (DEBUG_STAGE == 2) {
           break;
         }
 
-        if (threadIdx.x == 0) {
-          const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
-          copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
-          for (int u = 0; u < UnrollN; ++u) {
-            if ((tile_n + u) >= n_tiles_group) {
-              continue;
+        if constexpr (WS_SEGMENT_PARALLEL) {
+          if (lane == 0) {
+            const int seg = warp;
+            if (seg < 4) {
+              constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+              const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
+              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][0]);
+              tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+                  desc_sfa_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP), tmem_sfa_seg[seg]);
+              tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+                  desc_sfb_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP), tmem_sfb_seg[0][seg]);
             }
-            const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
-            const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
-            copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
           }
-        }
-        __syncthreads();
-        if constexpr (CtaGroup == 2) {
-          cg::this_cluster().sync();
+        } else {
+          if (threadIdx.x == 0) {
+            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
+            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+            for (int u = 0; u < UnrollN; ++u) {
+              if ((tile_n + u) >= n_tiles_group) {
+                continue;
+              }
+              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
+              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+            }
+          }
+          __syncthreads();
+          if constexpr (CtaGroup == 2) {
+            cg::this_cluster().sync();
+          }
         }
         // CUTLASS does not issue an explicit `tcgen05.wait::st` fence after UTCCP scale copies.
         // The subsequent UMMA uses the TMEM scale addresses and will naturally stall if needed.
@@ -1789,26 +2328,94 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
           break;
         }
 
-        if (threadIdx.x == 0) {
-          const int mma_unroll_n = USE_N256_MMA ? 1 : UnrollN;
+        if constexpr (WS_SEGMENT_PARALLEL) {
+          if (lane == 0) {
+            const int seg = warp;
+            if (seg < 4) {
+              if (k_tile_idx == 0 && seg != 0) {
+                while (ws_seg0_done_tile < 0) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+                  __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+                }
+              }
+              const uint64_t desc_a =
+                  static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+              const uint64_t desc_b =
+                  static_cast<uint64_t>(desc_b_base[0][0]) + cta2_desc_b_row_offset +
+                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+              const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+              tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+                  desc_a,
+                  desc_b,
+                  tmem_c_tiles[0],
+                  accumulate,
+                  idesc_hi_seg[0][seg],
+                  tmem_sfa_seg[seg],
+                  tmem_sfb_seg[0][seg]);
+              if (k_tile_idx == 0 && seg == 0) {
+                ws_seg0_done_tile = 0;
+                __threadfence_block();
+              }
+            }
+          }
+		        } else {
+		          if constexpr (NVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS != 0) {
+		            if (lane == 0) {
 #pragma unroll
-		        for (int u = 0; u < mma_unroll_n; ++u) {
-		          if ((tile_n + u) >= n_tiles_group) {
-		            continue;
-		          }
+		              for (int u = 0; u < UnrollN; ++u) {
+		                if ((tile_n + u) >= n_tiles_group) {
+		                  continue;
+		                }
 #pragma unroll
-		          for (int seg = 0; seg < 4; ++seg) {
-	            const uint64_t desc_a =
-	                static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
-	                static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-	            const uint64_t desc_b =
-	                static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
-	                static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-	            const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
-	            tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-	                desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg], tmem_sfb_seg[u][seg]);
+	                for (int seg = 0; seg < 4; ++seg) {
+	                  const uint64_t desc_a =
+	                      static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+	                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+	                  const uint64_t desc_b =
+	                      static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
+	                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+	                  const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+	                  tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+	                      desc_a,
+	                      desc_b,
+	                      tmem_c_tiles[u],
+	                      accumulate,
+	                      idesc_hi_seg[u][seg],
+	                      tmem_sfa_seg[seg],
+	                      tmem_sfb_seg[u][seg]);
+	                }
+	              }
+	            }
+		          } else {
+		            if (threadIdx.x == 0) {
+#pragma unroll
+	            for (int u = 0; u < UnrollN; ++u) {
+	              if ((tile_n + u) >= n_tiles_group) {
+	                continue;
+	              }
+#pragma unroll
+              for (int seg = 0; seg < 4; ++seg) {
+                const uint64_t desc_a =
+                    static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+                const uint64_t desc_b =
+                    static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
+                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+                const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+                    desc_a,
+                    desc_b,
+                    tmem_c_tiles[u],
+                    accumulate,
+                    idesc_hi_seg[u][seg],
+                    tmem_sfa_seg[seg],
+                    tmem_sfb_seg[u][seg]);
+              }
+            }
+	            }
 	          }
-	        }
 	        }
 
         if constexpr (DEBUG_STAGE == 4) {
@@ -1819,55 +2426,74 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     }
 
     // Prologue: preload the first K tile into stage0.
-    if (k_tiles_total > 0) {
-      const int k_tile_idx = 0;
-      const int k_byte = 0;
-      const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
-      const int sfb_row_offset =
-          (UnrollN == 2) ? ((k_tile_idx * n_tiles_tma + tile_n) * SFB_ROWS) : ((tile_n * k_tiles_total + k_tile_idx) * SFB_ROWS);
-      auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
-      wait_tma_tile(/*stage=*/0, tok0);
-    }
+	    if (k_tiles_total > 0) {
+	      const int k_tile_idx = 0;
+	      const int k_byte = 0;
+	      const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
+	      const int sfb_row_offset = sfb_row_offset_for(tile_n, k_tile_idx);
+	      auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
+	      wait_tma_tile(/*stage=*/0, tok0);
+	    }
 
-    // Mainloop: iterate over K tiles with a 2-stage shared-memory pipeline.
+    // Mainloop: iterate over K tiles with a circular shared-memory pipeline.
     for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
-      const int stage_cur = k_tile_idx & 1;
-      const int stage_next = stage_cur ^ 1;
+      const int stage_cur = k_tile_idx % PIPELINE_STAGES;
+      const int stage_next = (k_tile_idx + 1) % PIPELINE_STAGES;
       const int k_byte = k_tile_idx * K_TILE_BYTES;
 
       if constexpr (DEBUG_STAGE == 2) {
         break;
       }
 
-      // Prefetch the next K tile into the alternate stage (overlaps with UTCCP+MMA of the current tile).
+      // Prefetch the next K tile into the next stage (overlaps with UTCCP+MMA of the current tile).
       const bool has_next = (k_tile_idx + 1) < k_tiles_total;
       block_barrier::arrival_token tok_next;
 	      if (has_next) {
 	        const int next_tile = k_tile_idx + 1;
 	        const int next_k_byte = next_tile * K_TILE_BYTES;
 	        const int sfa_row_offset_next = (sfa_tile_m * k_tiles_total + next_tile) * SFA_ROWS;
-	        const int sfb_row_offset_next =
-	            (UnrollN == 2) ? ((next_tile * n_tiles_tma + tile_n) * SFB_ROWS) : ((tile_n * k_tiles_total + next_tile) * SFB_ROWS);
+	        const int sfb_row_offset_next = sfb_row_offset_for(tile_n, next_tile);
 	        tok_next = issue_tma_tile(stage_next, next_k_byte, sfa_row_offset_next, sfb_row_offset_next);
 	      }
 
-			      if (threadIdx.x == 0) {
-			        const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
-                copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
-                for (int u = 0; u < UnrollN; ++u) {
-                  if ((tile_n + u) >= n_tiles_group) {
-                    continue;
-                  }
-                  const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
-                  const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
-                  copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
-                }
-			      }
+	      if constexpr (WS_SEGMENT_PARALLEL) {
+	        if (lane == 0) {
+	          const int seg = warp;
+	          if (seg < 4) {
+	            constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+	            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
+	            const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][0]);
+	            tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+	                desc_sfa_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP), tmem_sfa_seg[seg]);
+	            tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+	                desc_sfb_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP), tmem_sfb_seg[0][seg]);
+	          }
+	        }
+	      } else {
+	        if (threadIdx.x == 0) {
+	          const uint64_t desc_sfa_base =
+	              static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
+	          copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+	          for (int u = 0; u < UnrollN; ++u) {
+	            if ((tile_n + u) >= n_tiles_group) {
+	              continue;
+	            }
+            if constexpr (WS_UNROLL2_MMA && (NVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP != 0)) {
+              if (ws_u1_active && u == 1) {
+                continue;
+              }
+            }
+	            const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
+	            const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+	            copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+	          }
+	        }
 
-      __syncthreads();
-      if constexpr (CtaGroup == 2) {
-        cg::this_cluster().sync();
-      }
+	        __syncthreads();
+	        if constexpr (CtaGroup == 2) {
+	          cg::this_cluster().sync();
+	        }
+	      }
 
       // UTCCP copies write TMEM asynchronously. Ensure scale-factor tiles are resident
       // before the subsequent MMA reads them (correctness-first; we can pipeline later).
@@ -1877,29 +2503,99 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
         break;
       }
 
-        if (threadIdx.x == 0) {
-          const int mma_unroll_n = USE_N256_MMA ? 1 : UnrollN;
-#pragma unroll
-		        for (int u = 0; u < mma_unroll_n; ++u) {
-		          if ((tile_n + u) >= n_tiles_group) {
-		            continue;
-		          }
-#pragma unroll
-		          for (int seg = 0; seg < 4; ++seg) {
+	      if constexpr (WS_SEGMENT_PARALLEL) {
+	        if (lane == 0) {
+	          const int seg = warp;
+	          if (seg < 4) {
+	            if (k_tile_idx == 0 && seg != 0) {
+	              while (ws_seg0_done_tile < 0) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+	                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+	              }
+	            }
 	            const uint64_t desc_a =
 	                static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
 	                static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
 	            const uint64_t desc_b =
-	                static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
+	                static_cast<uint64_t>(desc_b_base[stage_cur][0]) + cta2_desc_b_row_offset +
 	                static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-
-	            // accumulate=0 for first segment of first tile, else accumulate=1.
 	            const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
 	            tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-	                desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg], tmem_sfb_seg[u][seg]);
+	                desc_a,
+	                desc_b,
+	                tmem_c_tiles[0],
+	                accumulate,
+	                idesc_hi_seg[0][seg],
+	                tmem_sfa_seg[seg],
+	                tmem_sfb_seg[0][seg]);
+	            if (k_tile_idx == 0 && seg == 0) {
+	              ws_seg0_done_tile = 0;
+	              __threadfence_block();
+	            }
 	          }
 	        }
-	      }
+			      } else {
+			        if constexpr (NVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS != 0) {
+			          if (lane == 0) {
+#pragma unroll
+			            for (int u = 0; u < UnrollN; ++u) {
+			              if ((tile_n + u) >= n_tiles_group) {
+			                continue;
+			              }
+#pragma unroll
+		              for (int seg = 0; seg < 4; ++seg) {
+		                const uint64_t desc_a =
+		                    static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+		                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		                const uint64_t desc_b =
+		                    static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
+		                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+
+		                // accumulate=0 for first segment of first tile, else accumulate=1.
+		                const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+		                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+		                    desc_a,
+		                    desc_b,
+		                    tmem_c_tiles[u],
+		                    accumulate,
+		                    idesc_hi_seg[u][seg],
+		                    tmem_sfa_seg[seg],
+		                    tmem_sfb_seg[u][seg]);
+		              }
+		            }
+		          }
+			        } else {
+			          if (threadIdx.x == 0) {
+#pragma unroll
+			          for (int u = 0; u < UnrollN; ++u) {
+			            if ((tile_n + u) >= n_tiles_group) {
+		              continue;
+		            }
+#pragma unroll
+	            for (int seg = 0; seg < 4; ++seg) {
+	              const uint64_t desc_a =
+	                  static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+	                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+	              const uint64_t desc_b =
+	                  static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
+	                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+
+	              // accumulate=0 for first segment of first tile, else accumulate=1.
+	              const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+	              tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+	                  desc_a,
+	                  desc_b,
+	                  tmem_c_tiles[u],
+	                  accumulate,
+		                  idesc_hi_seg[u][seg],
+		                  tmem_sfa_seg[seg],
+		                  tmem_sfb_seg[u][seg]);
+		            }
+		          }
+		          }
+		        }
+		      }
 
       if constexpr (DEBUG_STAGE == 4) {
         break;
@@ -1917,201 +2613,743 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     }
   };
 
-  if constexpr (CtaGroup == 1) {
-    if (!use_tma_multicast) {
-      // Fast path: warp0 runs the mainloop; other warps stay idle until epilogue.
-      // This avoids per-K-tile CTA-wide synchronization overhead in the common (non-multicast) mode.
-    if constexpr (PIPELINE_STAGES == 1) {
-      // Single-stage bring-up: keep the simple warp0-only mainloop.
-      if (warp == 0) {
-        for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
-          const int k_byte = k_tile_idx * K_TILE_BYTES;
-          const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
-          const int sfb_row_offset = (UnrollN == 2) ? ((k_tile_idx * n_tiles_tma + tile_n) * SFB_ROWS)
-                                                    : ((tile_n * k_tiles_total + k_tile_idx) * SFB_ROWS);
-          auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
-          wait_tma_tile_warp0(/*stage=*/0, tok0);
+			  if constexpr (CtaGroup == 1) {
+			    if constexpr (!EnableTmaMulticast && (NVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP != 0)) {
+	      // Fast path: warp0 runs the mainloop; other warps stay idle until epilogue.
+	      // This avoids per-K-tile CTA-wide synchronization overhead in the common (non-multicast) mode.
+	    if constexpr (PIPELINE_STAGES == 1) {
+	      // Single-stage bring-up: keep the simple warp0-only mainloop.
+	      if (warp == 0) {
+        if constexpr (STAGE1_PREFETCH) {
+          // Stage-1 pipelined mainloop: issue TMA for tile k+1 after issuing UMMA for tile k.
+          // This assumes UMMA consumes shared memory at issue time (matching CUTLASS' num_ab_stage=1 intent).
+	          if (k_tiles_total > 0) {
+	            const int k_tile0 = 0;
+	            const int k_byte0 = 0;
+	            const int sfa_row_offset0 = (sfa_tile_m * k_tiles_total + k_tile0) * SFA_ROWS;
+	            const int sfb_row_offset0 = sfb_row_offset_for(tile_n, k_tile0);
+	            block_barrier::arrival_token tok_cur = issue_tma_tile(/*stage=*/0, k_byte0, sfa_row_offset0, sfb_row_offset0);
 
-		          if constexpr (DEBUG_STAGE == 2) {
-		            break;
-		          }
+            for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+              wait_tma_tile_warp0(/*stage=*/0, tok_cur);
 
-		          if (lane == 0) {
-		            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
-		            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
-		            for (int u = 0; u < UnrollN; ++u) {
-		              if ((tile_n + u) >= n_tiles_group) {
-	                continue;
+              if constexpr (DEBUG_STAGE == 2) {
+                break;
+              }
+
+              const int k_byte = k_tile_idx * K_TILE_BYTES;
+              if (lane == 0) {
+                const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
+	                copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+	                for (int u = 0; u < UnrollN; ++u) {
+	                  if ((tile_n + u) >= n_tiles_group) {
+	                    continue;
+	                  }
+	                  const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
+	                  const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+	                  copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+	                }
+	                if constexpr (DEBUG_STAGE != 3) {
+#pragma unroll
+	                  for (int seg = 0; seg < 4; ++seg) {
+	                    const uint64_t desc_a =
+	                        static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+	                        static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+	                    const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
+#pragma unroll
+	                    for (int u = 0; u < UnrollN; ++u) {
+	                      if ((tile_n + u) >= n_tiles_group) {
+	                        continue;
+	                      }
+                      const uint64_t desc_b =
+                          static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
+                          static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+                      tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+                          desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
+                          tmem_sfb_seg[u][seg]);
+                    }
+                  }
+                }
+              }
+
+              if constexpr (DEBUG_STAGE == 3 || DEBUG_STAGE == 4) {
+                break;
+              }
+
+              const bool has_next = (k_tile_idx + 1) < k_tiles_total;
+	              if (has_next) {
+	                const int next_tile = k_tile_idx + 1;
+	                const int next_k_byte = next_tile * K_TILE_BYTES;
+	                const int sfa_row_offset_next = (sfa_tile_m * k_tiles_total + next_tile) * SFA_ROWS;
+	                const int sfb_row_offset_next = sfb_row_offset_for(tile_n, next_tile);
+	                tok_cur = issue_tma_tile(/*stage=*/0, next_k_byte, sfa_row_offset_next, sfb_row_offset_next);
+	              } else {
+	                __syncwarp();
 	              }
-	              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
-		              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
-		              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
-		            }
-		            // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
-		          }
+            }
+          }
+        } else {
+          for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+            // Ensure warp1 has finished using the shared-memory stage before we overwrite it
+            // (PIPELINE_STAGES==1 reuses the same stage buffer every iteration).
+            if constexpr (WS_UNROLL2_MMA) {
+              if (lane == 0 && ws_u1_active && k_tile_idx > 0) {
+                while (ws_u1_done_tile < (k_tile_idx - 1)) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+                  __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+                }
+              }
+            }
+            if constexpr (WS_SPLIT_U0_SEGS) {
+              if (lane == 0 && k_tile_idx > 0) {
+                while (ws_u0_done_tile < (k_tile_idx - 1)) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+                  __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+                }
+              }
+            }
+	            const int k_byte = k_tile_idx * K_TILE_BYTES;
+	            const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
+	            const int sfb_row_offset = sfb_row_offset_for(tile_n, k_tile_idx);
+	            auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
+	            wait_tma_tile_warp0(/*stage=*/0, tok0);
 
-		          if constexpr (DEBUG_STAGE == 3) {
-		            break;
-		          }
+            if constexpr (DEBUG_STAGE == 2) {
+              break;
+            }
 
-		          if (lane == 0) {
-		            const int mma_unroll_n = USE_N256_MMA ? 1 : UnrollN;
-		#pragma unroll
-		            for (int seg = 0; seg < 4; ++seg) {
-		              const uint64_t desc_a =
-		                  static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
-		                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-		              const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
-		#pragma unroll
-		              for (int u = 0; u < mma_unroll_n; ++u) {
-		                if ((tile_n + u) >= n_tiles_group) {
-		                  continue;
+		            if (lane == 0) {
+		              const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
+		              // Scale-copy schedule:
+		              // - Always copy SFA in warp0 (shared across u=0/u=1 MMAs).
+		              // - For WS_UNROLL2_MMA, warp0 signals warp1 after SFA is ready; warp1 copies SFB(u=1).
+		              copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+		              if constexpr (WS_UNROLL2_MMA) {
+		                if (ws_u1_active) {
+		                  // Signal warp1 that TMA is complete and SFA is resident in TMEM for this K tile.
+		                  ws_scales_ready_tile = k_tile_idx;
 		                }
-		                const uint64_t desc_b =
-		                    static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
-		                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-		                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-		                    desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
-		                    tmem_sfb_seg[u][seg]);
-		              }
-		            }
-		          }
+		                // Warp0 copies u=0's SFB tile.
+		                const uint64_t desc_sfb0_base = static_cast<uint64_t>(desc_sfb[0][0]);
+		                const uint32_t* tmem_sfb_ptrs_u0 = tmem_sfb_ptrs + 0 * 4;
+		                copy_scale_fragments(desc_sfb0_base, tmem_sfb_ptrs_u0, /*is_sfb=*/true);
+		              } else {
+		                for (int u = 0; u < UnrollN; ++u) {
+		                  if ((tile_n + u) >= n_tiles_group) {
+	                    continue;
+                  }
+                  const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
+                  const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+	                  copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+	                }
+	              }
+		              if constexpr (DEBUG_STAGE != 3) {
+		                if constexpr (WS_SPLIT_U0_SEGS) {
+		                  // Split u=0 MMA issue: warp0 issues seg0, warp2 issues seg1..3.
+	                  // seg0 must execute first when accumulate=0 (k_tile_idx==0), otherwise
+                  // later segments would accumulate into uninitialized accumulators.
+                  if ((tile_n + 0) < n_tiles_group) {
+                    constexpr int seg = 0;
+                    constexpr int u = 0;
+                    const uint64_t desc_a =
+                        static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+                        static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+                    const uint64_t desc_b =
+                        static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
+                        static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+                    const uint32_t accumulate = (k_byte == 0) ? 0u : 1u;
+                    tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+                        desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
+                        tmem_sfb_seg[u][seg]);
+                  }
+	                  // Signal warp2 that seg0 has been issued for this K tile.
+	                  ws_u0_ready_tile = k_tile_idx;
+	                } else {
+#pragma unroll
+	                  for (int seg = 0; seg < 4; ++seg) {
+                    const uint64_t desc_a =
+                        static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+                        static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+	                    const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
+#pragma unroll
+	                    for (int u = 0; u < UnrollN; ++u) {
+	                      if ((tile_n + u) >= n_tiles_group) {
+	                        continue;
+	                      }
+                      if constexpr (WS_UNROLL2_MMA) {
+                        if (ws_u1_active && u == 1) {
+                          continue;
+                        }
+                      }
+                      const uint64_t desc_b =
+                          static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
+                          static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+                      tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+                          desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
+                          tmem_sfb_seg[u][seg]);
+                    }
+                  }
+                }
+              }
+              // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
+            }
+
+            if constexpr (DEBUG_STAGE == 3) {
+              break;
+            }
+
+            if constexpr (DEBUG_STAGE == 4) {
+              break;
+            }
+          }
+        }
+      }
+	      if constexpr (WS_UNROLL2_MMA) {
+		        if (warp == 1 && ws_u1_active && lane == 0) {
+			          // Warp1 lane0 issues the u=1 MMAs after:
+			          // - warp0 has completed TMA and copied SFA into TMEM for this K tile.
+			          // Warp1 copies SFB(u=1) scales into TMEM, then issues UMMA.
+		          uint32_t ws_tmem_sfa_seg[4];
+		          uint32_t ws_tmem_sfb_seg[4];
+		          uint32_t ws_idesc_hi_seg[4];
+#pragma unroll
+          for (int seg = 0; seg < 4; ++seg) {
+            const uint32_t tmem_sfa = tmem_sfa_ptrs[seg];
+            const uint32_t tmem_sfb = tmem_sfb_ptrs[1 * 4 + seg];
+            ws_tmem_sfa_seg[seg] = tmem_sfa;
+            ws_tmem_sfb_seg[seg] = tmem_sfb;
+            const uint64_t idesc_runtime = umma::make_runtime_instr_desc_block_scaled(idesc, tmem_sfa, tmem_sfb);
+            ws_idesc_hi_seg[seg] = static_cast<uint32_t>(idesc_runtime >> 32);
+          }
+
+					          for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+					            while (ws_scales_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+					              __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+					            }
+					            // Copy SFB(u=1) scales for this tile from shared memory into TMEM.
+					            const uint64_t desc_sfb1_base = static_cast<uint64_t>(desc_sfb[0][1]);
+					            const uint32_t* tmem_sfb_ptrs_u1 = tmem_sfb_ptrs + 1 * 4;
+					            if constexpr (WS_SFB1_SEGMENT_HELPERS) {
+					              // Warp1 copies only seg0/seg1; helper warps copy seg2/seg3 in parallel.
+					              constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+					              tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+					                  desc_sfb1_base + static_cast<uint64_t>(0 * SF_COPY_32x128B_DESC_STEP), tmem_sfb_ptrs_u1[0]);
+					              tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+					                  desc_sfb1_base + static_cast<uint64_t>(1 * SF_COPY_32x128B_DESC_STEP), tmem_sfb_ptrs_u1[1]);
+					              // Issue seg0/seg1 MMAs while helper warps copy seg2/seg3.
+#pragma unroll
+					              for (int seg = 0; seg < 2; ++seg) {
+					                const uint64_t desc_a =
+					                    static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+					                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                const uint64_t desc_b =
+					                    static_cast<uint64_t>(desc_b_base[0][1]) + cta2_desc_b_row_offset +
+					                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+					                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+					                    desc_a, desc_b, tmem_c_tiles[1], accumulate, ws_idesc_hi_seg[seg],
+					                    ws_tmem_sfa_seg[seg], ws_tmem_sfb_seg[seg]);
+					              }
+
+					              // Wait for helper warps to finish copying seg2/seg3 scales for this tile.
+					              while (ws_sfb1_seg2_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+					                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+					              }
+					              while (ws_sfb1_seg3_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+					                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+					              }
+
+#pragma unroll
+					              for (int seg = 2; seg < 4; ++seg) {
+					                const uint64_t desc_a =
+					                    static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+					                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                const uint64_t desc_b =
+					                    static_cast<uint64_t>(desc_b_base[0][1]) + cta2_desc_b_row_offset +
+					                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                const uint32_t accumulate = 1u;
+					                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+					                    desc_a, desc_b, tmem_c_tiles[1], accumulate, ws_idesc_hi_seg[seg],
+					                    ws_tmem_sfa_seg[seg], ws_tmem_sfb_seg[seg]);
+					              }
+					            } else {
+					              copy_scale_fragments(desc_sfb1_base, tmem_sfb_ptrs_u1, /*is_sfb=*/true);
+#pragma unroll
+					              for (int seg = 0; seg < 4; ++seg) {
+					                const uint64_t desc_a =
+					                    static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+					                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                const uint64_t desc_b =
+					                    static_cast<uint64_t>(desc_b_base[0][1]) + cta2_desc_b_row_offset +
+					                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+					                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+					                    desc_a, desc_b, tmem_c_tiles[1], accumulate, ws_idesc_hi_seg[seg],
+					                    ws_tmem_sfa_seg[seg], ws_tmem_sfb_seg[seg]);
+					              }
+					            }
+				            ws_u1_done_tile = k_tile_idx;
+				          }
+				        }
+			      }
+			      if constexpr (WS_SFB1_SEGMENT_HELPERS) {
+			        // Helper warps copy the remaining SFB(u=1) scale segments in parallel with warp1's MMAs.
+			        if ((warp == 2 || warp == 3) && ws_u1_active && lane == 0) {
+			          const int seg = (warp == 2) ? 2 : 3;
+			          constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+				          for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+				            while (ws_scales_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+				              __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+				            }
+				            const uint64_t desc_sfb1_base = static_cast<uint64_t>(desc_sfb[0][1]);
+				            const uint64_t src_desc =
+				                desc_sfb1_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP);
+				            const uint32_t dst_addr = tmem_sfb_ptrs[1 * 4 + seg];
+				            tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(src_desc, dst_addr);
+				            if (seg == 2) {
+				              ws_sfb1_seg2_ready_tile = k_tile_idx;
+				            } else {
+				              ws_sfb1_seg3_ready_tile = k_tile_idx;
+				            }
+				            __threadfence_block();
+				          }
+				        }
+				      }
+			    } else {
+			      if (warp == 0) {
+			        // Warp0-only mainloop with a circular shared-memory pipeline.
+	        // Prologue: preload the first K tile into stage0.
+		        if (k_tiles_total > 0) {
+		          const int k_tile_idx = 0;
+			          const int k_byte = 0;
+			          const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
+			          const int sfb_row_offset = sfb_row_offset_for(tile_n, k_tile_idx);
+			          auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
+			          wait_tma_tile_warp0(/*stage=*/0, tok0);
+		        }
+
+	        // Mainloop: iterate over K tiles with the shared-memory pipeline.
+		        for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+		          const int stage_cur = k_tile_idx % PIPELINE_STAGES;
+		          const int stage_next = (k_tile_idx + 1) % PIPELINE_STAGES;
+		          const int k_byte = k_tile_idx * K_TILE_BYTES;
+
+	          if constexpr (DEBUG_STAGE == 2) {
+	            break;
+	          }
+
+		          // Ensure warp1 has finished using the stage buffer for tile (k-1) before we issue the
+		          // next prefetch (which may overwrite that same stage in the circular pipeline).
+		          if constexpr (WS_UNROLL2_MMA) {
+	            if (lane == 0 && ws_u1_active && k_tile_idx > 0) {
+	              while (ws_u1_done_tile < (k_tile_idx - 1)) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+	                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+	              }
+	            }
+	          }
+	          if constexpr (WS_SPLIT_U0_SEGS) {
+	            if (lane == 0 && k_tile_idx > 0) {
+	              while (ws_u0_done_tile < (k_tile_idx - 1)) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+	                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+	              }
+	            }
+	          }
+
+		          // Prefetch the next K tile into the next stage.
+		          const bool has_next = (k_tile_idx + 1) < k_tiles_total;
+	          block_barrier::arrival_token tok_next;
+	          if (has_next) {
+                const int next_tile = k_tile_idx + 1;
+                const int next_k_byte = next_tile * K_TILE_BYTES;
+                const int sfa_row_offset_next = (sfa_tile_m * k_tiles_total + next_tile) * SFA_ROWS;
+                const int sfb_row_offset_next = sfb_row_offset_for(tile_n, next_tile);
+            if constexpr (WS_TMA_PRODUCER) {
+              if (lane == 0) {
+                block_barrier* bar = bars[stage_next];
+                constexpr size_t kBytesA = sizeof(sA[0]);
+                int unroll_n_valid = 0;
+#pragma unroll
+                for (int u = 0; u < UnrollN; ++u) {
+                  if ((tile_n + u) < n_tiles_group) {
+                    ++unroll_n_valid;
+                  }
+                }
+                const int unroll_n_tx = unroll_n_valid;
+                size_t kBytesB = static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(TILE_N) *
+                                 static_cast<size_t>(K_TILE_BYTES);
+                const size_t kBytesSFB = static_cast<size_t>(unroll_n_tx) * static_cast<size_t>(SFB_TILE_BYTES);
+                const size_t kBytesSF = static_cast<size_t>(SFA_TILE_BYTES) + kBytesSFB;
+                tok_next = cuda::device::barrier_arrive_tx(*bar, 1, kBytesA + kBytesB + kBytesSF);
+
+                ws_tma_req_stage = stage_next;
+                ws_tma_req_k_byte = next_k_byte;
+                ws_tma_req_sfa_row_offset = sfa_row_offset_next;
+                ws_tma_req_sfb_row_offset = sfb_row_offset_next;
+                __threadfence_block();
+                ws_tma_req_tile = next_tile;
+              }
+            } else {
+              tok_next = issue_tma_tile(stage_next, next_k_byte, sfa_row_offset_next, sfb_row_offset_next);
+            }
+	          }
+
+						          if (lane == 0) {
+						            const uint64_t desc_sfa_base =
+						                static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
+						            // Scale-copy schedule:
+						            // - Always copy SFA in warp0 (shared across u=0/u=1 MMAs).
+						            // - For WS_UNROLL2_MMA, warp0 signals warp1 after SFA is ready; warp1 copies SFB(u=1).
+							            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+								            if constexpr (WS_UNROLL2_MMA) {
+								              if (ws_u1_active) {
+								                // Signal warp1 that TMA is complete and SFA is resident in TMEM for this K tile.
+								                ws_scales_ready_tile = k_tile_idx;
+								              }
+								              // Warp0 copies u=0's SFB tile.
+								              const uint64_t desc_sfb0_base = static_cast<uint64_t>(desc_sfb[stage_cur][0]);
+								              const uint32_t* tmem_sfb_ptrs_u0 = tmem_sfb_ptrs + 0 * 4;
+								              copy_scale_fragments(desc_sfb0_base, tmem_sfb_ptrs_u0, /*is_sfb=*/true);
+						            } else {
+						              for (int u = 0; u < UnrollN; ++u) {
+						                if ((tile_n + u) >= n_tiles_group) {
+				                  continue;
+				                }
+				                const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
+				                const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+						                copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+						              }
+							            }
+							            if constexpr (DEBUG_STAGE != 3) {
+							              if constexpr (WS_SPLIT_U0_SEGS) {
+						                if ((tile_n + 0) < n_tiles_group) {
+					                  constexpr int seg = 0;
+					                  constexpr int u = 0;
+					                  const uint64_t desc_a =
+					                      static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+					                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                  const uint64_t desc_b =
+					                      static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
+					                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                  const uint32_t accumulate = (k_byte == 0) ? 0u : 1u;
+					                  tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+					                      desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
+					                      tmem_sfb_seg[u][seg]);
+					                }
+						                ws_u0_ready_tile = k_tile_idx;
+						              } else {
+#pragma unroll
+						                for (int seg = 0; seg < 4; ++seg) {
+				                  const uint64_t desc_a =
+				                      static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+				                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                  const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
+#pragma unroll
+						                  for (int u = 0; u < UnrollN; ++u) {
+						                    if ((tile_n + u) >= n_tiles_group) {
+						                      continue;
+						                    }
+					                    if constexpr (WS_UNROLL2_MMA) {
+					                      if (ws_u1_active && u == 1) {
+					                        continue;
+					                      }
+					                    }
+					                    const uint64_t desc_b =
+					                        static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
+					                        static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+					                    tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+					                        desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg],
+					                        tmem_sfa_seg[seg], tmem_sfb_seg[u][seg]);
+					                  }
+				                }
+					              }
+				            }
+				            // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
+				          }
+
+			          if constexpr (DEBUG_STAGE == 3) {
+			            break;
+			          }
 
 		          if constexpr (DEBUG_STAGE == 4) {
 		            break;
 		          }
-        }
-      }
-    } else {
-      if (warp == 0) {
-        // Debug bring-up path: keep the simple warp0-only mainloop.
-        // Prologue: preload the first K tile into stage0.
-        if (k_tiles_total > 0) {
-          const int k_tile_idx = 0;
-          const int k_byte = 0;
-          const int sfa_row_offset = (sfa_tile_m * k_tiles_total + k_tile_idx) * SFA_ROWS;
-          const int sfb_row_offset = (UnrollN == 2) ? ((k_tile_idx * n_tiles_tma + tile_n) * SFB_ROWS)
-                                                    : ((tile_n * k_tiles_total + k_tile_idx) * SFB_ROWS);
-          auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
-          wait_tma_tile_warp0(/*stage=*/0, tok0);
-        }
 
-        // Mainloop: iterate over K tiles with a 2-stage shared-memory pipeline.
-        for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
-          const int stage_cur = k_tile_idx & 1;
-          const int stage_next = stage_cur ^ 1;
-          const int k_byte = k_tile_idx * K_TILE_BYTES;
-
-          if constexpr (DEBUG_STAGE == 2) {
-            break;
+	          // Ensure the next stage is resident in shared memory before the loop advances.
+	          if (has_next) {
+	            wait_tma_tile_warp0(stage_next, tok_next);
+	          } else {
+	            __syncwarp();
+	          }
+	        }
+	      }
+          if constexpr (WS_TMA_PRODUCER) {
+            // Signal the producer warp to exit its request loop before we join the CTA.
+            if (warp == 0 && lane == 0) {
+              __threadfence_block();
+              ws_tma_req_tile = -2;
+            }
           }
-
-          // Prefetch the next K tile into the alternate stage.
-          const bool has_next = (k_tile_idx + 1) < k_tiles_total;
-          block_barrier::arrival_token tok_next;
-          if (has_next) {
-            const int next_tile = k_tile_idx + 1;
-            const int next_k_byte = next_tile * K_TILE_BYTES;
-            const int sfa_row_offset_next = (sfa_tile_m * k_tiles_total + next_tile) * SFA_ROWS;
-            const int sfb_row_offset_next = (UnrollN == 2)
-                                                ? ((next_tile * n_tiles_tma + tile_n) * SFB_ROWS)
-                                                : ((tile_n * k_tiles_total + next_tile) * SFB_ROWS);
-            tok_next = issue_tma_tile(stage_next, next_k_byte, sfa_row_offset_next, sfb_row_offset_next);
+		      if constexpr (WS_UNROLL2_MMA) {
+			        if (warp == 1 && ws_u1_active && lane == 0) {
+			          // Warp1 lane0 issues u=1 MMAs once:
+			          // - warp0 has copied SFA + SFB(u=1) for this K tile.
+		          uint32_t ws_tmem_sfa_seg[4];
+		          uint32_t ws_tmem_sfb_seg[4];
+		          uint32_t ws_idesc_hi_seg[4];
+#pragma unroll
+	          for (int seg = 0; seg < 4; ++seg) {
+	            const uint32_t tmem_sfa = tmem_sfa_ptrs[seg];
+	            const uint32_t tmem_sfb = tmem_sfb_ptrs[1 * 4 + seg];
+	            ws_tmem_sfa_seg[seg] = tmem_sfa;
+	            ws_tmem_sfb_seg[seg] = tmem_sfb;
+	            const uint64_t idesc_runtime = umma::make_runtime_instr_desc_block_scaled(idesc, tmem_sfa, tmem_sfb);
+	            ws_idesc_hi_seg[seg] = static_cast<uint32_t>(idesc_runtime >> 32);
 	          }
 
-		          if (lane == 0) {
-		            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
-		            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
-		            for (int u = 0; u < UnrollN; ++u) {
-		              if ((tile_n + u) >= n_tiles_group) {
-	                continue;
-	              }
-	              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
-		              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
-		              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
-		            }
-		            // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
-		          }
+				          for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+				            while (ws_scales_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+				              __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+				            }
+				            const int stage_cur = k_tile_idx % PIPELINE_STAGES;
+				            // Copy SFB(u=1) scales for this tile from shared memory into TMEM.
+				            const uint64_t desc_sfb1_base = static_cast<uint64_t>(desc_sfb[stage_cur][1]);
+				            const uint32_t* tmem_sfb_ptrs_u1 = tmem_sfb_ptrs + 1 * 4;
+				            if constexpr (WS_SFB1_SEGMENT_HELPERS) {
+				              // Warp1 copies only seg0/seg1; helper warps copy seg2/seg3 in parallel.
+				              constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+				              tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+				                  desc_sfb1_base + static_cast<uint64_t>(0 * SF_COPY_32x128B_DESC_STEP), tmem_sfb_ptrs_u1[0]);
+				              tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(
+				                  desc_sfb1_base + static_cast<uint64_t>(1 * SF_COPY_32x128B_DESC_STEP), tmem_sfb_ptrs_u1[1]);
+				              // Issue seg0/seg1 MMAs while helper warps copy seg2/seg3.
+#pragma unroll
+				              for (int seg = 0; seg < 2; ++seg) {
+				                const uint64_t desc_a =
+				                    static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+				                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+				                const uint64_t desc_b =
+				                    static_cast<uint64_t>(desc_b_base[stage_cur][1]) + cta2_desc_b_row_offset +
+				                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+				                const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+				                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+				                    desc_a, desc_b, tmem_c_tiles[1], accumulate, ws_idesc_hi_seg[seg],
+				                    ws_tmem_sfa_seg[seg], ws_tmem_sfb_seg[seg]);
+				              }
 
-		          if constexpr (DEBUG_STAGE == 3) {
-		            break;
-		          }
+				              while (ws_sfb1_seg2_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+				                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+				              }
+				              while (ws_sfb1_seg3_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+				                __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+				              }
 
-		          if (lane == 0) {
-		            const int mma_unroll_n = USE_N256_MMA ? 1 : UnrollN;
-		#pragma unroll
-		            for (int seg = 0; seg < 4; ++seg) {
-		              const uint64_t desc_a =
-		                  static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
-		                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-		              const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
-		#pragma unroll
-		              for (int u = 0; u < mma_unroll_n; ++u) {
-		                if ((tile_n + u) >= n_tiles_group) {
-		                  continue;
-		                }
-		                const uint64_t desc_b =
-		                    static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
-		                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-		                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-		                    desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
-		                    tmem_sfb_seg[u][seg]);
-		              }
-		            }
-		          }
+#pragma unroll
+				              for (int seg = 2; seg < 4; ++seg) {
+				                const uint64_t desc_a =
+				                    static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+				                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+				                const uint64_t desc_b =
+				                    static_cast<uint64_t>(desc_b_base[stage_cur][1]) + cta2_desc_b_row_offset +
+				                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+				                constexpr uint32_t accumulate = 1u;
+				                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+				                    desc_a, desc_b, tmem_c_tiles[1], accumulate, ws_idesc_hi_seg[seg],
+				                    ws_tmem_sfa_seg[seg], ws_tmem_sfb_seg[seg]);
+				              }
+				            } else {
+				              copy_scale_fragments(desc_sfb1_base, tmem_sfb_ptrs_u1, /*is_sfb=*/true);
+#pragma unroll
+				              for (int seg = 0; seg < 4; ++seg) {
+				                const uint64_t desc_a =
+				                    static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+				                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+				                const uint64_t desc_b =
+				                    static_cast<uint64_t>(desc_b_base[stage_cur][1]) + cta2_desc_b_row_offset +
+				                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+				                const uint32_t accumulate = (k_tile_idx == 0 && seg == 0) ? 0u : 1u;
+				                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+				                    desc_a, desc_b, tmem_c_tiles[1], accumulate, ws_idesc_hi_seg[seg],
+				                    ws_tmem_sfa_seg[seg], ws_tmem_sfb_seg[seg]);
+				              }
+				            }
+				            ws_u1_done_tile = k_tile_idx;
+				          }
+				        }
+			    }
+			  }
+			  if constexpr (WS_SFB1_SEGMENT_HELPERS) {
+			    // Helper warps copy SFB(u=1) seg2/seg3 for each K tile once warp0 has finished the TMA+SFA step.
+			    // No additional fences are required: UMMA will naturally stall on TMEM scale reads if needed.
+			    if ((warp == 2 || warp == 3) && ws_u1_active && lane == 0) {
+			      const int seg = (warp == 2) ? 2 : 3;
+			      constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
+				      for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+				        while (ws_scales_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+				          __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+				        }
+				        const int stage_cur = k_tile_idx % PIPELINE_STAGES;
+				        const uint64_t desc_sfb1_base = static_cast<uint64_t>(desc_sfb[stage_cur][1]);
+				        const uint64_t src_desc = desc_sfb1_base + static_cast<uint64_t>(seg * SF_COPY_32x128B_DESC_STEP);
+				        const uint32_t dst_addr = tmem_sfb_ptrs[1 * 4 + seg];
+				        tcgen05::utccp_cp_32x128b_warpx4<CtaGroup>(src_desc, dst_addr);
+				        if (seg == 2) {
+				          ws_sfb1_seg2_ready_tile = k_tile_idx;
+				        } else {
+				          ws_sfb1_seg3_ready_tile = k_tile_idx;
+				        }
+				        __threadfence_block();
+				      }
+				    }
+				  }
 
-	          if constexpr (DEBUG_STAGE == 4) {
-	            break;
-	          }
+				  if constexpr (WS_TMA_PRODUCER) {
+				    if (warp == 2 && lane == 0) {
+				      // Warp2 lane0 acts as a dedicated TMA producer for the warp0-only pipeline path.
+		      // Warp0 arms the barrier generation (arrive_tx) and posts requests via shared state.
+		      int last_issued = -1;
+		      while (true) {
+		        const int req_tile = ws_tma_req_tile;
+		        if (req_tile == -2) {
+		          break;
+		        }
+		        if (req_tile <= last_issued) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+		          __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+		          continue;
+		        }
+		        __threadfence_block();
+		        const int req_stage = ws_tma_req_stage;
+		        const int req_k_byte = ws_tma_req_k_byte;
+		        const int req_sfa_row_offset = ws_tma_req_sfa_row_offset;
+		        const int req_sfb_row_offset = ws_tma_req_sfb_row_offset;
+		        issue_tma_tile_ops_only(req_stage, req_k_byte, req_sfa_row_offset, req_sfb_row_offset);
+		        last_issued = req_tile;
+		      }
+		    }
+		  }
 
-          // Ensure the next stage is resident in shared memory before the loop advances.
-          if (has_next) {
-            wait_tma_tile_warp0(stage_next, tok_next);
-          } else {
-            __syncwarp();
-          }
-        }
-      }
-    }
+		  if constexpr (WS_SPLIT_U0_SEGS) {
+		    if (warp == 2 && lane == 0) {
+		      // Warp2 lane0 issues the remaining u=0 MMAs (seg=1..3) after warp0 has issued seg0.
+		      // This reduces single-thread UMMA issue pressure for the u=0 tile.
+		      uint32_t ws_tmem_sfa_seg[4];
+		      uint32_t ws_tmem_sfb_seg[4];
+		      uint32_t ws_idesc_hi_seg[4];
+#pragma unroll
+		      for (int seg = 0; seg < 4; ++seg) {
+		        const uint32_t tmem_sfa = tmem_sfa_ptrs[seg];
+		        const uint32_t tmem_sfb = tmem_sfb_ptrs[0 * 4 + seg];
+		        ws_tmem_sfa_seg[seg] = tmem_sfa;
+		        ws_tmem_sfb_seg[seg] = tmem_sfb;
+		        const uint64_t idesc_runtime = umma::make_runtime_instr_desc_block_scaled(idesc, tmem_sfa, tmem_sfb);
+		        ws_idesc_hi_seg[seg] = static_cast<uint32_t>(idesc_runtime >> 32);
+		      }
 
-    // Join all warps before any later TMEM loads in debug/epilogue.
-    __syncthreads();
-    } else {
-      run_full_cta_mainloop();
-    }
-  } else {
-    run_full_cta_mainloop();
-  }
+		      for (int k_tile_idx = 0; k_tile_idx < k_tiles_total; ++k_tile_idx) {
+		        while (ws_u0_ready_tile < k_tile_idx) {
+#if NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES
+		          __nanosleep(NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES);
+#endif
+		        }
+		        const int stage_cur = (PIPELINE_STAGES == 1) ? 0 : (k_tile_idx % PIPELINE_STAGES);
+#pragma unroll
+		        for (int seg = 1; seg < 4; ++seg) {
+		          const uint64_t desc_a =
+		              static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+		              static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		          const uint64_t desc_b =
+		              static_cast<uint64_t>(desc_b_base[stage_cur][0]) + cta2_desc_b_row_offset +
+		              static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		          constexpr uint32_t accumulate = 1u;
+		          tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+		              desc_a, desc_b, tmem_c_tiles[0], accumulate, ws_idesc_hi_seg[seg], ws_tmem_sfa_seg[seg],
+		              ws_tmem_sfb_seg[seg]);
+		        }
+		        ws_u0_done_tile = k_tile_idx;
+		      }
+		    }
+		  }
 
-  if constexpr (CtaGroup == 2) {
-    const uint32_t bar_addr = tcgen05::cast_smem_ptr_to_uint(&umma_done_barrier);
-    // One lane per CTA issues the commit. The barrier flips only once both CTAs have arrived,
-    // which prevents missing a short-lived intermediate parity.
-    if (threadIdx.x == 0) {
-      asm volatile("tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.b64 [%0];\n"
-                   :
-                   : "r"(bar_addr)
-                   : "memory");
-    }
-    // Wait for commit completion before any TMEM loads. (Correctness first; later we can
-    // pipeline and use non-blocking checks.)
-    if (threadIdx.x == 0) {
-      uint32_t done = 0;
-      constexpr uint32_t kPhase = 1;
-      while (done == 0) {
-        asm volatile("{\n\t"
-                     ".reg .pred P1;\n\t"
-                     "mbarrier.try_wait.parity.shared::cta.b64 P1, [%1], %2;\n\t"
-                     "selp.b32 %0, 1, 0, P1;\n\t"
-                     "}\n"
-                     : "=r"(done)
-                     : "r"(bar_addr), "r"(kPhase)
-                     : "memory");
-      }
-    }
-    __syncthreads();
-    cg::this_cluster().sync();
-  }
+		    // Join all warps before any later TMEM loads in debug/epilogue.
+		    __syncthreads();
+		    } else {
+		      run_full_cta_mainloop();
+		    }
+	  } else {
+	    run_full_cta_mainloop();
+	  }
+
+	  if constexpr (CtaGroup == 2 || CTA1_COMMIT_BARRIER) {
+	    uint32_t bar_addr = tcgen05::cast_smem_ptr_to_uint(&umma_done_barrier);
+	    if constexpr (CtaGroup == 2) {
+	      // Ensure both CTAs in the cluster target CTA0's barrier (CUTLASS Sm100MmaPeerBitMask).
+	      bar_addr &= tcgen05::Sm100MmaPeerBitMask;
+	    }
+	    // For cta_group::1, ensure all warp-specialized MMA issue has completed before we commit.
+	    // (Without this, thread0 could commit early while other warps are still issuing MMAs.)
+	    if constexpr (CTA1_COMMIT_BARRIER) {
+	      __syncthreads();
+	    }
+	    // One lane per CTA issues the commit.
+	    // For cta_group::2, the barrier flips only once both CTAs have arrived, which prevents
+	    // missing a short-lived intermediate parity.
+	    if (threadIdx.x == 0) {
+	      if constexpr (CtaGroup == 2) {
+	        asm volatile("tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.b64 [%0];\n"
+	                     :
+	                     : "r"(bar_addr)
+	                     : "memory");
+	      } else {
+	        asm volatile("tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 [%0];\n"
+	                     :
+	                     : "r"(bar_addr)
+	                     : "memory");
+	      }
+	    }
+	    // Wait for commit completion before any TMEM loads.
+	    // For cta_group::2 we wait on the shared (CTA0) barrier once, then cluster-sync.
+	    if (threadIdx.x == 0 && (CtaGroup != 2 || cluster_rank == 0)) {
+	      uint32_t done = 0;
+	      constexpr uint32_t kPhase = 0;
+	      while (done == 0) {
+	        asm volatile("{\n\t"
+	                     ".reg .pred P1;\n\t"
+	                     "mbarrier.try_wait.parity.shared::cta.b64 P1, [%1], %2;\n\t"
+	                     "selp.b32 %0, 1, 0, P1;\n\t"
+	                     "}\n"
+	                     : "=r"(done)
+	                     : "r"(bar_addr), "r"(kPhase)
+	                     : "memory");
+	      }
+	    }
+	    __syncthreads();
+	    if constexpr (CtaGroup == 2) {
+	      cg::this_cluster().sync();
+	    }
+	  }
 
   // Ensure UMMA writes (TMEM stores) are visible to TMEM loads before any debug/epilogue reads.
   // For cta_group::2, UMMA is explicitly asynchronous and requires a commit+mbarrier wait above.
@@ -2122,52 +3360,68 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     tcgen05::tmem_wait_ld_sync();
   }
 
-  // Optional debug: dump a 128x128 slice of TMEM (dp x col) into the output tile.
+  // Optional debug: dump a slice of TMEM (dp x col) into the output tile.
   // This is for offline mapping analysis only; it bypasses the normal epilogue.
-  if constexpr (CtaGroup == 2) {
-    if (debug_tmem_dump != 0) {
-      // Only dump from the first tile/group to avoid races/overwrites.
-      if (group_idx == 0 && tile_m == 0 && tile_n == 0 &&
-          (debug_tmem_only_rank < 0 || cluster_rank == debug_tmem_only_rank)) {
-        // TMEM loads operate on 32 DP lanes at a single column. Keep `col` uniform within the warp
-        // and use the lane id to select DP lanes to avoid misaligned/invalid addressing.
-        constexpr int DUMP_DP = 128;
-        constexpr int DUMP_COL = 128;
-        // Allow probing multiple TMEM subpartitions by adjusting the high idx bits.
-        // TMEM pointers are encoded as {col:16, dp:8, idx:8}.
-        const uint32_t idx_add_u = (debug_tmem_idx_add > 0) ? static_cast<uint32_t>(debug_tmem_idx_add) : 0u;
-        const uint32_t tmem_dump_base = static_cast<uint32_t>(tmem_c_rank + (idx_add_u << 24));
-        const int warp = static_cast<int>(threadIdx.x) >> 5;
-        const int lane = static_cast<int>(threadIdx.x) & 31;
-        const int warps_per_cta = static_cast<int>(blockDim.x) >> 5;
-        for (int dp_base = warp * 32; dp_base < DUMP_DP; dp_base += warps_per_cta * 32) {
-          const int dp = dp_base + lane;
-          if (dp >= DUMP_DP) {
-            continue;
-          }
-          for (int col = 0; col < DUMP_COL; ++col) {
-            const uint32_t addr =
-                tcgen05::tmem_addr_add(tmem_dump_base, static_cast<uint32_t>(dp), static_cast<uint32_t>(col));
-            const uint32_t bits = tcgen05::tmem_ld_32dp32b_x1(addr);
-            const float f = __uint_as_float(bits);
-            const half h = __float2half_rn(f);
-            const int gm = m_offset + dp;
-            const int gn = n_offset + col;
-            if (gm < m_size && gn < n_size) {
-              c_out[static_cast<size_t>(gm) * static_cast<size_t>(n_size) + static_cast<size_t>(gn)] = h;
-            }
+  if (debug_tmem_dump != 0) {
+    // Only dump from the first tile/group to avoid races/overwrites.
+    if (group_idx == 0 && tile_m == 0 && tile_n == 0 &&
+        (debug_tmem_only_rank < 0 || cluster_rank == debug_tmem_only_rank)) {
+      // TMEM loads operate on 32 DP lanes at a single column. Keep `col` uniform within the warp
+      // and use the lane id to select DP lanes to avoid misaligned/invalid addressing.
+      // Dump a single 128-DP window (one CTA's accumulator height). Use `debug_tmem_dump`
+      // to select which base address we probe for alternate layouts.
+      constexpr int DUMP_DP = 128;
+      // Keep the dump window conservative: dumping beyond the first 128 columns can trip invalid
+      // TMEM addressing in some experimental layouts. Expand only once the mapping is validated.
+      constexpr int DUMP_COL = 128;
+      // Allow probing multiple TMEM subpartitions by adjusting the high idx bits.
+      // TMEM pointers are encoded as {col:16, dp:8, idx:8}.
+      const uint32_t idx_add_u = (debug_tmem_idx_add > 0) ? static_cast<uint32_t>(debug_tmem_idx_add) : 0u;
+      uint32_t tmem_dump_base = static_cast<uint32_t>(tmem_c_rank + (idx_add_u << 24));
+      if constexpr (UnrollN == 2) {
+        // Debug base selection:
+        //  1: tile0 base (tmem_c_rank)
+        //  2: tile1 base (col+128)
+        //  3: candidate alternate tile1 base (dp+128)
+        if (debug_tmem_dump == 2) {
+          tmem_dump_base = static_cast<uint32_t>(tmem_c_tiles[1] + (idx_add_u << 24));
+        } else if (debug_tmem_dump == 3) {
+          const uint32_t tmem_dp128 = tcgen05::tmem_addr_add(tmem_c_rank, /*dp_add=*/128u, /*col_add=*/0u);
+          tmem_dump_base = static_cast<uint32_t>(tmem_dp128 + (idx_add_u << 24));
+        }
+      }
+      const int warp = static_cast<int>(threadIdx.x) >> 5;
+      const int lane = static_cast<int>(threadIdx.x) & 31;
+      const int warps_per_cta = static_cast<int>(blockDim.x) >> 5;
+      for (int dp_base = warp * 32; dp_base < DUMP_DP; dp_base += warps_per_cta * 32) {
+        const int dp = dp_base + lane;
+        if (dp >= DUMP_DP) {
+          continue;
+        }
+        for (int col = 0; col < DUMP_COL; ++col) {
+          const uint32_t addr =
+              tcgen05::tmem_addr_add(tmem_dump_base, static_cast<uint32_t>(dp), static_cast<uint32_t>(col));
+          const uint32_t bits = tcgen05::tmem_ld_32dp32b_x1(addr);
+          const float f = __uint_as_float(bits);
+          const half h = __float2half_rn(f);
+          const int gm = m_offset + dp;
+          const int gn = n_offset + col;
+          if (gm < m_size && gn < n_size) {
+            c_out[static_cast<size_t>(gm) * static_cast<size_t>(n_size) + static_cast<size_t>(gn)] = h;
           }
         }
       }
-
-      __syncthreads();
-      cluster.sync();
-      if (threadIdx.x < 32) {
-        tcgen05::tmem_dealloc<CtaGroup>(tmem_base, /*num_columns=*/TMEM_COLUMNS);
-        tcgen05::tmem_relinquish_alloc_permit<CtaGroup>();
-      }
-      return;
     }
+
+    __syncthreads();
+    if (cluster_dim_x > 1) {
+      cluster.sync();
+    }
+    if (threadIdx.x < 32) {
+      tcgen05::tmem_dealloc<CtaGroup>(tmem_base, /*num_columns=*/TMEM_COLUMNS);
+      tcgen05::tmem_relinquish_alloc_permit<CtaGroup>();
+    }
+    return;
   }
 
   if constexpr (DEBUG_STAGE == 2) {
@@ -2228,19 +3482,52 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       if ((tile_n + u) >= n_tiles_group) {
         continue;
       }
-      constexpr bool kN256OddUsesTile0 = (NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0 != 0);
-      constexpr uint32_t kN256OddColOffset = static_cast<uint32_t>(NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET);
-      const uint32_t tmem_c_tile_u = (USE_N256_MMA && u == 1 && kN256OddUsesTile0) ? tmem_c_tiles[0] : tmem_c_tiles[u];
-      const uint32_t tmem_col_offset_u = (USE_N256_MMA && u == 1) ? kN256OddColOffset : 0u;
+      const uint32_t tmem_c_tile_u = tmem_c_tiles[u];
+      const uint32_t tmem_col_offset_u = 0u;
       const int n_offset_u = n_offset + u * TILE_N;
       const bool n_tile_full = (n_offset_u + TILE_N) <= n_size;
       if (row_full && n_tile_full) {
         const size_t out_base = base + static_cast<size_t>(n_offset_u);
-        for (int n_base = 0; n_base < TILE_N; n_base += 8) {
+#if NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32
+        for (int n_base = 0; n_base < TILE_N; n_base += 32) {
           const uint32_t col_lane = static_cast<uint32_t>(n_base);
           const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
-          uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
-          tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
+          uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+          uint32_t v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31;
+          tcgen05::tmem_ld_32dp32b_x32(
+              addr,
+              v0,
+              v1,
+              v2,
+              v3,
+              v4,
+              v5,
+              v6,
+              v7,
+              v8,
+              v9,
+              v10,
+              v11,
+              v12,
+              v13,
+              v14,
+              v15,
+              v16,
+              v17,
+              v18,
+              v19,
+              v20,
+              v21,
+              v22,
+              v23,
+              v24,
+              v25,
+              v26,
+              v27,
+              v28,
+              v29,
+              v30,
+              v31);
           __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
           const float f0 = __uint_as_float(v0);
           const float f1 = __uint_as_float(v1);
@@ -2250,25 +3537,121 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
           const float f5 = __uint_as_float(v5);
           const float f6 = __uint_as_float(v6);
           const float f7 = __uint_as_float(v7);
+          const float f8 = __uint_as_float(v8);
+          const float f9 = __uint_as_float(v9);
+          const float f10 = __uint_as_float(v10);
+          const float f11 = __uint_as_float(v11);
+          const float f12 = __uint_as_float(v12);
+          const float f13 = __uint_as_float(v13);
+          const float f14 = __uint_as_float(v14);
+          const float f15 = __uint_as_float(v15);
+          const float f16 = __uint_as_float(v16);
+          const float f17 = __uint_as_float(v17);
+          const float f18 = __uint_as_float(v18);
+          const float f19 = __uint_as_float(v19);
+          const float f20 = __uint_as_float(v20);
+          const float f21 = __uint_as_float(v21);
+          const float f22 = __uint_as_float(v22);
+          const float f23 = __uint_as_float(v23);
+          const float f24 = __uint_as_float(v24);
+          const float f25 = __uint_as_float(v25);
+          const float f26 = __uint_as_float(v26);
+          const float f27 = __uint_as_float(v27);
+          const float f28 = __uint_as_float(v28);
+          const float f29 = __uint_as_float(v29);
+          const float f30 = __uint_as_float(v30);
+          const float f31 = __uint_as_float(v31);
           out_h2[0] = __floats2half2_rn(f0, f1);
           out_h2[1] = __floats2half2_rn(f2, f3);
           out_h2[2] = __floats2half2_rn(f4, f5);
           out_h2[3] = __floats2half2_rn(f6, f7);
+          out_h2[4] = __floats2half2_rn(f8, f9);
+          out_h2[5] = __floats2half2_rn(f10, f11);
+          out_h2[6] = __floats2half2_rn(f12, f13);
+          out_h2[7] = __floats2half2_rn(f14, f15);
+          out_h2[8] = __floats2half2_rn(f16, f17);
+          out_h2[9] = __floats2half2_rn(f18, f19);
+          out_h2[10] = __floats2half2_rn(f20, f21);
+          out_h2[11] = __floats2half2_rn(f22, f23);
+          out_h2[12] = __floats2half2_rn(f24, f25);
+          out_h2[13] = __floats2half2_rn(f26, f27);
+          out_h2[14] = __floats2half2_rn(f28, f29);
+          out_h2[15] = __floats2half2_rn(f30, f31);
         }
-      } else {
-        for (int n_base = 0; n_base < TILE_N; n_base += 8) {
+#elif NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X16
+        for (int n_base = 0; n_base < TILE_N; n_base += 16) {
           const uint32_t col_lane = static_cast<uint32_t>(n_base);
           const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
-          uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
-          tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
-
-          if (!row_in_bounds) {
-            continue;
+          uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+          tcgen05::tmem_ld_32dp32b_x16(addr, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
+          __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
+          const float f0 = __uint_as_float(v0);
+          const float f1 = __uint_as_float(v1);
+          const float f2 = __uint_as_float(v2);
+          const float f3 = __uint_as_float(v3);
+          const float f4 = __uint_as_float(v4);
+          const float f5 = __uint_as_float(v5);
+          const float f6 = __uint_as_float(v6);
+          const float f7 = __uint_as_float(v7);
+          const float f8 = __uint_as_float(v8);
+          const float f9 = __uint_as_float(v9);
+          const float f10 = __uint_as_float(v10);
+          const float f11 = __uint_as_float(v11);
+          const float f12 = __uint_as_float(v12);
+          const float f13 = __uint_as_float(v13);
+          const float f14 = __uint_as_float(v14);
+          const float f15 = __uint_as_float(v15);
+          out_h2[0] = __floats2half2_rn(f0, f1);
+          out_h2[1] = __floats2half2_rn(f2, f3);
+          out_h2[2] = __floats2half2_rn(f4, f5);
+          out_h2[3] = __floats2half2_rn(f6, f7);
+          out_h2[4] = __floats2half2_rn(f8, f9);
+          out_h2[5] = __floats2half2_rn(f10, f11);
+          out_h2[6] = __floats2half2_rn(f12, f13);
+          out_h2[7] = __floats2half2_rn(f14, f15);
+        }
+#else
+        // Workaround: `tcgen05.ld ... x8` has been observed to fault for some UnrollN=2 TMEM ranges.
+        // Use x16 for UnrollN=2 to keep epilogue stable; keep x8 for UnrollN=1.
+        if constexpr (UnrollN == 2) {
+          for (int n_base = 0; n_base < TILE_N; n_base += 16) {
+            const uint32_t col_lane = static_cast<uint32_t>(n_base);
+            const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+            uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+            tcgen05::tmem_ld_32dp32b_x16(addr, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
+            __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
+            const float f0 = __uint_as_float(v0);
+            const float f1 = __uint_as_float(v1);
+            const float f2 = __uint_as_float(v2);
+            const float f3 = __uint_as_float(v3);
+            const float f4 = __uint_as_float(v4);
+            const float f5 = __uint_as_float(v5);
+            const float f6 = __uint_as_float(v6);
+            const float f7 = __uint_as_float(v7);
+            const float f8 = __uint_as_float(v8);
+            const float f9 = __uint_as_float(v9);
+            const float f10 = __uint_as_float(v10);
+            const float f11 = __uint_as_float(v11);
+            const float f12 = __uint_as_float(v12);
+            const float f13 = __uint_as_float(v13);
+            const float f14 = __uint_as_float(v14);
+            const float f15 = __uint_as_float(v15);
+            out_h2[0] = __floats2half2_rn(f0, f1);
+            out_h2[1] = __floats2half2_rn(f2, f3);
+            out_h2[2] = __floats2half2_rn(f4, f5);
+            out_h2[3] = __floats2half2_rn(f6, f7);
+            out_h2[4] = __floats2half2_rn(f8, f9);
+            out_h2[5] = __floats2half2_rn(f10, f11);
+            out_h2[6] = __floats2half2_rn(f12, f13);
+            out_h2[7] = __floats2half2_rn(f14, f15);
           }
-
-          const int gn_base = n_offset_u + n_base;
-          if (n_tile_full || gn_base + 7 < n_size) {
-            __half2* out_h2 = reinterpret_cast<__half2*>(c_out + base + static_cast<size_t>(gn_base));
+        } else {
+          for (int n_base = 0; n_base < TILE_N; n_base += 8) {
+            const uint32_t col_lane = static_cast<uint32_t>(n_base);
+            const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+            uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
+            tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
+            __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
             const float f0 = __uint_as_float(v0);
             const float f1 = __uint_as_float(v1);
             const float f2 = __uint_as_float(v2);
@@ -2281,16 +3664,99 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
             out_h2[1] = __floats2half2_rn(f2, f3);
             out_h2[2] = __floats2half2_rn(f4, f5);
             out_h2[3] = __floats2half2_rn(f6, f7);
-          } else {
-            uint16_t* out_u16 = reinterpret_cast<uint16_t*>(c_out + base);
-            const uint32_t vs[8] = {v0, v1, v2, v3, v4, v5, v6, v7};
+          }
+        }
+#endif
+      } else {
+        if constexpr (UnrollN == 2) {
+          for (int n_base = 0; n_base < TILE_N; n_base += 16) {
+            const uint32_t col_lane = static_cast<uint32_t>(n_base);
+            const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+            uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+            tcgen05::tmem_ld_32dp32b_x16(addr, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
+
+            if (!row_in_bounds) {
+              continue;
+            }
+
+            const int gn_base = n_offset_u + n_base;
+            if (n_tile_full || gn_base + 15 < n_size) {
+              __half2* out_h2 = reinterpret_cast<__half2*>(c_out + base + static_cast<size_t>(gn_base));
+              const float f0 = __uint_as_float(v0);
+              const float f1 = __uint_as_float(v1);
+              const float f2 = __uint_as_float(v2);
+              const float f3 = __uint_as_float(v3);
+              const float f4 = __uint_as_float(v4);
+              const float f5 = __uint_as_float(v5);
+              const float f6 = __uint_as_float(v6);
+              const float f7 = __uint_as_float(v7);
+              const float f8 = __uint_as_float(v8);
+              const float f9 = __uint_as_float(v9);
+              const float f10 = __uint_as_float(v10);
+              const float f11 = __uint_as_float(v11);
+              const float f12 = __uint_as_float(v12);
+              const float f13 = __uint_as_float(v13);
+              const float f14 = __uint_as_float(v14);
+              const float f15 = __uint_as_float(v15);
+              out_h2[0] = __floats2half2_rn(f0, f1);
+              out_h2[1] = __floats2half2_rn(f2, f3);
+              out_h2[2] = __floats2half2_rn(f4, f5);
+              out_h2[3] = __floats2half2_rn(f6, f7);
+              out_h2[4] = __floats2half2_rn(f8, f9);
+              out_h2[5] = __floats2half2_rn(f10, f11);
+              out_h2[6] = __floats2half2_rn(f12, f13);
+              out_h2[7] = __floats2half2_rn(f14, f15);
+            } else {
+              uint16_t* out_u16 = reinterpret_cast<uint16_t*>(c_out + base);
+              const uint32_t vs[16] = {v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15};
 #pragma unroll
-            for (int i = 0; i < 8; ++i) {
-              const int gn = gn_base + i;
-              if (gn < n_size) {
-                const float f = __uint_as_float(vs[i]);
-                const half h = __float2half_rn(f);
-                out_u16[static_cast<size_t>(gn)] = reinterpret_cast<const uint16_t&>(h);
+              for (int i = 0; i < 16; ++i) {
+                const int gn = gn_base + i;
+                if (gn < n_size) {
+                  const float f = __uint_as_float(vs[i]);
+                  const half h = __float2half_rn(f);
+                  out_u16[static_cast<size_t>(gn)] = reinterpret_cast<const uint16_t&>(h);
+                }
+              }
+            }
+          }
+        } else {
+          for (int n_base = 0; n_base < TILE_N; n_base += 8) {
+            const uint32_t col_lane = static_cast<uint32_t>(n_base);
+            const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+            uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
+            tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
+
+            if (!row_in_bounds) {
+              continue;
+            }
+
+            const int gn_base = n_offset_u + n_base;
+            if (n_tile_full || gn_base + 7 < n_size) {
+              __half2* out_h2 = reinterpret_cast<__half2*>(c_out + base + static_cast<size_t>(gn_base));
+              const float f0 = __uint_as_float(v0);
+              const float f1 = __uint_as_float(v1);
+              const float f2 = __uint_as_float(v2);
+              const float f3 = __uint_as_float(v3);
+              const float f4 = __uint_as_float(v4);
+              const float f5 = __uint_as_float(v5);
+              const float f6 = __uint_as_float(v6);
+              const float f7 = __uint_as_float(v7);
+              out_h2[0] = __floats2half2_rn(f0, f1);
+              out_h2[1] = __floats2half2_rn(f2, f3);
+              out_h2[2] = __floats2half2_rn(f4, f5);
+              out_h2[3] = __floats2half2_rn(f6, f7);
+            } else {
+              uint16_t* out_u16 = reinterpret_cast<uint16_t*>(c_out + base);
+              const uint32_t vs[8] = {v0, v1, v2, v3, v4, v5, v6, v7};
+#pragma unroll
+              for (int i = 0; i < 8; ++i) {
+                const int gn = gn_base + i;
+                if (gn < n_size) {
+                  const float f = __uint_as_float(vs[i]);
+                  const half h = __float2half_rn(f);
+                  out_u16[static_cast<size_t>(gn)] = reinterpret_cast<const uint16_t&>(h);
+                }
               }
             }
           }
@@ -2386,7 +3852,6 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
 
   TORCH_CHECK(max_m_size > 0, "max_m_size must be > 0");
   TORCH_CHECK(max_n_size > 0, "max_n_size must be > 0");
-
   auto parse_env_int = [](const char* name, int default_value) {
     const char* value = std::getenv(name);
     if (value == nullptr || value[0] == '\0') {
@@ -2522,6 +3987,264 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
       // cta_group::2 bring-up currently does not support TMA multicast.
       enable_tma_multicast = 0;
     }
+
+    // Packed-CTA cluster launch (cta_group::1 only):
+    // Use the host-precomputed CTA maps so we launch exactly the required CTAs per group,
+    // avoiding the "max-based" grid that over-launches blocks for groups with smaller M.
+    // This keeps cluster-mode overhead comparable to the non-cluster packed launch.
+    const int total_ctas = static_cast<int>(cta_group_idx_map.numel());
+    const bool use_packed_cluster = (!use_cta_group2) && (total_ctas > 0);
+    if (use_packed_cluster) {
+      TORCH_CHECK(cta_tile_m_map.numel() == total_ctas, "cta_tile_m_map length mismatch for packed cluster launch");
+      TORCH_CHECK(cta_tile_n_map.numel() == total_ctas, "cta_tile_n_map length mismatch for packed cluster launch");
+      if (enable_tma_multicast != 0) {
+        TORCH_CHECK(cluster_dim_x <= 16,
+                    "AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST=1 requires cluster_dim_x <= 16 "
+                    "(mask is 16-bit). Got cluster_dim_x=",
+                    cluster_dim_x);
+        TORCH_CHECK((total_ctas % cluster_dim_x) == 0,
+                    "Packed cluster launch with multicast requires total_ctas divisible by cluster_dim_x to avoid "
+                    "partial clusters (would deadlock cluster sync). total_ctas=",
+                    total_ctas,
+                    " cluster_dim_x=",
+                    cluster_dim_x);
+      }
+
+      cfg.gridDim = dim3(static_cast<unsigned int>(total_ctas), 1u, 1u);
+      cfg.blockDim = block;
+      cfg.dynamicSmemBytes = 0;
+      cfg.stream = at::cuda::getCurrentCUDAStream();
+      cfg.attrs = attrs;
+      cfg.numAttrs = 1;
+
+      if (unroll_n == 2) {
+#if NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS == 512
+        if (enable_tma_multicast != 0) {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        } else {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        }
+#else
+        TORCH_CHECK(false, "Packed cluster-mode UnrollN=2 requires NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS=512.");
+#endif
+      } else {
+        if (enable_tma_multicast != 0) {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        } else {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        }
+      }
+      AT_CUDA_CHECK(cudaGetLastError());
+      return;
+    }
     if (enable_tma_multicast != 0) {
       TORCH_CHECK(cluster_dim_x <= 16,
                   "AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST=1 requires cluster_dim_x <= 16 "
@@ -2554,27 +4277,26 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
     cfg.numAttrs = 1;
 
     if (use_cta_group2) {
-      TORCH_CHECK(unroll_n == 1,
-                  "Experimental cta_group::2 currently supports only AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N=1 "
-                  "(TMEM scale-factor layout capacity for 2CTA). Got unroll_n=",
-                  unroll_n);
+      if (unroll_n == 2) {
+#if NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS == 512
         cudaFuncAttributes func_attr{};
-        AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<2, 1>));
+        AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<2, 2, 128, false>));
         const int max_dynamic_smem =
             (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
                 ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
                 : 0;
         AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1>, cudaFuncAttributeMaxDynamicSharedMemorySize, max_dynamic_smem));
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 2, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+            max_dynamic_smem));
         AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1>, cudaFuncAttributePreferredSharedMemoryCarveout,
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 2, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
             cudaSharedmemCarveoutMaxShared));
         AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 2, 128, false>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
 
         AT_CUDA_CHECK(cudaLaunchKernelEx(
             &cfg,
-            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1>,
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 2, 128, false>,
             a_ptrs_dev,
             b_ptrs_dev,
             sfa_ptrs_dev,
@@ -2609,28 +4331,29 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
             debug_print_ptrs,
             cta2_idesc_m_dim_override,
             cta2_idesc_n_dim_override,
-            cluster_dim_x,
-            enable_tma_multicast));
-    } else {
-      if (unroll_n == 2) {
-#if NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS == 512
+            cluster_dim_x));
+#else
+        TORCH_CHECK(false, "Experimental cta_group::2 + UnrollN=2 requires NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS=512.");
+#endif
+      } else {
         cudaFuncAttributes func_attr{};
-        AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>));
+        AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<2, 1, 128, false>));
         const int max_dynamic_smem =
             (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
                 ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
                 : 0;
         AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>, cudaFuncAttributeMaxDynamicSharedMemorySize, max_dynamic_smem));
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+            max_dynamic_smem));
         AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>, cudaFuncAttributePreferredSharedMemoryCarveout,
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
             cudaSharedmemCarveoutMaxShared));
         AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1, 128, false>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
 
         AT_CUDA_CHECK(cudaLaunchKernelEx(
             &cfg,
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>,
+            nvfp4_group_gemm_v2_tcgen05_kernel<2, 1, 128, false>,
             a_ptrs_dev,
             b_ptrs_dev,
             sfa_ptrs_dev,
@@ -2654,8 +4377,8 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
             cta2_epilogue_addr_mode,
             cta2_sfb_slot_mode,
             cta2_tmem_c_word_offset,
-            cta2_tmem_sf_word_offset,
-            cta2_tmem_sf_rank_word_offset,
+            cta2_tmem_sf_word_offset_eff,
+            cta2_tmem_sf_rank_word_offset_eff,
             cta2_tsfa_word_offset,
             cta2_tsfb_word_offset,
             debug_tmem_dump,
@@ -2665,65 +4388,233 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
             debug_print_ptrs,
             cta2_idesc_m_dim_override,
             cta2_idesc_n_dim_override,
-            cluster_dim_x,
-            enable_tma_multicast));
+            cluster_dim_x));
+      }
+    } else {
+      if (unroll_n == 2) {
+#if NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS == 512
+        if (enable_tma_multicast != 0) {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, true>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              /*cta_group_idx_map=*/nullptr,
+              /*cta_tile_m_map=*/nullptr,
+              /*cta_tile_n_map=*/nullptr,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        } else {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              /*cta_group_idx_map=*/nullptr,
+              /*cta_tile_m_map=*/nullptr,
+              /*cta_tile_n_map=*/nullptr,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        }
 #else
         TORCH_CHECK(false, "Cluster-mode UnrollN=2 requires NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS=512.");
 #endif
       } else {
-        cudaFuncAttributes func_attr{};
-        AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>));
-        const int max_dynamic_smem =
-            (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
-                ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
-                : 0;
-        AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>, cudaFuncAttributeMaxDynamicSharedMemorySize, max_dynamic_smem));
-        AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>, cudaFuncAttributePreferredSharedMemoryCarveout,
-            cudaSharedmemCarveoutMaxShared));
-        AT_CUDA_CHECK(cudaFuncSetAttribute(
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+        if (enable_tma_multicast != 0) {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
 
-        AT_CUDA_CHECK(cudaLaunchKernelEx(
-            &cfg,
-            nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>,
-            a_ptrs_dev,
-            b_ptrs_dev,
-            sfa_ptrs_dev,
-            sfb_ptrs_dev,
-            c_ptrs_dev,
-            m_sizes.data_ptr<int32_t>(),
-            n_sizes.data_ptr<int32_t>(),
-            k_halves.data_ptr<int32_t>(),
-            k_scales.data_ptr<int32_t>(),
-            a_descs_dev,
-            b_descs_dev,
-            sfa_descs_dev,
-            sfb_descs_dev,
-            /*cta_group_idx_map=*/nullptr,
-            /*cta_tile_m_map=*/nullptr,
-            /*cta_tile_n_map=*/nullptr,
-            cta2_desc_a_row_offset_rows,
-            cta2_desc_b_row_offset_rows,
-            cta2_desc_sfa_row_offset_rows,
-            cta2_epilogue_row_base_rows,
-            cta2_epilogue_addr_mode,
-            cta2_sfb_slot_mode,
-            cta2_tmem_c_word_offset,
-            cta2_tmem_sf_word_offset,
-            cta2_tmem_sf_rank_word_offset,
-            cta2_tsfa_word_offset,
-            cta2_tsfb_word_offset,
-            debug_tmem_dump,
-            debug_tmem_only_rank,
-            debug_tmem_idx_add,
-            cta2_partition_b,
-            debug_print_ptrs,
-            cta2_idesc_m_dim_override,
-            cta2_idesc_n_dim_override,
-            cluster_dim_x,
-            enable_tma_multicast));
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, true>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              /*cta_group_idx_map=*/nullptr,
+              /*cta_tile_m_map=*/nullptr,
+              /*cta_tile_n_map=*/nullptr,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        } else {
+          cudaFuncAttributes func_attr{};
+          AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>));
+          const int max_dynamic_smem =
+              (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
+                  ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
+                  : 0;
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+              max_dynamic_smem));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
+              cudaSharedmemCarveoutMaxShared));
+          AT_CUDA_CHECK(cudaFuncSetAttribute(
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+
+          AT_CUDA_CHECK(cudaLaunchKernelEx(
+              &cfg,
+              nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>,
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              /*cta_group_idx_map=*/nullptr,
+              /*cta_tile_m_map=*/nullptr,
+              /*cta_tile_n_map=*/nullptr,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              cluster_dim_x));
+        }
       }
     }
     AT_CUDA_CHECK(cudaGetLastError());
@@ -2742,18 +4633,19 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
   if (unroll_n == 2) {
     {
       cudaFuncAttributes func_attr{};
-      AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>));
+      AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>));
       const int max_dynamic_smem =
           (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
               ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
               : 0;
       AT_CUDA_CHECK(cudaFuncSetAttribute(
-          nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>, cudaFuncAttributeMaxDynamicSharedMemorySize, max_dynamic_smem));
+          nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+          max_dynamic_smem));
     }
     AT_CUDA_CHECK(cudaFuncSetAttribute(
-        nvfp4_group_gemm_v2_tcgen05_kernel<1, 2>, cudaFuncAttributePreferredSharedMemoryCarveout,
+        nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
         cudaSharedmemCarveoutMaxShared));
-    nvfp4_group_gemm_v2_tcgen05_kernel<1, 2><<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+    nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false><<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
         a_ptrs_dev,
         b_ptrs_dev,
         sfa_ptrs_dev,
@@ -2788,8 +4680,7 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
         debug_print_ptrs,
         cta2_idesc_m_dim_override,
         cta2_idesc_n_dim_override,
-        /*cluster_dim_x=*/1,
-        /*enable_tma_multicast=*/0);
+        /*cluster_dim_x=*/1);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return;
   }
@@ -2797,18 +4688,19 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
 
   {
     cudaFuncAttributes func_attr{};
-    AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>));
+    AT_CUDA_CHECK(cudaFuncGetAttributes(&func_attr, nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>));
     const int max_dynamic_smem =
         (max_shared_optin > static_cast<int>(func_attr.sharedSizeBytes))
             ? (max_shared_optin - static_cast<int>(func_attr.sharedSizeBytes))
             : 0;
     AT_CUDA_CHECK(cudaFuncSetAttribute(
-        nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>, cudaFuncAttributeMaxDynamicSharedMemorySize, max_dynamic_smem));
+        nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize,
+        max_dynamic_smem));
   }
   AT_CUDA_CHECK(cudaFuncSetAttribute(
-      nvfp4_group_gemm_v2_tcgen05_kernel<1, 1>, cudaFuncAttributePreferredSharedMemoryCarveout,
+      nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false>, cudaFuncAttributePreferredSharedMemoryCarveout,
       cudaSharedmemCarveoutMaxShared));
-  nvfp4_group_gemm_v2_tcgen05_kernel<1, 1><<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+  nvfp4_group_gemm_v2_tcgen05_kernel<1, 1, 128, false><<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
       a_ptrs_dev,
       b_ptrs_dev,
       sfa_ptrs_dev,
@@ -2843,8 +4735,7 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
       debug_print_ptrs,
       cta2_idesc_m_dim_override,
       cta2_idesc_n_dim_override,
-      /*cluster_dim_x=*/1,
-      /*enable_tma_multicast=*/0);
+      /*cluster_dim_x=*/1);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 

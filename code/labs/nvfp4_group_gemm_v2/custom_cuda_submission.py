@@ -45,6 +45,20 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _env_flag(name: str, default: int = 0) -> bool:
+    return _env_int(name, default) != 0
+
+
+def _env_str(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return str(default)
+    value = raw.strip()
+    if value == "":
+        return str(default)
+    return value
+
+
 def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
     """Load (and JIT-build if needed) the v2 custom CUDA extension.
 
@@ -79,6 +93,21 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
         "-gencode=arch=compute_100a,code=sm_100a",
         "-gencode=arch=compute_100a,code=compute_100a",
     ]
+    # Removed knobs (kept as fail-fast checks so broken configurations don't silently "win" by skipping work).
+    removed_envs = (
+        "AISP_NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA",
+        "AISP_NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE",
+        "AISP_NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0",
+        "AISP_NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET",
+        "AISP_NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128",
+    )
+    for name in removed_envs:
+        raw = os.getenv(name)
+        if raw is not None and raw.strip() != "":
+            raise ValueError(
+                f"{name} was removed: the experimental N=256 UMMA path for UnrollN=2 produced incorrect results "
+                f"(second N128 half was zero) for mxf4nvf4.block_scale.block16. Use UnrollN=2 with two N128 UMMA ops."
+            )
     # Compile-time tuning knobs (kept explicit to avoid global default drift).
     # These control constexprs in `custom_cuda_group_gemm_kernel.cu`, so changing them requires
     # rebuilding the extension under a new `AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME`.
@@ -93,6 +122,16 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
         extra_cuda_cflags.append(
             f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B={int(use_utccp_64x128b)}"
         )
+    use_utccp_64x128b_sfa = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFA")
+    if use_utccp_64x128b_sfa is not None and use_utccp_64x128b_sfa.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFA={int(use_utccp_64x128b_sfa)}"
+        )
+    use_utccp_64x128b_sfb = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFB")
+    if use_utccp_64x128b_sfb is not None and use_utccp_64x128b_sfb.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B_SFB={int(use_utccp_64x128b_sfb)}"
+        )
     utccp_64x128b_schedule = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE")
     if utccp_64x128b_schedule is not None and utccp_64x128b_schedule.strip() != "":
         extra_cuda_cflags.append(
@@ -103,34 +142,63 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
         extra_cuda_cflags.append(
             f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF={int(use_utccp_128x128b_sf)}"
         )
-    unroll2_use_n256_mma = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA")
-    if unroll2_use_n256_mma is not None and unroll2_use_n256_mma.strip() != "":
+    multicast_a = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_MULTICAST_A")
+    if multicast_a is not None and multicast_a.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_MULTICAST_A={int(multicast_a)}")
+    multicast_sfa = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_MULTICAST_SFA")
+    if multicast_sfa is not None and multicast_sfa.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_MULTICAST_SFA={int(multicast_sfa)}")
+    ws_unroll2_mma = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA")
+    if ws_unroll2_mma is not None and ws_unroll2_mma.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA={int(ws_unroll2_mma)}")
+    ws_sfb1_segment_helpers = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WS_SFB1_SEGMENT_HELPERS")
+    if ws_sfb1_segment_helpers is not None and ws_sfb1_segment_helpers.strip() != "":
         extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA={int(unroll2_use_n256_mma)}"
+            f"-DNVFP4_GROUP_GEMM_V2_WS_SFB1_SEGMENT_HELPERS={int(ws_sfb1_segment_helpers)}"
         )
-    n256_sfb_tile_col_stride = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE")
-    if n256_sfb_tile_col_stride is not None and n256_sfb_tile_col_stride.strip() != "":
+    ws_nanosleep_cycles = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES")
+    if ws_nanosleep_cycles is not None and ws_nanosleep_cycles.strip() != "":
         extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE={int(n256_sfb_tile_col_stride)}"
+            f"-DNVFP4_GROUP_GEMM_V2_WS_NANOSLEEP_CYCLES={int(ws_nanosleep_cycles)}"
         )
-    n256_epi_use_tile0 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0")
-    if n256_epi_use_tile0 is not None and n256_epi_use_tile0.strip() != "":
+    ws_tma_producer = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER")
+    if ws_tma_producer is not None and ws_tma_producer.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER={int(ws_tma_producer)}")
+    ws_split_u0_segs = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WS_SPLIT_U0_SEGS")
+    if ws_split_u0_segs is not None and ws_split_u0_segs.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_WS_SPLIT_U0_SEGS={int(ws_split_u0_segs)}")
+    ws_segment_parallel = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WS_SEGMENT_PARALLEL")
+    if ws_segment_parallel is not None and ws_segment_parallel.strip() != "":
         extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0={int(n256_epi_use_tile0)}"
+            f"-DNVFP4_GROUP_GEMM_V2_WS_SEGMENT_PARALLEL={int(ws_segment_parallel)}"
         )
-    n256_epi_col_offset = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET")
-    if n256_epi_col_offset is not None and n256_epi_col_offset.strip() != "":
+    cta1_commit_barrier = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA1_COMMIT_BARRIER")
+    if cta1_commit_barrier is not None and cta1_commit_barrier.strip() != "":
         extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET={int(n256_epi_col_offset)}"
+            f"-DNVFP4_GROUP_GEMM_V2_CTA1_COMMIT_BARRIER={int(cta1_commit_barrier)}"
         )
-    n256_b_desc_stride_u128 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128")
-    if n256_b_desc_stride_u128 is not None and n256_b_desc_stride_u128.strip() != "":
+    stage1_prefetch = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_STAGE1_PREFETCH")
+    if stage1_prefetch is not None and stage1_prefetch.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_STAGE1_PREFETCH={int(stage1_prefetch)}")
+    warp0_only_mainloop = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP")
+    if warp0_only_mainloop is not None and warp0_only_mainloop.strip() != "":
         extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128={int(n256_b_desc_stride_u128)}"
+            f"-DNVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP={int(warp0_only_mainloop)}"
+        )
+    mma_lane0_all_warps = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS")
+    if mma_lane0_all_warps is not None and mma_lane0_all_warps.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS={int(mma_lane0_all_warps)}"
         )
     debug_stage = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_DEBUG_STAGE")
     if debug_stage is not None and debug_stage.strip() != "":
         extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_DEBUG_STAGE={int(debug_stage)}")
+    epilogue_ld_x16 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X16")
+    if epilogue_ld_x16 is not None and epilogue_ld_x16.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X16={int(epilogue_ld_x16)}")
+    epilogue_ld_x32 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32")
+    if epilogue_ld_x32 is not None and epilogue_ld_x32.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32={int(epilogue_ld_x32)}")
     _EXT = load_cuda_extension(
         extension_name=_EXT_NAME,
         cuda_source_file=str(source),
@@ -418,11 +486,6 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
         unroll_n = _env_int("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", 1)
         if unroll_n not in (1, 2):
             raise ValueError(f"AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N must be 1 or 2, got {unroll_n}")
-        if use_cta2 and unroll_n == 2:
-            raise ValueError(
-                "Experimental cta_group::2 currently supports only AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N=1 "
-                "(TMEM scale-factor layout capacity for 2CTA)."
-            )
         # UnrollN=2 relies on a different (K-major) packed SFB layout and 256-row TMA loads.
         # This is now supported for both cta_group::1 and experimental cta_group::2 launches.
         # Extra B padding is not required for our current cta_group::2 bring-up modes.
@@ -453,9 +516,13 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
             # For the eventual cta_group::2 path we need M padded to a multiple of 256 so rank1's
             # 128-row load (m_offset + 128) always stays in-bounds of the tensormap height.
             m_padded = ((m + 255) // 256) * 256
+            # UnrollN=2 optimization: pad N to a multiple of 256 so (tile_n, tile_n+1) always stays
+            # in-bounds for 256-row TMA scale loads (SFB). The second N128 tile on the tail is
+            # zero-padded and never computed (tile_n+1 >= n_tiles_group), but keeping it in-bounds
+            # avoids OOB reads when the tensormap box height is 256.
+            #
+            # For UnrollN=1 keep the canonical N128 padding.
             if unroll_n == 2:
-                # UnrollN=2 always issues 256-row TMA loads for B/SFB (2 adjacent N tiles), so the
-                # tensormap height must be padded to a multiple of 256 to keep the final load in-bounds.
                 n_padded_sf = ((n + 255) // 256) * 256
             else:
                 n_padded_sf = ((n + 127) // 128) * 128
@@ -512,6 +579,8 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
                 m=m,
                 n=n,
                 k_scales=k_scale,
+                # For UnrollN=2 we pack SFB as [k_tiles, n_tiles, 128, 16] so a single 256-row
+                # tensormap load pulls in (tile_n, tile_n+1) contiguously for a fixed k_tile.
                 sfb_k_major=(unroll_n == 2),
             )
 
@@ -539,17 +608,37 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
         # GPU MODE-style packed CTA mapping: avoid launching max(M_tiles)*max(N_tiles) for groups with small M/N.
         # Setup-time only (not timed). We build explicit CTA->(group,tile_m,tile_n) maps and launch a
         # single linear grid of exactly `total_ctas` blocks with grid=(1,1,total_ctas).
+        cta_order = _env_str("AISP_NVFP4_GROUP_GEMM_V2_CTA_ORDER", "tm_major").lower()
+        if cta_order not in ("tm_major", "tn_major"):
+            raise ValueError(
+                "AISP_NVFP4_GROUP_GEMM_V2_CTA_ORDER must be one of: 'tm_major' (default), 'tn_major'"
+            )
         cta_group_idx_map: list[int] = []
         cta_tile_m_map: list[int] = []
         cta_tile_n_map: list[int] = []
         for gi, (m, n) in enumerate(zip(m_sizes, n_sizes)):
             m_tiles = (int(m) + 127) // 128
             n_tiles = (int(n) + 127) // 128
-            for tn in range(0, n_tiles, unroll_n):
+            if cta_order == "tm_major":
+                # Order CTAs by (group, tile_m, tile_n). This keeps adjacent N-CTAs for
+                # the same M tile contiguous and aligns with cluster/multicast assumptions.
                 for tm in range(m_tiles):
-                    cta_group_idx_map.append(int(gi))
-                    cta_tile_m_map.append(int(tm))
-                    cta_tile_n_map.append(int(tn))
+                    if int(m) - tm * 128 <= 0:
+                        continue
+                    for tn in range(0, n_tiles, unroll_n):
+                        cta_group_idx_map.append(int(gi))
+                        cta_tile_m_map.append(int(tm))
+                        cta_tile_n_map.append(int(tn))
+            else:
+                # Order CTAs by (group, tile_n, tile_m) to improve temporal reuse of B/SFB
+                # across M tiles when N is large.
+                for tn in range(0, n_tiles, unroll_n):
+                    for tm in range(m_tiles):
+                        if int(m) - tm * 128 <= 0:
+                            continue
+                        cta_group_idx_map.append(int(gi))
+                        cta_tile_m_map.append(int(tm))
+                        cta_tile_n_map.append(int(tn))
 
         cta_group_idx_map_t = torch.tensor(cta_group_idx_map, dtype=torch.int32, device="cuda").contiguous()
         cta_tile_m_map_t = torch.tensor(cta_tile_m_map, dtype=torch.int32, device="cuda").contiguous()
@@ -566,6 +655,8 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
             # The kernel forces this mode internally; match the tensormap box height here.
             cta2_partition_b = 0
         if not use_cta2:
+            # UnrollN=2 optimization: use a 256-row B tensormap box so the kernel can load both
+            # adjacent N128 tiles in a single TMA transaction per K tile.
             b_box_height = 256 if unroll_n == 2 else 128
         elif cta2_partition_b == 1:
             # Mode 1 (global N shift) loads only N/2 rows per CTA.
@@ -583,6 +674,10 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
             torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
             int(b_box_height),
         )
+        # Scale-factor tensor maps:
+        # - SFA is always 128 rows per tile (one M tile).
+        # - SFB uses a 256-row box for UnrollN=2 so the kernel can issue one TMA load per K tile
+        #   for both N tiles (requires the K-major packing above).
         sfb_box_height = 256 if unroll_n == 2 else 128
         sfa_descs, sfb_descs = ext.nvfp4_group_gemm_v2_build_scale_tma_descs_cuda(
             torch.tensor(sfa_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
@@ -624,7 +719,71 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
         }
         prepared.append((abc_tensors, sfasfb_tensors, sfasfb_reordered_tensors, problem_sizes, ctx))
 
+    # Optional launch optimization: fuse the full inputs-per-iteration request set into one
+    # grouped tcgen05 launch. Workload is unchanged (same requests and same tensors), but
+    # per-iteration launch overhead is reduced by issuing one large grouped kernel.
+    if _env_flag("AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS", 0) and len(prepared) > 1:
+        grouped_ctxs = [entry[4]["grouped_ctx"] for entry in prepared]
+        cat_keys = (
+            "a_ptrs",
+            "b_ptrs",
+            "c_ptrs",
+            "sfa_ptrs",
+            "sfb_ptrs",
+            "m_sizes",
+            "n_sizes",
+            "k_halves",
+            "k_scales",
+            "a_descs",
+            "b_descs",
+            "sfa_descs",
+            "sfb_descs",
+            "cta_tile_m_map",
+            "cta_tile_n_map",
+        )
+        fused_grouped_ctx: dict[str, torch.Tensor | int] = {
+            key: torch.cat([ctx[key] for ctx in grouped_ctxs], dim=0).contiguous() for key in cat_keys
+        }
+
+        # CTA->group map must be offset per input so each CTA points at the correct flattened group.
+        cta_group_idx_parts: list[torch.Tensor] = []
+        group_offset = 0
+        for grouped_ctx in grouped_ctxs:
+            cta_group_idx_parts.append(grouped_ctx["cta_group_idx_map"] + int(group_offset))
+            group_offset += int(grouped_ctx["a_ptrs"].numel())
+        fused_grouped_ctx["cta_group_idx_map"] = torch.cat(cta_group_idx_parts, dim=0).contiguous()
+        fused_grouped_ctx["max_m"] = int(max(int(ctx["max_m"]) for ctx in grouped_ctxs))
+        fused_grouped_ctx["max_n"] = int(max(int(ctx["max_n"]) for ctx in grouped_ctxs))
+
+        for fused_input_idx, entry in enumerate(prepared):
+            ctx = entry[4]
+            ctx["fused_grouped_ctx"] = fused_grouped_ctx
+            ctx["fused_input_idx"] = int(fused_input_idx)
+
     return prepared
+
+
+def _launch_tcgen05_grouped(ext: object, grouped_ctx: dict[str, Any]) -> None:
+    ext.nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
+        grouped_ctx["a_ptrs"],
+        grouped_ctx["b_ptrs"],
+        grouped_ctx["sfa_ptrs"],
+        grouped_ctx["sfb_ptrs"],
+        grouped_ctx["c_ptrs"],
+        grouped_ctx["m_sizes"],
+        grouped_ctx["n_sizes"],
+        grouped_ctx["k_halves"],
+        grouped_ctx["k_scales"],
+        grouped_ctx["a_descs"],
+        grouped_ctx["b_descs"],
+        grouped_ctx["sfa_descs"],
+        grouped_ctx["sfb_descs"],
+        grouped_ctx["cta_group_idx_map"],
+        grouped_ctx["cta_tile_m_map"],
+        grouped_ctx["cta_tile_n_map"],
+        int(grouped_ctx["max_m"]),
+        int(grouped_ctx["max_n"]),
+    )
 
 
 def custom_kernel_v2_custom_cuda_tcgen05(data: tuple[Any, ...]) -> output_t:
@@ -658,28 +817,17 @@ def custom_kernel_v2_custom_cuda_tcgen05(data: tuple[Any, ...]) -> output_t:
         raise ValueError("custom_kernel_v2_custom_cuda_tcgen05 requires prepare_v2_custom_cuda_tcgen05() output")
     ctx = data[4]
     grouped_ctx = ctx["grouped_ctx"]
+    fused_grouped_ctx = ctx.get("fused_grouped_ctx")
+    fused_input_idx = int(ctx.get("fused_input_idx", 0))
 
     ext = load_v2_custom_cuda_nvfp4_group_gemm()
-    ext.nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
-        grouped_ctx["a_ptrs"],
-        grouped_ctx["b_ptrs"],
-        grouped_ctx["sfa_ptrs"],
-        grouped_ctx["sfb_ptrs"],
-        grouped_ctx["c_ptrs"],
-        grouped_ctx["m_sizes"],
-        grouped_ctx["n_sizes"],
-        grouped_ctx["k_halves"],
-        grouped_ctx["k_scales"],
-        grouped_ctx["a_descs"],
-        grouped_ctx["b_descs"],
-        grouped_ctx["sfa_descs"],
-        grouped_ctx["sfb_descs"],
-        grouped_ctx["cta_group_idx_map"],
-        grouped_ctx["cta_tile_m_map"],
-        grouped_ctx["cta_tile_n_map"],
-        int(grouped_ctx["max_m"]),
-        int(grouped_ctx["max_n"]),
-    )
+    if fused_grouped_ctx is not None:
+        # Execute the fused launch only once per timed loop (on the first input slot); all C
+        # tensors for every slot are updated by that single grouped call.
+        if fused_input_idx == 0:
+            _launch_tcgen05_grouped(ext, fused_grouped_ctx)
+    else:
+        _launch_tcgen05_grouped(ext, grouped_ctx)
     return ctx["output_refs"]
 
 

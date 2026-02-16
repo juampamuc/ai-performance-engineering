@@ -20,7 +20,6 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_KPACK_TILE", "64")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", "2")
 
 # Compile-time kernel knobs (require rebuild under a unique AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME).
-os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE", "1")
 
@@ -30,7 +29,7 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", "0")
 
 os.environ.setdefault(
     "AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME",
-    "nvfp4_group_gemm_v2_tcgen05_opt_n256mma_utccp64_s1",
+    "nvfp4_group_gemm_v2_tcgen05_opt_unroll2_utccp64_s1",
 )
 
 from core.harness.benchmark_harness import BaseBenchmark
