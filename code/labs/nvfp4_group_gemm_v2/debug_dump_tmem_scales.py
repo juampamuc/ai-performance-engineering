@@ -115,6 +115,14 @@ def main() -> int:
             "before reading). This helps detect whether UTCCP ignores dp bit7 (dp_add=128)."
         ),
     )
+    parser.add_argument(
+        "--consumed-view",
+        action="store_true",
+        help=(
+            "Dump MMA-consumed TMEM scale pointers (modes 13/14/15 or 23/24/25 with --clear-dp-base) "
+            "instead of raw UTCCP destination bases (10/11/12 or 20/21/22)."
+        ),
+    )
     parser.add_argument("--cluster", type=int, default=2, choices=[1, 2], help="Cluster dim x (1=no cluster, 2=cta2).")
     parser.add_argument("--enable-cta2", type=int, default=1, choices=[0, 1])
     parser.add_argument("--unroll-n", type=int, default=1, choices=[1, 2])
@@ -163,12 +171,14 @@ def main() -> int:
         f"_skA{_env_tag('AISP_NVFP4_GROUP_GEMM_V2_CTA2_SKIP_UTCCP_SFA', 'd')}"
         f"_skB{_env_tag('AISP_NVFP4_GROUP_GEMM_V2_CTA2_SKIP_UTCCP_SFB', 'd')}"
     )
-    os.environ["AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME"] = ext_name
+    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME", ext_name)
 
     os.environ["AISP_NVFP4_GROUP_GEMM_V2_DEBUG_STAGE"] = str(int(args.debug_stage))
 
     # Runtime knobs for the kernel debug dump.
     dump_base = 20 if args.clear_dp_base else 10
+    if args.consumed_view:
+        dump_base += 3
     if args.dump == "sfa":
         os.environ["AISP_NVFP4_GROUP_GEMM_V2_DEBUG_TMEM_DUMP"] = str(dump_base + 0)
     elif args.dump == "sfb_u0":

@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-_EXT_BASE_NAME = "nvfp4_group_gemm_v2_custom_cuda_scalar_v2"
+_EXT_BASE_NAME = "nvfp4_group_gemm_v2_custom_cuda_scalar_v2_fb5adb45"
 _EXT_NAME = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME", _EXT_BASE_NAME).strip() or _EXT_BASE_NAME
 _EXT: Optional[object] = None
 
@@ -59,26 +59,6 @@ def _env_str(name: str, default: str) -> str:
     return value
 
 
-def _select_kernel_variant() -> tuple[str, str]:
-    """Choose CUDA source for the current execution mode.
-
-    Canonical/default path uses the cta2-stable kernel source (verify-green).
-    The previous main source remains available behind an explicit legacy knob
-    for targeted debugging.
-    """
-    kernel_variant = _env_str("AISP_NVFP4_GROUP_GEMM_V2_KERNEL_VARIANT", "").lower()
-    if kernel_variant in {"legacy", "legacy_main"}:
-        return "custom_cuda_group_gemm_kernel.cu", "__legacy_main"
-    if kernel_variant in {"fb5", "fb5adb45"}:
-        return "custom_cuda_group_gemm_kernel_fb5adb45.cu", "__fb5adb45"
-    if kernel_variant in {"", "main", "default", "stable", "cta2_stable"}:
-        return "custom_cuda_group_gemm_kernel_cta2_stable.cu", "__cta2_mode1_stable"
-    raise ValueError(
-        f"Unsupported AISP_NVFP4_GROUP_GEMM_V2_KERNEL_VARIANT={kernel_variant!r}. "
-        "Use one of: main/default/stable/cta2_stable, legacy/legacy_main, fb5/fb5adb45."
-    )
-
-
 def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
     """Load (and JIT-build if needed) the v2 custom CUDA extension.
 
@@ -88,27 +68,22 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
         colliding torch-extension build directories.
     """
     global _EXT
-
-    source_file, ext_suffix = _select_kernel_variant()
-    ext_base = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME", _EXT_BASE_NAME).strip() or _EXT_BASE_NAME
-    ext_name = f"{ext_base}{ext_suffix}"
-
-    if _EXT is not None and getattr(_EXT, "__name__", None) == ext_name:
+    if _EXT is not None:
         return _EXT
 
     process_cache = _get_process_extension_cache()
-    cached = process_cache.get(ext_name)
+    cached = process_cache.get(_EXT_NAME)
     if cached is not None:
         _EXT = cached
         return _EXT
-    if ext_name in sys.modules:
-        _EXT = sys.modules[ext_name]
-        process_cache[ext_name] = _EXT
+    if _EXT_NAME in sys.modules:
+        _EXT = sys.modules[_EXT_NAME]
+        process_cache[_EXT_NAME] = _EXT
         return _EXT
 
     lab_dir = Path(__file__).resolve().parent
-    source = lab_dir / source_file
-    build_dir = REPO_ROOT / ".torch_extensions" / ext_name
+    source = lab_dir / "custom_cuda_group_gemm_kernel_fb5adb45.cu"
+    build_dir = REPO_ROOT / ".torch_extensions" / _EXT_NAME
 
     extra_cuda_cflags = [
         "--std=c++17",
@@ -218,66 +193,15 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
     cta2_sf_dp_bank = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SF_DP_BANK")
     if cta2_sf_dp_bank is not None and cta2_sf_dp_bank.strip() != "":
         extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_CTA2_SF_DP_BANK={int(cta2_sf_dp_bank)}")
-    cta2_sfa_pair_segs = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFA_PAIR_SEGS")
-    if cta2_sfa_pair_segs is not None and cta2_sfa_pair_segs.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_SFA_PAIR_SEGS={int(cta2_sfa_pair_segs)}"
-        )
-    cta2_sfa_sf_id = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFA_SF_ID")
-    if cta2_sfa_sf_id is not None and cta2_sfa_sf_id.strip() != "":
-        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_CTA2_SFA_SF_ID={int(cta2_sfa_sf_id)}")
-    cta2_sfb_sf_id = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFB_SF_ID")
-    if cta2_sfb_sf_id is not None and cta2_sfb_sf_id.strip() != "":
-        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_CTA2_SFB_SF_ID={int(cta2_sfb_sf_id)}")
-    cta2_accum_dp_bank = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_ACCUM_DP_BANK")
-    if cta2_accum_dp_bank is not None and cta2_accum_dp_bank.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_ACCUM_DP_BANK={int(cta2_accum_dp_bank)}"
-        )
     cta2_sfb_alloc_mode = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFB_ALLOC_MODE")
     if cta2_sfb_alloc_mode is not None and cta2_sfb_alloc_mode.strip() != "":
         extra_cuda_cflags.append(
             f"-DNVFP4_GROUP_GEMM_V2_CTA2_SFB_ALLOC_MODE={int(cta2_sfb_alloc_mode)}"
         )
-    cta2_sfb_pair_segs = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFB_PAIR_SEGS")
-    if cta2_sfb_pair_segs is not None and cta2_sfb_pair_segs.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_SFB_PAIR_SEGS={int(cta2_sfb_pair_segs)}"
-        )
-    cta2_sfb_populate_u1 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFB_POPULATE_U1")
-    if cta2_sfb_populate_u1 is not None and cta2_sfb_populate_u1.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_SFB_POPULATE_U1={int(cta2_sfb_populate_u1)}"
-        )
-    cta2_skip_utccp_sfa = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SKIP_UTCCP_SFA")
-    if cta2_skip_utccp_sfa is not None and cta2_skip_utccp_sfa.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_SKIP_UTCCP_SFA={int(cta2_skip_utccp_sfa)}"
-        )
-    cta2_skip_utccp_sfb = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SKIP_UTCCP_SFB")
-    if cta2_skip_utccp_sfb is not None and cta2_skip_utccp_sfb.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_SKIP_UTCCP_SFB={int(cta2_skip_utccp_sfb)}"
-        )
-    cta2_utccp_rank0_only = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_UTCCP_RANK0_ONLY")
-    if cta2_utccp_rank0_only is not None and cta2_utccp_rank0_only.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_UTCCP_RANK0_ONLY={int(cta2_utccp_rank0_only)}"
-        )
     mma_lane0_all_warps = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS")
     if mma_lane0_all_warps is not None and mma_lane0_all_warps.strip() != "":
         extra_cuda_cflags.append(
             f"-DNVFP4_GROUP_GEMM_V2_MMA_LANE0_ALL_WARPS={int(mma_lane0_all_warps)}"
-        )
-    cta2_mma_segment_parallel = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_MMA_SEGMENT_PARALLEL")
-    if cta2_mma_segment_parallel is not None and cta2_mma_segment_parallel.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_MMA_SEGMENT_PARALLEL={int(cta2_mma_segment_parallel)}"
-        )
-    cta2_mma_all_threads = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA2_MMA_ALL_THREADS")
-    if cta2_mma_all_threads is not None and cta2_mma_all_threads.strip() != "":
-        extra_cuda_cflags.append(
-            f"-DNVFP4_GROUP_GEMM_V2_CTA2_MMA_ALL_THREADS={int(cta2_mma_all_threads)}"
         )
     debug_stage = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_DEBUG_STAGE")
     if debug_stage is not None and debug_stage.strip() != "":
@@ -292,7 +216,7 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
     if maxrregcount is not None and maxrregcount.strip() != "":
         extra_cuda_cflags.append(f"--maxrregcount={int(maxrregcount)}")
     _EXT = load_cuda_extension(
-        extension_name=ext_name,
+        extension_name=_EXT_NAME,
         cuda_source_file=str(source),
         build_dir=build_dir,
         extra_cuda_cflags=extra_cuda_cflags,
@@ -301,8 +225,8 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
         extra_ldflags=["-lcuda"],
         verbose=verbose,
     )
-    process_cache[ext_name] = _EXT
-    sys.modules[ext_name] = _EXT
+    process_cache[_EXT_NAME] = _EXT
+    sys.modules[_EXT_NAME] = _EXT
     return _EXT
 
 
@@ -606,7 +530,8 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
                 raise ValueError("Invalid K/2 bytes")
 
             # TMA descriptor encoding uses padded M/N dims.
-            # Keep the historical 256-row M padding contract for descriptor/input allocation.
+            # For the eventual cta_group::2 path we need M padded to a multiple of 256 so rank1's
+            # 128-row load (m_offset + 128) always stays in-bounds of the tensormap height.
             m_padded = ((m + 255) // 256) * 256
             # UnrollN=2 optimization: pad N to a multiple of 256 so (tile_n, tile_n+1) always stays
             # in-bounds for 256-row TMA scale loads (SFB). The second N128 tile on the tail is
@@ -740,51 +665,46 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
 
         # Build tensormap descriptors on the GPU (outside timed path).
         ext = load_v2_custom_cuda_nvfp4_group_gemm()
-        # Keep descriptor contracts aligned with the runtime-selected CTA2 partition mode.
-        cta2_partition_b_eff = cta2_partition_b
-
+        # For cta_group::2, the B tensormap box height must match how the kernel partitions B.
+        # Mode 1 (global N shift) loads only N/2 rows per CTA; mode 2 loads the full N rows and
+        # shifts the SMEM descriptor base by N/2.
         if not use_cta2:
-            # UnrollN=2 optimization: load both adjacent N128 tiles in one TMA transaction.
+            # UnrollN=2 optimization: use a 256-row B tensormap box so the kernel can load both
+            # adjacent N128 tiles in a single TMA transaction per K tile.
             b_box_height = 256 if unroll_n == 2 else 128
-        elif cta2_partition_b_eff == 1:
-            # UnrollN=1 legacy mode: each CTA rank loads only N/2 rows.
+        elif cta2_partition_b == 1:
+            # Mode 1 (global N shift) is partitioned across CTA ranks for the UnrollN=1 bring-up.
+            # UnrollN=2: correctness-first bring-up uses the same partitioned-B semantics as UnrollN=1:
+            # each CTA rank loads only N/2 rows (64) per N128 tile, but we still issue per-u loads.
             b_box_height = 64
         elif unroll_n == 2:
-            # cta_group::2 + UnrollN=2 unpartitioned path issues one 256-row B transaction.
+            # UnrollN=2 loads two adjacent N tiles in one 256-row transaction when mode!=1.
             b_box_height = 256
         else:
             b_box_height = 128
-        # cta_group::2 uses a 64-row A tile per CTA (cluster tile M=128). cta_group::1 uses 128.
-        a_box_height = 64 if use_cta2 else 128
         a_descs, b_descs = ext.nvfp4_group_gemm_v2_build_ab_tma_descs_cuda(
             torch.tensor(a_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
             torch.tensor(b_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
             torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
             torch.tensor(n_sizes_tma_ab, dtype=torch.int32, device="cpu").contiguous(),
             torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
-            int(a_box_height),
             int(b_box_height),
         )
         # Scale-factor tensor maps:
-        # SFA remains 128-row in all modes.
-        # For UnrollN=2 mode0 (unpartitioned-B), keep SFB on a 256-row tensormap so u=0/u=1
-        # share one contiguous packed tile in shared memory.
-        # For CTA2 mode1 (partitioned-N), keep the established 128-row SFB tensormap contract.
-        sfa_box_height = 128
-        if use_cta2 and cta2_partition_b_eff == 1:
+        # - SFA is always 128 rows per tile (one M tile).
+        # - SFB:
+        #   - cta_group::1 + UnrollN=2 uses a 256-row box (single load for two N tiles).
+        #   - cta_group::2 mode1 keeps a 128-row SFB box per tile (known-correct for UnrollN=1 bring-up).
+        if use_cta2 and cta2_partition_b == 1:
             sfb_box_height = 128
         else:
             sfb_box_height = 256 if unroll_n == 2 else 128
-        sfb_box_height_override = _env_int("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFB_BOX_HEIGHT_OVERRIDE", 0)
-        if sfb_box_height_override > 0:
-            sfb_box_height = int(sfb_box_height_override)
         sfa_descs, sfb_descs = ext.nvfp4_group_gemm_v2_build_scale_tma_descs_cuda(
             torch.tensor(sfa_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
             torch.tensor(sfb_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
             torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
             torch.tensor(n_sizes_tma_sf, dtype=torch.int32, device="cpu").contiguous(),
             torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
-            int(sfa_box_height),
             int(sfb_box_height),
         )
 
