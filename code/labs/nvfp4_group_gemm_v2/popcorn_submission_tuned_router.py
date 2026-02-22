@@ -14,7 +14,6 @@ import torch
 from labs.nvfp4_group_gemm.cutlass_submission_cached import (
     custom_kernel_cutlass_cached,
     prepare_cutlass_cached_2sm_graph,
-    prepare_cutlass_cached_2sm_n128_graph,
 )
 from labs.nvfp4_group_gemm.nvfp4_group_gemm_common import COMPETITION_CASES
 from labs.nvfp4_group_gemm.nvfp4_group_gemm_inputs import generate_input
@@ -61,70 +60,97 @@ def _set_case_env(case_idx: int) -> None:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "1"
         os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "0"
         os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "4"
         return
 
     if case_idx == 1:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_M"] = "2"
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "1"
-        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "2"
+        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "0"
         os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "0"
         return
 
     if case_idx == 2:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_M"] = "2"
-        os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "1"
+        os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "2"
         os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "2"
-        os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "1"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "0"
         return
 
     if case_idx == 3:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_M"] = "2"
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "2"
-        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "2"
         os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "0"
         return
 
 
 _CASE_SIG_MAP = _build_case_signature_map()
-_CASE_BY_DATA_ID: dict[int, int] = {}
-_PREPARED_CACHE: dict[int, tuple[Any, ...]] = {}
-_RUNNER_CACHE: dict[int, tuple[Any, list[torch.Tensor]]] = {}
+_CUDA_AVAILABLE = torch.cuda.is_available()
+_MAX_CACHE_ENTRIES = 16
+_CACHE_ORDER: list[int] = []
+_CASE_BY_DATA_ID: dict[int, tuple[Any, int]] = {}
+_PREPARED_CACHE: dict[int, tuple[Any, tuple[Any, ...]]] = {}
+_RUNNER_CACHE: dict[int, tuple[Any, Any, list[torch.Tensor]]] = {}
+
+
+def _cache_insert(data_id: int) -> None:
+    if data_id in _CACHE_ORDER:
+        _CACHE_ORDER.remove(data_id)
+    _CACHE_ORDER.append(data_id)
+    while len(_CACHE_ORDER) > _MAX_CACHE_ENTRIES:
+        victim = _CACHE_ORDER.pop(0)
+        _RUNNER_CACHE.pop(victim, None)
+        _PREPARED_CACHE.pop(victim, None)
+        _CASE_BY_DATA_ID.pop(victim, None)
 
 
 def custom_kernel(data):
-    if not torch.cuda.is_available():
+    if not _CUDA_AVAILABLE:
         raise RuntimeError("NVFP4 submission requires CUDA")
 
     data_id = id(data)
-    case_idx = _CASE_BY_DATA_ID.get(data_id)
-    if case_idx is None:
+
+    runner_pack = _RUNNER_CACHE.get(data_id)
+    if runner_pack is not None:
+        cached_data, runner, outputs = runner_pack
+        if cached_data is data:
+            runner()
+            return outputs
+        _RUNNER_CACHE.pop(data_id, None)
+        _PREPARED_CACHE.pop(data_id, None)
+        _CASE_BY_DATA_ID.pop(data_id, None)
+
+    case_pack = _CASE_BY_DATA_ID.get(data_id)
+    if case_pack is not None and case_pack[0] is data:
+        case_idx = case_pack[1]
+    else:
         sig = _shape_signature(data)
         case_idx = _CASE_SIG_MAP.get(sig)
         if case_idx is None:
             raise RuntimeError(f"Unknown NVFP4 competition shape signature: {sig}")
-        _CASE_BY_DATA_ID[data_id] = int(case_idx)
+        _CASE_BY_DATA_ID[data_id] = (data, int(case_idx))
+        _cache_insert(data_id)
 
-    runner_pack = _RUNNER_CACHE.get(data_id)
-    if runner_pack is not None:
-        runner, outputs = runner_pack
-        runner()
-        return outputs
-
-    prepared = _PREPARED_CACHE.get(data_id)
-    if prepared is None:
+    prepared_pack = _PREPARED_CACHE.get(data_id)
+    if prepared_pack is not None and prepared_pack[0] is data:
+        prepared = prepared_pack[1]
+    else:
         _set_case_env(int(case_idx))
-        if int(case_idx) == 2:
-            prepared = prepare_cutlass_cached_2sm_n128_graph([data])[0]
-        else:
-            prepared = prepare_cutlass_cached_2sm_graph([data])[0]
-        _PREPARED_CACHE[data_id] = prepared
+        prepared = prepare_cutlass_cached_2sm_graph([data])[0]
+        _PREPARED_CACHE[data_id] = (data, prepared)
+        _cache_insert(data_id)
 
     ctx = prepared[4]
     graph = ctx.get("graph")
     if graph is not None:
-        runner_pack = (graph.replay, ctx["outputs"])
-        _RUNNER_CACHE[data_id] = runner_pack
-        runner, outputs = runner_pack
+        outputs = ctx["outputs"]
+        _RUNNER_CACHE[data_id] = (data, graph.replay, outputs)
+        _cache_insert(data_id)
+        runner = graph.replay
         runner()
         return outputs
 
