@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import builtins
 from pathlib import Path
@@ -15,8 +16,9 @@ import torch
 
 from core.utils.extension_loader_template import load_cuda_extension
 
-_EXT_NAME = "nvfp4_group_gemm_cutlass_sm100"
-_EXT: Optional[object] = None
+_BASE_EXT_NAME = "nvfp4_group_gemm_cutlass_sm100"
+_DEFAULT_S5_RESERVE_BYTES = 8 * 1024
+_EXT_BY_NAME: dict[str, object] = {}
 
 
 def _get_process_extension_cache() -> dict[str, object]:
@@ -29,20 +31,53 @@ def _get_process_extension_cache() -> dict[str, object]:
     return cache
 
 
+def _read_nonnegative_int_env(name: str, default_value: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return int(default_value)
+    value = int(raw)
+    if value < 0:
+        raise ValueError(f"{name} must be >= 0")
+    return value
+
+
+def _sanitize_extension_suffix(raw: str) -> str:
+    token = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in raw.strip())
+    token = token.strip("_")
+    return token
+
+
+def _resolve_extension_name(s5_reserve_bytes: int) -> str:
+    parts = [_BASE_EXT_NAME]
+    if int(s5_reserve_bytes) != int(_DEFAULT_S5_RESERVE_BYTES):
+        parts.append(f"s5r{int(s5_reserve_bytes)}")
+    user_suffix = _sanitize_extension_suffix(os.environ.get("AISP_NVFP4_GROUP_GEMM_CUTLASS_EXT_SUFFIX", ""))
+    if user_suffix:
+        parts.append(user_suffix)
+    return "_".join(parts)
+
+
 def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
     """Load (and JIT-build if needed) the CUTLASS NVFP4 grouped GEMM extension."""
-    global _EXT
-    if _EXT is not None:
-        return _EXT
+    s5_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N128_S5_RESERVE_BYTES",
+        _DEFAULT_S5_RESERVE_BYTES,
+    )
+    ext_name = _resolve_extension_name(s5_reserve_bytes)
+    cached_local = _EXT_BY_NAME.get(ext_name)
+    if cached_local is not None:
+        return cached_local
+
     process_cache = _get_process_extension_cache()
-    cached = process_cache.get(_EXT_NAME)
+    cached = process_cache.get(ext_name)
     if cached is not None:
-        _EXT = cached
-        return _EXT
-    if _EXT_NAME in sys.modules:
-        _EXT = sys.modules[_EXT_NAME]
-        process_cache[_EXT_NAME] = _EXT
-        return _EXT
+        _EXT_BY_NAME[ext_name] = cached
+        return cached
+    if ext_name in sys.modules:
+        loaded = sys.modules[ext_name]
+        process_cache[ext_name] = loaded
+        _EXT_BY_NAME[ext_name] = loaded
+        return loaded
 
     lab_dir = Path(__file__).resolve().parent
     source = lab_dir / "cutlass_nvfp4_grouped_gemm_sm100.cu"
@@ -60,10 +95,11 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         "-lineinfo",
         # B200 (SM100). We keep this narrow to reduce compile time.
         "-gencode=arch=compute_100a,code=sm_100a",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_S5_RESERVE_BYTES={int(s5_reserve_bytes)}",
     ]
 
-    _EXT = load_cuda_extension(
-        extension_name=_EXT_NAME,
+    ext = load_cuda_extension(
+        extension_name=ext_name,
         cuda_source_file=str(source),
         include_dirs=[cutlass_util_inc],
         extra_cuda_cflags=extra_cuda_cflags,
@@ -71,9 +107,10 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         verbose=verbose,
     )
     # Keep cache coherent even when module is imported through different paths.
-    process_cache[_EXT_NAME] = _EXT
-    sys.modules[_EXT_NAME] = _EXT
-    return _EXT
+    process_cache[ext_name] = ext
+    _EXT_BY_NAME[ext_name] = ext
+    sys.modules[ext_name] = ext
+    return ext
 
 
 __all__ = ["load_cutlass_nvfp4_grouped_gemm_sm100"]
