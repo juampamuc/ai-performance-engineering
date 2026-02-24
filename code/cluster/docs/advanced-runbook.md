@@ -8,6 +8,7 @@ Key rule (GPU benchmarks):
 
 ## Validated Reference Package
 - Canonical validated run (used by the current field report): `2026-02-10_full_suite_e2e_wire_qf_mon`.
+- Canonical localhost package example: `2026-02-24_localhost_fullsuite_r4` with report files `field-report-localhost.md` and `field-report-localhost-notes.md`.
 - Manifest: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json`.
 - Sanitized cluster metadata: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_meta.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_meta.json`.
 - Multi-node vLLM path result (strict-lock + digest-pinned image parity): `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_vllm_multinode_serve.json`.
@@ -16,6 +17,7 @@ Key rule (GPU benchmarks):
 - Storage parity fio artifacts: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_fio.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_fio.json`.
 - Required operator friction artifacts: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_quick_friction.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_quick_friction.json`.
 - Required monitoring expectation artifacts: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_monitoring_expectations.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_monitoring_expectations.json`.
+- Operator checks dashboard artifact: `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_operator_checks_dashboard.json` and `docs/figures/2026-02-10_full_suite_e2e_wire_qf_mon_operator_checks_dashboard.png`.
 - Narrative report: `field-report.md`.
 - Claim-to-evidence ledger: `field-report-notes.md`.
 
@@ -46,6 +48,7 @@ The full suite now also includes three required reliability gates by default:
 The full suite also includes two required operator checks by default:
 - Quick friction battery (`scripts/run_quick_friction_all_nodes.sh`) on all hosts.
 - Monitoring expectations snapshot (`scripts/collect_monitoring_expectations_all_nodes.sh`) on all hosts.
+- Operator checks dashboard rollup (`analysis/plot_operator_checks_dashboard.py`) that summarizes both checks.
 
 New explicit knobs for those required gates:
 ```bash

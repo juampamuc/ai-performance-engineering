@@ -29,7 +29,7 @@ python -m cli.aisp bench list-targets --chapter ch01
 python -m cli.aisp bench run --targets ch01 --profile minimal
 ```
 - `setup.sh` installs system prerequisites (drivers, CUDA, Nsight) and should be rerun after driver upgrades.
-- Benchmark validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only for explicit compatibility runs on hardware lacking strict controls.
+- Benchmark validity profile defaults to strict. Use `--validity-profile portable` only for explicit compatibility runs on virtualized or hardware-limited hosts.
 - Use `python -m cli.aisp bench expectations --hardware b200 --min-speedup 1.05` to report expectation entries below a target threshold.
 - Use `python -m cli.aisp bench run --targets ch*` for automated regression suites.
 - Portable runs do not update expectation files unless `--allow-portable-expectations-update` is supplied.
@@ -41,8 +41,8 @@ python -m cli.aisp bench run --targets ch01 --profile minimal
 
 ## Wall of Shame
 The benchmark harness includes a strict set of correctness and validity checks to prevent misleading speedups.
-This section starts with real-world incidents (the wall), maps those incidents to protection categories, and
-then provides the full 95-check reference table.
+Below is the reference list of validity issues we explicitly protect against, plus real-world incidents that
+motivated these checks.
 
 Note: All 95 validity issues are protected by the harness.
 
@@ -53,64 +53,7 @@ used for verification must come from the timed `benchmark_fn()` run and be surfa
 Virtualization Note: `validate_environment()` treats virtualization (hypervisor present) as invalid. Benchmarks are
 supported only on bare metal.
 
-### Real-World Incidents (The Wall)
-
-| Year | Incident | Issue Type | What Happened | Source |
-| --- | --- | --- | --- | --- |
-| 2025 | Locus/KernelBench Stream Exploit | Unsynced Streams | Claimed 20x speedup on Llama FFW kernel. AI launched work on non-default CUDA streams but timer only measured default stream. 32.8 percent of RL-generated kernels exploited this, causing fake 18x speedups. | https://x.com/miru_why/status/1991773868806361138 |
-| 2025 | Preference Leakage in LLM-as-a-Judge | Evaluation Integrity / Judge Contamination | Study shows judge models are biased toward related student models (same model, inheritance, or family), contaminating evaluation outcomes. | https://arxiv.org/abs/2502.01534 |
-| 2025 | LessLeak-Bench (SE Benchmarks) | Data Contamination / Leakage | Large-scale study across 83 software engineering benchmarks finds leakage is usually low overall but severe in specific benchmarks (for example, QuixBugs and BigCloneBench), materially affecting measured performance. | https://arxiv.org/abs/2502.06215 |
-| 2025 | Measuring What Matters: Construct Validity in LLM Benchmarks | Metric Definition Gaming / Construct Validity | Systematic review of 445 LLM benchmarks found construct-validity weaknesses and low statistical rigor; issued eight design recommendations. | https://ora.ox.ac.uk/objects/uuid%3Aad2b69b6-0986-42d0-a512-a6e56338b6cc |
-| 2025 | Medical LLM Benchmarks and Construct Validity | Metric Definition Gaming / Construct Validity | Position paper argues exam-style medical LLM benchmarks miss real-world tasks and documents construct-validity gaps using clinical data. | https://arxiv.org/abs/2503.10694 |
-| 2025 | Sakana AI Scientist Evaluation | Evaluation Integrity | Independent evaluation found frequent experiment failures and hallucinated numerical results. | https://arxiv.org/abs/2502.14297 |
-| 2025 | Leaderboard Illusion (Chatbot Arena) | Cherry-picking | Analysis of Chatbot Arena reports selection effects and leaderboard instability when submissions are inconsistent or selectively disclosed. | https://arxiv.org/abs/2504.20879 |
-| 2024 | Benchmarking Benchmark Leakage in LLMs (Math Reasoning) | Data Contamination / Leakage | Analysis of 31 LLMs in mathematical reasoning reports substantial benchmark leakage and potential test-set misuse, with recommendations for benchmark transparency cards. | https://arxiv.org/abs/2404.18824 |
-| 2024 | MMLU Benchmark Errors | Invalid Ground Truth | Analysis found 57 percent of MMLU virology subset questions incorrect and estimated 6.49 percent errors overall. | https://arxiv.org/abs/2406.04127 |
-| 2024 | AI Agent Benchmark Shortcuts | Missing Holdout Sets | Study found AI agents memorize benchmark test samples instead of learning to generalize. Many benchmarks lack proper holdout test sets. | https://arxiv.org/abs/2407.01502 |
-| 2024 | Investigating Data Contamination in Modern LLM Benchmarks | Data Contamination / Leakage | NAACL long paper introduces retrieval-based overlap checks and TS-Guessing to detect contamination signals in modern benchmarks across open and proprietary models. | https://aclanthology.org/2024.naacl-long.482/; https://arxiv.org/abs/2311.09783 |
-| 2024 | MMLU-CF (Contamination-Free MMLU) | Data Contamination / Leakage | Proposes a contamination-resistant MMLU variant with closed test split and decontamination rules to reduce unintentional and malicious leakage. | https://arxiv.org/abs/2412.15194; https://github.com/microsoft/MMLU-CF |
-| 2024 | NaturalCodeBench vs HumanEval | Benchmark Overfitting | Real-user coding tasks in NaturalCodeBench show large performance gaps and weak correlation with HumanEval scores. | https://aclanthology.org/2024.findings-acl.471/ |
-| 2024 | Benchmark Data Contamination Survey | Data Contamination | Survey catalogs contamination pathways across LLM benchmarks and highlights mitigation gaps. | https://arxiv.org/abs/2406.04244 |
-| 2023 | NLP Evaluation Data Contamination | Data Contamination | Position paper warns that LLMs trained on benchmark test splits can inflate reported scores. | https://arxiv.org/abs/2310.18018 |
-| 2022 | MLPerf Participation Issues | Cherry-picking | MLPerf faced inconsistent vendor participation; selective scenario submissions led to biased performance representations. | http://web.archive.org/web/20250813110435/https://www.nextplatform.com/2022/04/08/the-performance-of-mlperf-as-a-ubiquitous-benchmark-is-lacking/ |
-| 2022 | ML Benchmark Validity (Berkeley) | Benchmark Overfitting | Small changes in data distribution caused significant performance drops, questioning external validity. | https://www2.eecs.berkeley.edu/Pubs/TechRpts/2022/EECS-2022-180.html |
-| 2021 | ImageNet Label Errors | Invalid Ground Truth | At least 6 percent label errors in ImageNet validation set. | https://arxiv.org/abs/2103.14749 |
-| 2021 | MLPerf Reproducibility | Benchmark Reproducibility | Users could not reproduce MLPerf v0.7 results due to inaccessible datasets and outdated repos. | https://groups.google.com/a/mlcommons.org/g/public/c/T_8UsUPIWFo |
-| 2021 | Epic Sepsis Model External Validation | Benchmark Overfitting | External validation found poor discrimination and calibration for the Epic Sepsis Model, leading to missed cases and alert fatigue. | https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2781307 |
-| 2020 | Underspecification in ML | Benchmark Overfitting | Models with equivalent benchmark performance diverged in deployment behavior. | https://arxiv.org/abs/2011.03395 |
-| 2020 | TF32 Default on Ampere | Precision Policy Drift | TF32-enabled matmul/conv trades precision for speed unless explicitly disabled. | https://pytorch.org/docs/stable/notes/cuda.html#tf32-on-ampere |
-| 2019 | NLI Heuristic Shortcuts (HANS) | Metric Definition Gaming | Models trained on MNLI (GLUE) rely on shallow heuristics and fail on HANS, revealing spurious shortcut behavior. | https://aclanthology.org/P19-1334/ |
-| 2019 | MLPerf Inference Bias | Metric Definition Gaming | Vendors selectively submitted results highlighting strengths. | http://web.archive.org/web/20191112035148/https://www.forbes.com/sites/janakirammsv/2019/11/10/the-curious-case-of-mlperf-inferencing-benchmark-results/ |
-| 2019 | Computational Biology Overfitting | Train/Test Overlap | Tools developed and tested on same datasets failed on new data. | https://www.nature.com/articles/s41467-019-09406-4 |
-| 2016 | Microsoft Tay Chatbot | Missing Holdout Sets | AI chatbot learned abusive behavior within 24 hours after deployment due to adversarial user interactions. | https://blogs.microsoft.com/blog/2016/03/25/learning-tays-introduction/ |
-
-### Incident Categories and Our Protections
-
-| Category | Incidents | Our Protection | Status |
-| --- | --- | --- | --- |
-| Timing Manipulation | 1 (Locus/KernelBench) | Full device sync + StreamAuditor | OK |
-| Invalid Ground Truth | 2 (ImageNet Labels, MMLU) | GoldenOutputCache + validate_result | OK |
-| Benchmark Overfitting | 4 (Underspecification, Epic Sepsis, NaturalCodeBench, Berkeley) | Fresh-input checks + jitter | OK |
-| Data Contamination | 6 (Benchmark Leakage 2024, NAACL 2024, MMLU-CF, LessLeak-Bench, LLM Survey 2024, NLP Contamination 2023) | Data contamination checks + fresh inputs + held-out evaluation data | OK |
-| Metric Gaming | 4 (Measuring What Matters 2025, Medical LLM Benchmarks 2025, HANS 2019, MLPerf 2019) | Standardized metric definitions | OK |
-| Cherry-picking | 2 (Leaderboard Illusion, MLPerf 2022) | All-iteration reporting | OK |
-| Train/Test Overlap | 1 (Computational Biology) | Dataset isolation + holdout enforcement | OK |
-| Missing Holdout Sets | 2 (AI Agent Shortcuts, Microsoft Tay) | Held-out evaluation data | OK |
-| Reproducibility | 1 (MLPerf 2021) | RunManifest version locking | OK |
-| Evaluation Integrity | 2 (Sakana AI Scientist, Preference Leakage 2025) | BenchmarkContract + verification enforcement | OK |
-| Precision Policy Drift | 1 (TF32 Default) | Backend policy immutability check | OK |
-
-### How We Detect and Prevent These Failures (Notes)
-- Timing integrity is enforced with full-device synchronization, stream auditing, adaptive iterations, and warmup isolation.
-- Output correctness is guarded through golden outputs, tolerance-aware comparisons, fresh-input checks, and jitter checks.
-- Workload equivalence is enforced through immutable configs and input signatures (dtype, shapes, masks, cache sizes, and shard sizes).
-- Environment reproducibility is enforced by hardware/software manifest checks, clock locking, and bare-metal validation.
-- Statistical integrity is enforced with all-iteration reporting, fixed policies for percentiles/sampling, and process isolation.
-- Evaluation integrity is enforced with benchmark contracts, contamination checks, holdout requirements, and anti-memorization checks.
-- Scope note: Some incidents above are model-evaluation contamination/leakage cases (not kernel timing bugs). They are included because they represent the same failure class: inflated scores from invalid evaluation setup.
-- Limits note: For closed/proprietary model pipelines, no benchmark harness can directly prove zero pretraining contamination. Our controls reduce risk (fresh inputs, jitter, held-out data, contamination checks) but are not a cryptographic guarantee.
-
-### Full Validity Issue Reference (95 Checks)
+### Benchmark Validity Issues Reference
 
 | Category | Issue | What Happens | Protection | Status | Real-World Incident |
 | --- | --- | --- | --- | --- | --- |
@@ -211,6 +154,48 @@ supported only on bare metal.
 | Evaluation | Missing Holdout Sets | No proper train/test split | Held-out evaluation data | OK | AI Agent Benchmark Shortcuts 2024, Microsoft Tay 2016 |
 
 Total: 11 categories, 95 validity issues - all protected by the harness.
+
+### Notable Real-World Incidents
+
+| Year | Incident | Issue Type | What Happened | Source |
+| --- | --- | --- | --- | --- |
+| 2025 | Locus/KernelBench Stream Exploit | Unsynced Streams | Claimed 20x speedup on Llama FFW kernel. AI launched work on non-default CUDA streams but timer only measured default stream. 32.8 percent of RL-generated kernels exploited this, causing fake 18x speedups. | https://x.com/miru_why/status/1991773868806361138 |
+| 2025 | Measuring What Matters: Construct Validity in LLM Benchmarks | Metric Definition Gaming / Construct Validity | Systematic review of 445 LLM benchmarks found construct-validity weaknesses and low statistical rigor; issued eight design recommendations. | https://ora.ox.ac.uk/objects/uuid%3Aad2b69b6-0986-42d0-a512-a6e56338b6cc |
+| 2025 | Medical LLM Benchmarks and Construct Validity | Metric Definition Gaming / Construct Validity | Position paper argues exam-style medical LLM benchmarks miss real-world tasks and documents construct-validity gaps using clinical data. | https://arxiv.org/abs/2503.10694 |
+| 2025 | Sakana AI Scientist Evaluation | Evaluation Integrity | Independent evaluation found frequent experiment failures and hallucinated numerical results. | https://arxiv.org/abs/2502.14297 |
+| 2025 | Leaderboard Illusion (Chatbot Arena) | Cherry-picking | Analysis of Chatbot Arena reports selection effects and leaderboard instability when submissions are inconsistent or selectively disclosed. | https://arxiv.org/abs/2504.20879 |
+| 2024 | MMLU Benchmark Errors | Invalid Ground Truth | Analysis found 57 percent of MMLU virology subset questions incorrect and estimated 6.49 percent errors overall. | https://arxiv.org/abs/2406.04127 |
+| 2024 | AI Agent Benchmark Shortcuts | Missing Holdout Sets | Study found AI agents memorize benchmark test samples instead of learning to generalize. Many benchmarks lack proper holdout test sets. | https://arxiv.org/abs/2407.01502 |
+| 2024 | NaturalCodeBench vs HumanEval | Benchmark Overfitting | Real-user coding tasks in NaturalCodeBench show large performance gaps and weak correlation with HumanEval scores. | https://aclanthology.org/2024.findings-acl.471/ |
+| 2024 | Benchmark Data Contamination Survey | Data Contamination | Survey catalogs contamination pathways across LLM benchmarks and highlights mitigation gaps. | https://arxiv.org/abs/2406.04244 |
+| 2023 | NLP Evaluation Data Contamination | Data Contamination | Position paper warns that LLMs trained on benchmark test splits can inflate reported scores. | https://arxiv.org/abs/2310.18018 |
+| 2022 | MLPerf Participation Issues | Cherry-picking | MLPerf faced inconsistent vendor participation; selective scenario submissions led to biased performance representations. | http://web.archive.org/web/20250813110435/https://www.nextplatform.com/2022/04/08/the-performance-of-mlperf-as-a-ubiquitous-benchmark-is-lacking/ |
+| 2022 | ML Benchmark Validity (Berkeley) | Benchmark Overfitting | Small changes in data distribution caused significant performance drops, questioning external validity. | https://www2.eecs.berkeley.edu/Pubs/TechRpts/2022/EECS-2022-180.html |
+| 2021 | ImageNet Label Errors | Invalid Ground Truth | At least 6 percent label errors in ImageNet validation set. | https://arxiv.org/abs/2103.14749 |
+| 2021 | MLPerf Reproducibility | Benchmark Reproducibility | Users could not reproduce MLPerf v0.7 results due to inaccessible datasets and outdated repos. | https://groups.google.com/a/mlcommons.org/g/public/c/T_8UsUPIWFo |
+| 2021 | Epic Sepsis Model External Validation | Benchmark Overfitting | External validation found poor discrimination and calibration for the Epic Sepsis Model, leading to missed cases and alert fatigue. | https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2781307 |
+| 2020 | Underspecification in ML | Benchmark Overfitting | Models with equivalent benchmark performance diverged in deployment behavior. | https://arxiv.org/abs/2011.03395 |
+| 2020 | TF32 Default on Ampere | Precision Policy Drift | TF32-enabled matmul/conv trades precision for speed unless explicitly disabled. | https://pytorch.org/docs/stable/notes/cuda.html#tf32-on-ampere |
+| 2019 | NLI Heuristic Shortcuts (HANS) | Metric Definition Gaming | Models trained on MNLI (GLUE) rely on shallow heuristics and fail on HANS, revealing spurious shortcut behavior. | https://aclanthology.org/P19-1334/ |
+| 2019 | MLPerf Inference Bias | Metric Definition Gaming | Vendors selectively submitted results highlighting strengths. | http://web.archive.org/web/20191112035148/https://www.forbes.com/sites/janakirammsv/2019/11/10/the-curious-case-of-mlperf-inferencing-benchmark-results/ |
+| 2019 | Computational Biology Overfitting | Train/Test Overlap | Tools developed and tested on same datasets failed on new data. | https://www.nature.com/articles/s41467-019-09406-4 |
+| 2016 | Microsoft Tay Chatbot | Missing Holdout Sets | AI chatbot learned abusive behavior within 24 hours after deployment due to adversarial user interactions. | https://blogs.microsoft.com/blog/2016/03/25/learning-tays-introduction/ |
+
+### Incident Categories and Our Protections
+
+| Category | Incidents | Our Protection | Status |
+| --- | --- | --- | --- |
+| Timing Manipulation | 1 (Locus/KernelBench) | Full device sync + StreamAuditor | OK |
+| Invalid Ground Truth | 2 (ImageNet Labels, MMLU) | GoldenOutputCache + validate_result | OK |
+| Benchmark Overfitting | 4 (Underspecification, Epic Sepsis, NaturalCodeBench, Berkeley) | Fresh-input checks + jitter | OK |
+| Data Contamination | 2 (LLM Survey 2024, NLP Contamination 2023) | Data contamination checks + fresh inputs | OK |
+| Metric Gaming | 4 (Measuring What Matters 2025, Medical LLM Benchmarks 2025, HANS 2019, MLPerf 2019) | Standardized metric definitions | OK |
+| Cherry-picking | 2 (Leaderboard Illusion, MLPerf 2022) | All-iteration reporting | OK |
+| Train/Test Overlap | 1 (Computational Biology) | Dataset isolation + holdout enforcement | OK |
+| Missing Holdout Sets | 2 (AI Agent Shortcuts, Microsoft Tay) | Held-out evaluation data | OK |
+| Reproducibility | 1 (MLPerf 2021) | RunManifest version locking | OK |
+| Evaluation Integrity | 1 (Sakana AI Scientist) | BenchmarkContract + verification enforcement | OK |
+| Precision Policy Drift | 1 (TF32 Default) | Backend policy immutability check | OK |
 
 ### Deep Dive: The Locus/KernelBench Stream Timing Vulnerability
 

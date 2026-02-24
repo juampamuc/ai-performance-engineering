@@ -50,6 +50,7 @@ Last updated: 2026-02-10. Canonical run: `2026-02-10_full_suite_e2e_wire_qf_mon`
 | GPUs per host | 4 |
 | Canonical manifest | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json) |
 | Canonical suite steps | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_suite_steps.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_suite_steps.json) |
+| Localhost package (single-node convention) | [field-report-localhost.md](field-report-localhost.md), [field-report-localhost-notes.md](field-report-localhost-notes.md) |
 | Discovery/meta | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_meta.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_meta.json) and [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_meta.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_meta.json) |
 | Health summary | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_health_suite_extended_node1node2_cluster_health_suite_summary.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_health_suite_extended_node1node2_cluster_health_suite_summary.json) |
 | Node parity summary | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node_parity_summary.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node_parity_summary.json) |

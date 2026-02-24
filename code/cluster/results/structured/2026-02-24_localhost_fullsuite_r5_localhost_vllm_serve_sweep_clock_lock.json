@@ -1,0 +1,30 @@
+{
+  "cmd": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/repro/run_vllm_serve_sweep_container.sh --run-id 2026-02-24_localhost_fullsuite_r5 --label localhost --model openai-community/gpt2 --isl 128 --osl 64 --concurrency-range '1 2' --port 8893 --tp 1",
+  "command_end_ts": "2026-02-24T05:51:08+0000",
+  "command_start_ts": "2026-02-24T05:49:57+0000",
+  "devices": [
+    0
+  ],
+  "label": "localhost",
+  "locks": [
+    {
+      "clocks": {
+        "applications_mem_mhz": 3996,
+        "applications_sm_mhz": 1965,
+        "current_mem_mhz": 3996,
+        "current_sm_mhz": 1155
+      },
+      "device": 0,
+      "lock": {
+        "locked": true,
+        "theoretical_mem_gbps": 7672.32,
+        "theoretical_tflops_fp16": 595.5993599999999
+      },
+      "physical_gpu": 0
+    }
+  ],
+  "require_clock_lock": true,
+  "returncode": 0,
+  "run_id": "2026-02-24_localhost_fullsuite_r5",
+  "timestamp": "2026-02-24T05:49:57+0000"
+}

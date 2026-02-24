@@ -8,8 +8,10 @@ Last updated: YYYY-MM-DD
 | RUN_ID | `2026-02-10_full_suite_e2e_wire_qf_mon` |
 | Manifest | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json` |
 | Suite steps | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_suite_steps.json` |
+| Localhost package convention | For single-host packages, publish `cluster/field-report-localhost.md` + `cluster/field-report-localhost-notes.md` tied to the localhost RUN_ID. |
 | Required reliability gates | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_torchrun_connectivity_probe.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_nccl_env_sensitivity.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_hang_triage_readiness.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_hang_triage_readiness.json` |
 | Required operator checks | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_quick_friction.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_quick_friction.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node1_monitoring_expectations.json`, `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_node2_monitoring_expectations.json` |
+| Operator checks dashboard | `results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_operator_checks_dashboard.json`, `docs/figures/2026-02-10_full_suite_e2e_wire_qf_mon_operator_checks_dashboard.png` |
 
 ## Table of Contents
 1. [TL;DR](#tldr)
@@ -126,13 +128,19 @@ Evidence data:
 | --- | --- | --- | --- |
 | quick_friction | <ok/degraded/error> | <pass/fail counts, missing external tools, install/pull timing> | `results/structured/<RUN_ID>_<label>_quick_friction.json` |
 | monitoring_expectations | <ok/degraded/error> | <category status: control_plane, gpu_telemetry, system_signals> | `results/structured/<RUN_ID>_<label>_monitoring_expectations.json` |
+| operator_checks_dashboard | <generated/missing> | <rolled-up node summaries for quick_friction + monitoring_expectations> | `results/structured/<RUN_ID>_operator_checks_dashboard.json` |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_operator_checks_dashboard.png"><img src="docs/figures/<RUN_ID>_operator_checks_dashboard.png" alt="Operator checks dashboard" width="920"/></a></p>
 
 Evidence data:
 
 `results/structured/<RUN_ID>_<label>_quick_friction.json`<br/>
 `results/raw/<RUN_ID>_<label>_quick_friction.log`<br/>
 `results/structured/<RUN_ID>_<label>_monitoring_expectations.json`<br/>
-`results/raw/<RUN_ID>_<label>_monitoring_expectations.log`
+`results/raw/<RUN_ID>_<label>_monitoring_expectations.log`<br/>
+`results/structured/<RUN_ID>_operator_checks_dashboard.json`
 
 ## Cluster Story (First Contact)
 | UTC time | Milestone |

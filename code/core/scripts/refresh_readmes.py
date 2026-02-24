@@ -87,7 +87,7 @@ def _chapter_run_commands(slug: str) -> RunSection:
     ]
     notes = [
         "Override `--profile` or `--iterations` per workload when capturing Nsight traces.",
-        "Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.",
+        "Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.",
         "Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.",
     ]
     return RunSection(commands=commands, notes=notes)
@@ -102,7 +102,7 @@ def _lab_run_commands(slug: str) -> RunSection:
     notes = [
         f"Targets follow the `{slug}:<workload>` naming convention listed by `list-targets`.",
         f"Use `--target-extra-arg {slug}:<workload>=\"--flag value\"` to sweep schedule knobs.",
-        "Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.",
+        "Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.",
         "Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.",
     ]
     return RunSection(commands=commands, notes=notes)
@@ -384,7 +384,7 @@ ENTRIES["README.md"] = Entry(
         ],
         notes=[
             "`setup.sh` installs system prerequisites (drivers, CUDA, Nsight) and should be rerun after driver upgrades.",
-            "Benchmark validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only for explicit compatibility runs on hardware lacking strict controls.",
+            "Benchmark validity profile defaults to strict. Use `--validity-profile portable` only for explicit compatibility runs on virtualized or hardware-limited hosts.",
             "Use `python -m cli.aisp bench expectations --hardware b200 --min-speedup 1.05` to report expectation entries below a target threshold.",
             "Use `python -m cli.aisp bench run --targets ch*` for automated regression suites.",
             "Portable runs do not update expectation files unless `--allow-portable-expectations-update` is supplied.",

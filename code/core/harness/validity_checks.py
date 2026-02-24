@@ -766,7 +766,10 @@ def validate_environment(
             f"{product_hint}"
         )
         if allow_virtualization:
-            warnings_list.append(f"{message} Continuing because allow_virtualization=True.")
+            warnings_list.append(
+                f"{message} Continuing because validity_profile=portable "
+                "(allow_virtualization=True)."
+            )
         else:
             errors.append(message)
 

@@ -19,6 +19,7 @@ Uses a simplified MLP-based model (not a transformer) to isolate optimization ef
 | `baseline_decode_warp_specialized.py` | Eager baseline matching the warp-specialized Triton workload. |
 | `baseline_decode_double_buffer_tma.py` | Baseline CUDA kernel for the TMA double-buffered decode comparison. |
 | `baseline_decode_streams.py` | Baseline that mirrors the stream-count/timing of the streams optimized variant. |
+| `baseline_decode_hf_cache.py`, `optimized_decode_hf_cache.py` | Real HuggingFace decoder-loop comparison: dynamic cache + per-step EOS sync vs static cache + compiled decode + batched EOS polling. |
 | `optimized_decode_pinned.py`, `optimized_decode_streams.py` | Pinned-host and dual-stream variants that remove host bottlenecks. |
 | `optimized_decode_compile.py`, `optimized_decode_graph.py`, `optimized_decode_graph_full.py` | `torch.compile` and CUDA Graph variants (decode-only and full prefill+decode). |
 | `optimized_decode_fp8.py`, `optimized_decode_fp4.py` | Transformer Engine FP8/FP4 decode paths (fail fast when unsupported). |
@@ -55,3 +56,5 @@ python -m cli.aisp demos labs-decode-multigpu --nproc-per-node 4 -- --iters 4 --
 - FP4 path requires NVFP4 (Blackwell); unsupported platforms fail fast.
 - Multi-GPU demo expects >=2 visible GPUs; adjust `--nproc-per-node` for your node.
 - This lab uses a simplified MLP model (no attention) to isolate serving optimization effects.
+- The HF cache pair credits and reproduces ideas from Chaim Rand's blog post on token-generation optimization:
+  `https://chaimrand.medium.com/optimizing-token-generation-in-pytorch-decoder-models-8e63b5a5fc80`.

@@ -22,6 +22,7 @@ Last updated: 2026-02-10. Canonical run: `2026-02-10_full_suite_e2e_wire_qf_mon`
 | Canonical run | `2026-02-10_full_suite_e2e_wire_qf_mon` |
 | Manifest | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_manifest.json) |
 | Suite steps | [results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_suite_steps.json](results/structured/2026-02-10_full_suite_e2e_wire_qf_mon_suite_steps.json) |
+| Localhost package (single-node convention) | [field-report-localhost.md](field-report-localhost.md), [field-report-localhost-notes.md](field-report-localhost-notes.md) |
 | Required-gate execution | Included in canonical run (`2026-02-10_full_suite_e2e_wire_qf_mon`) |
 | Suite status | `53/53` green steps |
 

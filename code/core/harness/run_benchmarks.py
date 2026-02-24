@@ -158,7 +158,7 @@ def _query_gpu_telemetry_for_profile(
     except Exception:
         if str(validity_profile).strip().lower() == "portable":
             logger.warning(
-                "Portable validity mode: GPU telemetry field unavailable on this hardware; continuing.",
+                "Portable validity profile: GPU telemetry field unavailable on this hardware; continuing.",
                 exc_info=True,
             )
             return None
@@ -2901,8 +2901,9 @@ def _test_chapter_impl(
     )
     if not expectation_writes_enabled:
         logger.warning(
-            "Portable validity mode active: expectation file updates are disabled. "
-            "Set allow_portable_expectations_update=True to enable writes."
+            "Portable validity profile active: expectation file updates are disabled. "
+            "Set --allow-portable-expectations-update "
+            "(allow_portable_expectations_update=True) to enable writes."
         )
 
     if single_gpu:
@@ -5395,8 +5396,9 @@ def _test_chapter_impl(
                         result_entry["expectation"] = {
                             "status": "skipped",
                             "message": (
-                                "Expectation updates disabled in portable validity mode. "
-                                "Enable allow_portable_expectations_update to write expectation files."
+                                "Expectation updates are disabled in portable validity profile. "
+                                "Enable --allow-portable-expectations-update "
+                                "(allow_portable_expectations_update=True) to write expectation files."
                             ),
                             "validation_issues": [],
                         }
@@ -6639,8 +6641,9 @@ def _test_chapter_impl(
                         result_entry["expectation"] = {
                             "status": "skipped",
                             "message": (
-                                "Expectation updates disabled in portable validity mode. "
-                                "Enable allow_portable_expectations_update to write expectation files."
+                                "Expectation updates are disabled in portable validity profile. "
+                                "Enable --allow-portable-expectations-update "
+                                "(allow_portable_expectations_update=True) to write expectation files."
                             ),
                             "validation_issues": [],
                         }
@@ -9090,17 +9093,18 @@ def main():
         '--validity-profile',
         choices=['strict', 'portable'],
         default='strict',
-        help='Benchmark validity mode: strict (default, fail-fast) or portable (explicit compatibility mode).'
-    )
-    parser.add_argument(
-        '--portable',
-        action='store_true',
-        help='Shortcut for --validity-profile portable.'
+        help=(
+            'Benchmark validity profile: strict (default, fail-fast with full validity checks) '
+            'or portable (compatibility mode for virtualized/limited hosts).'
+        ),
     )
     parser.add_argument(
         '--allow-portable-expectations-update',
         action='store_true',
-        help='Required to write expectation files while running in portable validity mode.'
+        help=(
+            'In portable validity profile, expectation writes are disabled by default. '
+            'Set this flag to allow expectation-file updates.'
+        ),
     )
     parser.add_argument(
         '--nsys-timeout-seconds',
@@ -9140,8 +9144,14 @@ def main():
     )
     
     args = parser.parse_args()
-    if getattr(args, "portable", False):
-        args.validity_profile = "portable"
+    logger.info(
+        "Benchmark validity profile (--validity-profile): %s",
+        (
+            "strict (fail-fast, full validity enforcement)"
+            if args.validity_profile == "strict"
+            else "portable (compatibility mode; some strict checks are relaxed)"
+        ),
+    )
     if (
         args.validity_profile == "portable"
         and not bool(getattr(args, "allow_portable_expectations_update", False))
@@ -9152,7 +9162,8 @@ def main():
         )
     ):
         logger.error(
-            "Portable mode does not write expectations unless --allow-portable-expectations-update is set."
+            "Portable validity profile does not write expectations unless "
+            "--allow-portable-expectations-update is set."
         )
         sys.exit(1)
     # Keep "auto" aligned with the profile preset so `--profile minimal` stays fast.

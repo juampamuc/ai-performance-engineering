@@ -50,11 +50,11 @@ Then poll `job_status` until complete and read:
 - `run_dir`, `results_json`, `analysis_json`
 - `benchmarks[]` entries, each with `profiles_dir` and `followup_tool_calls` (ready-to-run chaining inputs)
 
-### Validity flags (strict by default)
+### Environment mode flags (strict by default)
 
 All benchmark-oriented MCP tools now use the same validity contract as CLI:
-- `validity_profile`: `strict` (default) or `portable`
-- `allow_portable_expectations_update`: required when you want portable runs to write expectation files
+- `validity_profile` (benchmark validity profile): `strict` (default; fail-fast with full validity checks) or `portable` (compatibility mode for virtualized/limited hosts)
+- `allow_portable_expectations_update`: optional override when you want portable runs to write expectation files
 
 Strict example (default behavior):
 

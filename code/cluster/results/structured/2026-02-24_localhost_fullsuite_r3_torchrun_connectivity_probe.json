@@ -1,0 +1,44 @@
+{
+  "barrier_iters": 5,
+  "created_at_utc": "2026-02-24T05:10:50Z",
+  "failures": [],
+  "payload_bytes": 8388608,
+  "ranks": [
+    {
+      "barrier_ms": [
+        0.21997,
+        0.03492,
+        0.031342,
+        0.043739,
+        0.029443
+      ],
+      "checks": {
+        "scalar_allreduce_expected": 1.0,
+        "scalar_allreduce_observed": 1.0,
+        "scalar_allreduce_ok": true
+      },
+      "gpu": {
+        "compute_capability": "10.0",
+        "logical_index": 0,
+        "memory_gb": 178.351,
+        "name": "NVIDIA B200",
+        "physical_index": 0
+      },
+      "hostname": "ai-book-dev",
+      "local_rank": 0,
+      "payload_probe": {
+        "algbw_gbps": 142.059306,
+        "busbw_gbps": 142.059306,
+        "payload_bytes": 8388608,
+        "time_ms": 0.05905
+      },
+      "rank": 0,
+      "status": "ok",
+      "world_size": 1
+    }
+  ],
+  "run_id": "2026-02-24_localhost_fullsuite_r3",
+  "status": "ok",
+  "test": "torchrun_connectivity_probe",
+  "world_size": 1
+}

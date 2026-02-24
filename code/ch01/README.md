@@ -23,7 +23,7 @@ python -m cli.aisp bench list-targets --chapter ch01
 python -m cli.aisp bench run --targets ch01 --profile minimal
 ```
 - Override `--profile` or `--iterations` per workload when capturing Nsight traces.
-- Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.
+- Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.
 - Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.
 
 ## Validation Checklist

@@ -1,0 +1,138 @@
+[
+  {
+    "name": "preflight_services",
+    "start_time": "2026-02-24T05:10:40+00:00",
+    "end_time": "2026-02-24T05:10:40+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/preflight_services.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/preflight_cluster_services.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --ssh-user cfregly"
+  },
+  {
+    "name": "discovery",
+    "start_time": "2026-02-24T05:10:40+00:00",
+    "end_time": "2026-02-24T05:10:44+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/discovery.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/collect_discovery_and_tcp_sysctl.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --ssh-user cfregly --labels localhost"
+  },
+  {
+    "name": "hang_triage_bundle",
+    "start_time": "2026-02-24T05:10:44+00:00",
+    "end_time": "2026-02-24T05:10:44+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/hang_triage_bundle.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/collect_hang_triage_bundle.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --ssh-user cfregly --labels localhost"
+  },
+  {
+    "name": "connectivity_probe",
+    "start_time": "2026-02-24T05:10:44+00:00",
+    "end_time": "2026-02-24T05:10:51+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/connectivity_probe.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/run_torchrun_connectivity_probe.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --ssh-user cfregly --gpus-per-node 1 --master-port 29504 --barrier-iters 5 --payload-bytes 8388608 --timeout-sec 120"
+  },
+  {
+    "name": "nccl_single_node",
+    "start_time": "2026-02-24T05:10:51+00:00",
+    "end_time": "2026-02-24T05:10:58+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/nccl_single_node.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/run_nccl_all_reduce.sh --run-id 2026-02-24_localhost_fullsuite_r3_node1 --hosts localhost --label localhost"
+  },
+  {
+    "name": "nccl_env_sensitivity",
+    "start_time": "2026-02-24T05:10:58+00:00",
+    "end_time": "2026-02-24T05:11:37+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/nccl_env_sensitivity.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/run_nccl_env_sensitivity.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --gpus-per-node 1 --min-bytes 1M --max-bytes 64M --warmup 5 --iters 20"
+  },
+  {
+    "name": "vllm_serve_sweep",
+    "start_time": "2026-02-24T05:11:37+00:00",
+    "end_time": "2026-02-24T05:11:41+00:00",
+    "exit_code": 1,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/vllm_serve_sweep.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/repro/run_vllm_serve_sweep_container.sh --run-id 2026-02-24_localhost_fullsuite_r3 --label localhost --model openai-community/gpt2 --isl 128 --osl 64 --concurrency-range 1\\ 2 --port 8891 --tp 1"
+  },
+  {
+    "name": "gemm_sanity",
+    "start_time": "2026-02-24T05:11:41+00:00",
+    "end_time": "2026-02-24T05:11:49+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/gemm_sanity.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/run_gemm_sanity_all_nodes.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --ssh-user cfregly --labels localhost"
+  },
+  {
+    "name": "fio_all_nodes",
+    "start_time": "2026-02-24T05:11:49+00:00",
+    "end_time": "2026-02-24T05:14:00+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/fio_all_nodes.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/run_fio_all_nodes.sh --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --ssh-user cfregly --test-dir /tmp --runtime 15 --labels localhost"
+  },
+  {
+    "name": "plot_nccl_single_node",
+    "start_time": "2026-02-24T05:14:00+00:00",
+    "end_time": "2026-02-24T05:14:01+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/plot_nccl_single_node.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/analysis/plot_nccl.py --input /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_node1_nccl.json --out-dir /home/cfregly/ai-performance-engineering/code/cluster/docs/figures --run-id 2026-02-24_localhost_fullsuite_r3_node1"
+  },
+  {
+    "name": "plot_nccl_env_sensitivity",
+    "start_time": "2026-02-24T05:14:01+00:00",
+    "end_time": "2026-02-24T05:14:01+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/plot_nccl_env_sensitivity.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/analysis/plot_nccl_env_sensitivity.py --input /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_nccl_env_sensitivity.json --output /home/cfregly/ai-performance-engineering/code/cluster/docs/figures/2026-02-24_localhost_fullsuite_r3_nccl_env_sensitivity.png --title NCCL\\ Env\\ Sensitivity\\ 2026-02-24_localhost_fullsuite_r3"
+  },
+  {
+    "name": "plot_gemm_sanity",
+    "start_time": "2026-02-24T05:14:01+00:00",
+    "end_time": "2026-02-24T05:14:02+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/plot_gemm_sanity.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/analysis/plot_gemm_bar.py --inputs /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_localhost_gemm_gpu_sanity.csv --output /home/cfregly/ai-performance-engineering/code/cluster/docs/figures/2026-02-24_localhost_fullsuite_r3_gemm_gpu_sanity.png --filter-m 16384"
+  },
+  {
+    "name": "plot_fio_2026-02-24_localhost_fullsuite_r3_localhost_fio",
+    "start_time": "2026-02-24T05:14:02+00:00",
+    "end_time": "2026-02-24T05:14:03+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/plot_fio_2026-02-24_localhost_fullsuite_r3_localhost_fio.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/analysis/plot_fio.py --input /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_localhost_fio.json --out /home/cfregly/ai-performance-engineering/code/cluster/docs/figures/2026-02-24_localhost_fullsuite_r3_localhost_fio.png"
+  },
+  {
+    "name": "plot_nvlink_topology_2026-02-24_localhost_fullsuite_r3_localhost_meta",
+    "start_time": "2026-02-24T05:14:03+00:00",
+    "end_time": "2026-02-24T05:14:03+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/plot_nvlink_topology_2026-02-24_localhost_fullsuite_r3_localhost_meta.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/analysis/plot_nvlink_topology.py --meta /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_localhost_meta.json --fig-out /home/cfregly/ai-performance-engineering/code/cluster/docs/figures/2026-02-24_localhost_fullsuite_r3_localhost_meta_nvlink_topology.png --summary-out /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_localhost_meta_nvlink_topology.json"
+  },
+  {
+    "name": "plot_cluster_story_dashboard",
+    "start_time": "2026-02-24T05:14:03+00:00",
+    "end_time": "2026-02-24T05:14:04+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/plot_cluster_story_dashboard.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/analysis/plot_cluster_story_dashboard.py --run-id 2026-02-24_localhost_fullsuite_r3 --structured-dir /home/cfregly/ai-performance-engineering/code/cluster/results/structured --node-labels localhost --fig-out /home/cfregly/ai-performance-engineering/code/cluster/docs/figures/2026-02-24_localhost_fullsuite_r3_cluster_story_dashboard.png --summary-out /home/cfregly/ai-performance-engineering/code/cluster/results/structured/2026-02-24_localhost_fullsuite_r3_node_parity_summary.json"
+  },
+  {
+    "name": "validate_required_artifacts",
+    "start_time": "2026-02-24T05:14:04+00:00",
+    "end_time": "2026-02-24T05:14:04+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/validate_required_artifacts.log",
+    "command": "validate_required_artifacts"
+  },
+  {
+    "name": "manifest_refresh",
+    "start_time": "2026-02-24T05:14:04+00:00",
+    "end_time": "2026-02-24T05:14:04+00:00",
+    "exit_code": 0,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/results/raw/2026-02-24_localhost_fullsuite_r3_suite/manifest_refresh.log",
+    "command": "python3 /home/cfregly/ai-performance-engineering/code/cluster/scripts/write_manifest.py --run-id 2026-02-24_localhost_fullsuite_r3 --hosts localhost --include-figures --labels localhost"
+  }
+]

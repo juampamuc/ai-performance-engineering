@@ -160,6 +160,24 @@ _QUICK_WINS_CONFIGURED = False
 _SDPA_KERNEL_CONTEXT = None
 
 
+def _format_environment_invalid_message(errors: Sequence[str], config: "BenchmarkConfig") -> str:
+    """Build a consistent environment failure message with recovery guidance.
+
+    Strict mode is intentionally fail-fast. When environment capability checks
+    fail there, always surface the explicit portability recovery flags.
+    """
+    message = "ENVIRONMENT INVALID: " + " | ".join(errors)
+    validity_profile = str(getattr(config, "validity_profile", "strict")).strip().lower()
+    if validity_profile == "strict":
+        message += (
+            " Recovery: rerun with --validity-profile portable to use the portable"
+            " validity profile (compatibility mode)."
+            " Consequence: strict environment protections are relaxed and expectation"
+            " writes remain disabled unless --allow-portable-expectations-update is set."
+        )
+    return message
+
+
 def _is_nvidia_smi_permission_error(exc: subprocess.CalledProcessError) -> bool:
     # Common failure mode when not root: `nvidia-smi` returns exit status 4 and
     # prints "Insufficient Permissions" in stdout/stderr (we redirect stderr).
@@ -2359,10 +2377,18 @@ class BenchmarkHarness:
             allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
         )
         if LOGGER_AVAILABLE:
+            if env_result.details:
+                try:
+                    logger.info(
+                        "ENVIRONMENT DETAILS: %s",
+                        json.dumps(env_result.details, sort_keys=True),
+                    )
+                except Exception:
+                    logger.info("ENVIRONMENT DETAILS: %s", env_result.details)
             for warning in env_result.warnings:
                 logger.warning("ENVIRONMENT WARNING: %s", warning)
         if env_result.errors:
-            message = "ENVIRONMENT INVALID: " + " | ".join(env_result.errors)
+            message = _format_environment_invalid_message(env_result.errors, config)
             enforce_env = bool(getattr(config, "enforce_environment_validation", True))
             if enforce_env:
                 raise RuntimeError(message)
@@ -3257,7 +3283,7 @@ class BenchmarkHarness:
             for warning in env_result.warnings:
                 logger.warning("ENVIRONMENT WARNING: %s", warning)
         if env_result.errors:
-            message = "ENVIRONMENT INVALID: " + " | ".join(env_result.errors)
+            message = _format_environment_invalid_message(env_result.errors, config)
             enforce_env = bool(getattr(config, "enforce_environment_validation", True))
             if enforce_env:
                 errors.append(message)
@@ -3355,7 +3381,7 @@ class BenchmarkHarness:
                                 raise
                             if LOGGER_AVAILABLE:
                                 logger.warning(
-                                    "Portable validity mode: clock lock unavailable; continuing without locked clocks.",
+                                    "Portable validity profile: clock lock unavailable; continuing without locked clocks.",
                                     exc_info=True,
                                 )
 
@@ -3561,7 +3587,7 @@ class BenchmarkHarness:
                                 raise
                             if LOGGER_AVAILABLE:
                                 logger.warning(
-                                    "Portable validity mode: app-clock verification unavailable; continuing.",
+                                    "Portable validity profile: app-clock verification unavailable; continuing.",
                                     exc_info=True,
                                 )
 
@@ -4182,7 +4208,7 @@ class BenchmarkHarness:
             import warnings as warn_module
             warn_module.warn(f"ENVIRONMENT WARNING: {warning}", RuntimeWarning)
         if env_result.errors:
-            message = "ENVIRONMENT INVALID: " + " | ".join(env_result.errors)
+            message = _format_environment_invalid_message(env_result.errors, config)
             enforce_env = bool(getattr(config, "enforce_environment_validation", True))
             if enforce_env:
                 raise RuntimeError(message)

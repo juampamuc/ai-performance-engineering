@@ -135,6 +135,37 @@ def get_last_load_error() -> Optional[str]:
     return _LAST_LOAD_ERROR
 
 
+def _extract_cli_validity_profile(argv: Optional[List[str]] = None) -> Optional[str]:
+    """Extract --validity-profile value from argv, if provided.
+
+    Supports:
+    - --validity-profile portable
+    - --validity-profile=portable
+    """
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    for index, token in enumerate(tokens):
+        value: Optional[str] = None
+        if token == "--validity-profile":
+            if index + 1 >= len(tokens):
+                raise ValueError(
+                    "Missing value for --validity-profile. "
+                    "Expected one of: strict, portable."
+                )
+            value = tokens[index + 1]
+        elif token.startswith("--validity-profile="):
+            value = token.split("=", 1)[1]
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized not in {"strict", "portable"}:
+            raise ValueError(
+                f"Invalid --validity-profile value '{value}'. "
+                "Expected one of: strict, portable."
+            )
+        return normalized
+    return None
+
+
 def create_standard_metrics(
     chapter: str,
     all_metrics: Dict[str, Any],
@@ -403,6 +434,16 @@ def profile_template(
             config.measurement_timeout_seconds = 30
         if config.setup_timeout_seconds is not None and config.setup_timeout_seconds < 60:
             config.setup_timeout_seconds = 60
+
+    # Allow chapter compare entrypoints to accept the same validity profile knob.
+    # Rebuild the config so derived fields (e.g., allow_virtualization) remain consistent.
+    cli_validity_profile = _extract_cli_validity_profile()
+    if cli_validity_profile is not None and cli_validity_profile != config.validity_profile:
+        logger.info(
+            "Applying compare.py CLI override: --validity-profile %s",
+            cli_validity_profile,
+        )
+        config = replace(config, validity_profile=cli_validity_profile)
     
     harness = BenchmarkHarness(
         mode=BenchmarkMode.CUSTOM,

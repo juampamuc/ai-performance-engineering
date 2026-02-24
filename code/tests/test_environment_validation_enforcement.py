@@ -17,7 +17,7 @@ from typing import Optional
 import pytest
 
 from core.harness.benchmark_harness import BenchmarkConfig, BenchmarkHarness
-from core.harness.validity_checks import EnvironmentProbe
+from core.harness.validity_checks import EnvironmentProbe, validate_environment
 
 
 def _write_file(root: Path, relpath: str, content: str) -> None:
@@ -143,3 +143,19 @@ def test_environment_enforcement_virtualization_detected() -> None:
         _write_file(env_root, "/proc/cpuinfo", "processor\t: 0\nflags\t: hypervisor\n")
         errors = _run_harness(env_root, probe=EnvironmentProbe(root=env_root, env={}), allow_virtualization=False)
         assert any("ENVIRONMENT INVALID" in e and "Virtualization detected" in e for e in errors), errors
+        assert any("--validity-profile portable" in e for e in errors), errors
+        assert any("--allow-portable-expectations-update" in e for e in errors), errors
+
+
+def test_environment_warning_virtualization_portable_message() -> None:
+    with tempfile.TemporaryDirectory() as env_dir:
+        env_root = Path(env_dir)
+        _make_base_env(env_root)
+        _write_file(env_root, "/proc/cpuinfo", "processor\t: 0\nflags\t: hypervisor\n")
+        result = validate_environment(
+            probe=EnvironmentProbe(root=env_root, env={}),
+            allow_virtualization=True,
+        )
+        assert result.is_valid, result
+        assert not result.errors, result.errors
+        assert any("validity_profile=portable" in warning for warning in result.warnings), result.warnings

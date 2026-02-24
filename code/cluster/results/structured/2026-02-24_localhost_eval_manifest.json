@@ -1,0 +1,18 @@
+{
+  "files": [
+    "results/structured/2026-02-24_localhost_eval_localhost_meta.json"
+  ],
+  "manifest_version": 1,
+  "nodes": [],
+  "run_id": "2026-02-24_localhost_eval",
+  "summary": {
+    "artifact_counts": {
+      "json": 1
+    },
+    "file_count": 1,
+    "sha256": {
+      "results/structured/2026-02-24_localhost_eval_localhost_meta.json": "651d4152373e3c163b426c224b45062b04f8501681ebcbf3792fb775a32ed009"
+    }
+  },
+  "timestamp_utc": "2026-02-24T03:58:14.395787+00:00"
+}

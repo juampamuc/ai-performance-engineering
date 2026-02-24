@@ -133,6 +133,47 @@ Optional extension for 2-node vLLM serving (Ray + TP across nodes):
   --vllm-multinode-ray-port 6379
 ```
 
+### Localhost Canonical Package (Required For Single-Node Work)
+For localhost/single-node evaluations, the required deliverable is the full template-style package:
+- `cluster/field-report-localhost.md`
+- `cluster/field-report-localhost-notes.md`
+
+Run the localhost suite:
+
+```bash
+sg docker -c "scripts/run_cluster_eval_suite.sh \
+  --run-id <run_id> \
+  --hosts localhost \
+  --labels localhost \
+  --ssh-user $(id -un) \
+  --primary-label localhost \
+  --skip-bootstrap-nodes \
+  --disable-fp4 \
+  --health-suite off \
+  --skip-vllm-multinode \
+  --model openai-community/gpt2 \
+  --tp 1 \
+  --isl 128 \
+  --osl 64 \
+  --concurrency-range '1 2' \
+  --port 8893 \
+  --fio-runtime 15 \
+  --skip-nvbandwidth"
+```
+
+Validate the localhost package:
+
+```bash
+scripts/validate_field_report_requirements.sh \
+  --report field-report-localhost.md \
+  --notes field-report-localhost-notes.md \
+  --canonical-run-id <run_id>
+```
+
+If stale-artifact hygiene is expected to retain prior runs, pass repeated `--allow-run-id <id>` values explicitly.
+
+`results/structured/*_localhost_environment_report.md` is supplemental context only and is not a replacement for the localhost field-report package.
+
 Optional dedicated `nvbandwidth` add-on (strict lock + structured JSON/CSV):
 
 ```bash

@@ -20,6 +20,24 @@ def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
 
 
+def split_topo_tokens(line: str) -> list[str]:
+    if "\t" in line:
+        return [tok.strip() for tok in line.split("\t") if tok.strip()]
+    return [tok.strip() for tok in re.split(r"\s{2,}", line.strip()) if tok.strip()]
+
+
+def leading_gpu_tokens(tokens: list[str]) -> list[str]:
+    out: list[str] = []
+    for tok in tokens:
+        if GPU_RE.match(tok):
+            out.append(tok)
+            continue
+        if out:
+            break
+        return []
+    return out
+
+
 def read_topology_stdout(meta_path: Path) -> tuple[str, str, str]:
     payload = json.loads(meta_path.read_text(encoding="utf-8"))
     label = str(payload.get("label") or meta_path.stem)
@@ -40,28 +58,22 @@ def parse_gpu_matrix(stdout: str) -> tuple[list[str], dict[str, list[str]]]:
     lines = [line for line in lines if line.strip()]
 
     header_tokens: list[str] | None = None
+    gpu_labels: list[str] = []
     header_idx = -1
     for idx, line in enumerate(lines):
-        toks = [tok.strip() for tok in line.split("\t") if tok.strip()]
-        if toks and all(GPU_RE.match(tok) for tok in toks[: min(2, len(toks))]):
+        toks = split_topo_tokens(line)
+        leading = leading_gpu_tokens(toks)
+        if leading:
             header_tokens = toks
+            gpu_labels = leading
             header_idx = idx
             break
-    if not header_tokens:
+    if not header_tokens or not gpu_labels:
         raise ValueError("Unable to locate GPU header in nvidia-smi topo output")
-
-    gpu_labels: list[str] = []
-    for tok in header_tokens:
-        if GPU_RE.match(tok):
-            gpu_labels.append(tok)
-        elif gpu_labels:
-            break
-    if not gpu_labels:
-        raise ValueError("No GPU columns detected in topo output")
 
     matrix: dict[str, list[str]] = {}
     for line in lines[header_idx + 1 :]:
-        toks = [tok.strip() for tok in line.split("\t")]
+        toks = split_topo_tokens(line)
         if not toks:
             continue
         if line.strip().startswith("Legend:"):

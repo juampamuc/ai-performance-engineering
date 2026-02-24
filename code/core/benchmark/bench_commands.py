@@ -181,8 +181,8 @@ def _validate_validity_profile(profile: str | None) -> str:
     valid = {"strict", "portable"}
     if normalized not in valid:
         message = (
-            f"Invalid validity profile '{profile}'. "
-            "Choose from 'strict' or 'portable'."
+            f"Invalid --validity-profile value '{profile}'. "
+            "Benchmark validity profile must be one of: strict, portable."
         )
         if TYPER_AVAILABLE and typer is not None:
             raise typer.BadParameter(message)
@@ -395,8 +395,20 @@ def _execute_benchmarks(
     allow_virtualization = portable_mode
     if portable_mode and not allow_portable_expectations_update:
         if update_expectations or accept_regressions or allow_mixed_provenance:
+            requested_writes: List[str] = []
+            if update_expectations:
+                requested_writes.append("--update-expectations")
+            if accept_regressions:
+                requested_writes.append("--accept-regressions")
+            if allow_mixed_provenance:
+                requested_writes.append("--allow-mixed-provenance")
+            requested_summary = ", ".join(requested_writes)
             print(
-                "Expectation writes are disabled in portable mode unless --allow-portable-expectations-update is provided.",
+                "Invalid flag combination: "
+                f"{requested_summary} requested with --validity-profile portable. "
+                "Portable validity profile disables expectation writes by default. "
+                "Add --allow-portable-expectations-update to enable writes in portable mode, "
+                "or use --validity-profile strict.",
                 flush=True,
             )
             sys.exit(1)
@@ -430,6 +442,21 @@ def _execute_benchmarks(
 
     setup_logging(level=log_level, log_file=log_file, log_format="json", use_rich=True)
     logger = get_logger(__name__)
+    if validity_profile == "strict":
+        logger.info(
+            "Benchmark validity profile (--validity-profile): strict "
+            "(fail-fast, full validity enforcement)."
+        )
+    else:
+        logger.info(
+            "Benchmark validity profile (--validity-profile): portable "
+            "(compatibility mode for virtualized/limited hosts; some strict checks are relaxed)."
+        )
+        if not allow_portable_expectations_update:
+            logger.info(
+                "Portable mode default: expectation writes are disabled unless "
+                "--allow-portable-expectations-update is provided."
+            )
     event_logger = BenchmarkEventLogger(
         artifact_manager.get_log_path("benchmark_events.jsonl"),
         artifact_manager.run_id,
@@ -905,16 +932,10 @@ if TYPER_AVAILABLE:
             "strict",
             "--validity-profile",
             help=(
-                "Benchmark validity mode: strict (default, fail-fast) or portable "
-                "(explicit compatibility mode for hardware without full benchmark controls)."
+                "Benchmark validity profile: strict (default; fail-fast with full validity checks) "
+                "or portable (compatibility mode for virtualized/limited hosts)."
             ),
             callback=_validate_validity_profile,
-        ),
-        portable: bool = Option(
-            False,
-            "--portable",
-            help="Shortcut for --validity-profile portable.",
-            is_flag=True,
         ),
         reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and force deterministic algorithms (uses slower fallbacks; ops without deterministic support may error)."),
         cold_start: bool = Option(False, "--cold-start", help="Reset GPU state between benchmarks for cold start measurements"),
@@ -987,8 +1008,8 @@ if TYPER_AVAILABLE:
             False,
             "--allow-portable-expectations-update",
             help=(
-                "Required to write expectations while running in portable validity mode. "
-                "Without this flag, portable runs never modify expectation files."
+                "In portable validity profile, expectation writes are disabled by default. "
+                "Set this flag to allow expectation-file updates."
             ),
             is_flag=True,
         ),
@@ -1048,7 +1069,6 @@ if TYPER_AVAILABLE:
             os.environ["VERIFY_ENFORCEMENT_PHASE"] = verify_phase.lower()
         
         if precheck_only or dry_run:
-            effective_validity_profile = "portable" if portable else validity_profile
             plan = {
                 "precheck_only": precheck_only,
                 "dry_run": dry_run,
@@ -1059,7 +1079,7 @@ if TYPER_AVAILABLE:
                 "suite_timeout": effective_timeout,
                 "verify_phase": verify_phase,
                 "single_gpu": single_gpu,
-                "validity_profile": effective_validity_profile,
+                "validity_profile": validity_profile,
                 "allow_mixed_provenance": allow_mixed_provenance,
                 "allow_portable_expectations_update": allow_portable_expectations_update,
                 "force_sync": force_sync,
@@ -1070,7 +1090,6 @@ if TYPER_AVAILABLE:
             }
             typer.echo(json.dumps(plan, indent=2))
             raise typer.Exit(code=0)
-        effective_validity_profile = "portable" if portable else validity_profile
         _execute_benchmarks(
             targets=combined_targets or None,
             bench_root=active_bench_root,
@@ -1078,7 +1097,7 @@ if TYPER_AVAILABLE:
             profile_type=profile_type,
             suite_timeout=effective_timeout,
             timeout_multiplier=timeout_multiplier,
-            validity_profile=effective_validity_profile,
+            validity_profile=validity_profile,
             allow_portable_expectations_update=allow_portable_expectations_update,
             reproducible=reproducible,
             cold_start=cold_start,
@@ -1153,16 +1172,18 @@ if TYPER_AVAILABLE:
         validity_profile: str = Option(
             "strict",
             "--validity-profile",
-            help="Benchmark validity mode: strict (default) or portable.",
+            help=(
+                "Benchmark validity profile: strict (default; fail-fast with full validity checks) "
+                "or portable (compatibility mode for virtualized/limited hosts)."
+            ),
             callback=_validate_validity_profile,
         ),
-        portable: bool = Option(False, "--portable", help="Shortcut for --validity-profile portable.", is_flag=True),
         allow_portable_expectations_update: bool = Option(
             False,
             "--allow-portable-expectations-update",
             help=(
-                "Required to write expectations while running in portable validity mode. "
-                "Without this flag, portable runs never modify expectation files."
+                "In portable validity profile, expectation writes are disabled by default. "
+                "Set this flag to allow expectation-file updates."
             ),
             is_flag=True,
         ),
@@ -1171,7 +1192,6 @@ if TYPER_AVAILABLE:
         """Copy a baseline benchmark, run LLM variants with profiling, and compare utilization."""
         from mcp.mcp_server import tool_benchmark_explore
 
-        effective_validity_profile = "portable" if portable else validity_profile
         params: Dict[str, Any] = {
             "path": str(path),
             "copy_tag": copy_tag,
@@ -1188,7 +1208,7 @@ if TYPER_AVAILABLE:
             "deep_dive_warmup": deep_dive_warmup,
             "deep_dive_timeout_seconds": deep_dive_timeout_seconds,
             "update_expectations": update_expectations,
-            "validity_profile": effective_validity_profile,
+            "validity_profile": validity_profile,
             "allow_portable_expectations_update": allow_portable_expectations_update,
             "async": async_run,
         }

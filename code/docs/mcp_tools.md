@@ -48,8 +48,8 @@ It also runs post-benchmark triage and generates an HTML report unless you set
 
 ### Benchmark validity profile (shared with CLI/dashboard)
 
-- `validity_profile`: `strict` (default) or `portable`
-- `allow_portable_expectations_update`: required when a portable run should write expectation files
+- `validity_profile` (benchmark validity profile): `strict` (default; fail-fast with full validity checks) or `portable` (compatibility mode for virtualized/limited hosts)
+- `allow_portable_expectations_update`: optional override to allow expectation-file updates in `portable`
 
 Example portable run:
 

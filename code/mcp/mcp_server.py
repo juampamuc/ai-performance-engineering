@@ -2444,7 +2444,7 @@ def tool_clock_lock_check(params: Dict[str, Any]) -> Dict[str, Any]:
             "validity_profile": {
                 "type": "string",
                 "description": (
-                    "Benchmark validity mode: strict (default, fail-fast) or portable "
+                    "Benchmark validity profile (`--validity-profile`, MCP field `validity_profile`): strict (default; fail-fast with full validity checks) or portable "
                     "(explicit compatibility mode for hardware without full benchmark controls)."
                 ),
                 "enum": ["strict", "portable"],
@@ -2453,8 +2453,8 @@ def tool_clock_lock_check(params: Dict[str, Any]) -> Dict[str, Any]:
             "allow_portable_expectations_update": {
                 "type": "boolean",
                 "description": (
-                    "Required to write expectations while running in portable validity mode. "
-                    "Without this flag, portable runs never modify expectation files."
+                    "In the portable validity profile, expectation writes are disabled by default. "
+                    "Set this flag to allow expectation-file updates."
                 ),
                 "default": False,
             },
@@ -2557,7 +2557,7 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     if validity_profile not in {"strict", "portable"}:
         return {
             "error": (
-                f"Invalid validity_profile '{raw_validity_profile}'. "
+                f"Invalid benchmark validity profile '{raw_validity_profile}' for validity_profile. "
                 "Valid options: strict, portable."
             ),
             "success": False,
@@ -2615,7 +2615,7 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     ):
         return {
             "error": (
-                "Portable mode does not write expectations unless "
+                "Portable validity profile does not write expectations unless "
                 "allow_portable_expectations_update=true is set."
             ),
             "success": False,
@@ -2944,7 +2944,7 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             "validity_profile": {
                 "type": "string",
                 "description": (
-                    "Benchmark validity mode: strict (default, fail-fast) or portable "
+                    "Benchmark validity profile (`--validity-profile`, MCP field `validity_profile`): strict (default; fail-fast with full validity checks) or portable "
                     "(explicit compatibility mode for hardware without full benchmark controls)."
                 ),
                 "enum": ["strict", "portable"],
@@ -2953,8 +2953,8 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             "allow_portable_expectations_update": {
                 "type": "boolean",
                 "description": (
-                    "Required to write expectations while running in portable validity mode. "
-                    "Without this flag, portable runs never modify expectation files."
+                    "In the portable validity profile, expectation writes are disabled by default. "
+                    "Set this flag to allow expectation-file updates."
                 ),
                 "default": False,
             },
@@ -3034,7 +3034,7 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
                 "validity_profile": {
                     "type": "string",
                     "description": (
-                        "Benchmark validity mode: strict (default, fail-fast) or portable "
+                        "Benchmark validity profile (`--validity-profile`, MCP field `validity_profile`): strict (default; fail-fast with full validity checks) or portable "
                         "(explicit compatibility mode for hardware without full benchmark controls)."
                     ),
                     "enum": ["strict", "portable"],
@@ -3043,8 +3043,8 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
                 "allow_portable_expectations_update": {
                     "type": "boolean",
                     "description": (
-                        "Required to write expectations while running in portable validity mode. "
-                        "Without this flag, portable runs never modify expectation files."
+                        "In the portable validity profile, expectation writes are disabled by default. "
+                        "Set this flag to allow expectation-file updates."
                     ),
                     "default": False,
                 },
@@ -3078,7 +3078,8 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
     validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
     if validity_profile not in {"strict", "portable"}:
         return make_error(
-            f"Invalid validity_profile '{raw_validity_profile}'. Valid options: strict, portable.",
+            f"Invalid benchmark validity profile '{raw_validity_profile}' for validity_profile. "
+            "Valid options: strict, portable.",
             include_context,
             context_level,
         )
@@ -3946,7 +3947,7 @@ def _resolve_baseline_wrapper_path(path: Path) -> Path:
                 "validity_profile": {
                     "type": "string",
                     "description": (
-                        "Benchmark validity mode: strict (default, fail-fast) or portable "
+                        "Benchmark validity profile (`--validity-profile`, MCP field `validity_profile`): strict (default; fail-fast with full validity checks) or portable "
                         "(explicit compatibility mode for hardware without full benchmark controls)."
                     ),
                     "enum": ["strict", "portable"],
@@ -3955,8 +3956,8 @@ def _resolve_baseline_wrapper_path(path: Path) -> Path:
                 "allow_portable_expectations_update": {
                     "type": "boolean",
                     "description": (
-                        "Required to write expectations while running in portable validity mode. "
-                        "Without this flag, portable runs never modify expectation files."
+                        "In the portable validity profile, expectation writes are disabled by default. "
+                        "Set this flag to allow expectation-file updates."
                     ),
                     "default": False,
                 },
@@ -3990,7 +3991,8 @@ def tool_benchmark_explore(params: Dict[str, Any]) -> Dict[str, Any]:
     validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
     if validity_profile not in {"strict", "portable"}:
         return make_error(
-            f"Invalid validity_profile '{raw_validity_profile}'. Valid options: strict, portable.",
+            f"Invalid benchmark validity profile '{raw_validity_profile}' for validity_profile. "
+            "Valid options: strict, portable.",
             include_context,
             context_level,
         )
@@ -4393,7 +4395,7 @@ def _extract_promoted_targets(results_json: Path) -> List[Dict[str, Any]]:
                 "validity_profile": {
                     "type": "string",
                     "description": (
-                        "Benchmark validity mode: strict (default, fail-fast) or portable "
+                        "Benchmark validity profile (`--validity-profile`, MCP field `validity_profile`): strict (default; fail-fast with full validity checks) or portable "
                         "(explicit compatibility mode for hardware without full benchmark controls)."
                     ),
                     "enum": ["strict", "portable"],
@@ -4402,8 +4404,8 @@ def _extract_promoted_targets(results_json: Path) -> List[Dict[str, Any]]:
                 "allow_portable_expectations_update": {
                     "type": "boolean",
                     "description": (
-                        "Required to write expectations while running in portable validity mode. "
-                        "Without this flag, portable runs never modify expectation files."
+                        "In the portable validity profile, expectation writes are disabled by default. "
+                        "Set this flag to allow expectation-file updates."
                     ),
                     "default": False,
                 },
@@ -4430,7 +4432,8 @@ def tool_benchmark_llm_patch_loop(params: Dict[str, Any]) -> Dict[str, Any]:
     validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
     if validity_profile not in {"strict", "portable"}:
         return make_error(
-            f"Invalid validity_profile '{raw_validity_profile}'. Valid options: strict, portable.",
+            f"Invalid benchmark validity profile '{raw_validity_profile}' for validity_profile. "
+            "Valid options: strict, portable.",
             include_context,
             context_level,
         )
@@ -5363,7 +5366,7 @@ def tool_analyze_whatif(params: Dict[str, Any]) -> Dict[str, Any]:
             "validity_profile": {
                 "type": "string",
                 "description": (
-                    "Benchmark validity mode: strict (default, fail-fast) or portable "
+                    "Benchmark validity profile (`--validity-profile`, MCP field `validity_profile`): strict (default; fail-fast with full validity checks) or portable "
                     "(explicit compatibility mode for hardware without full benchmark controls)."
                 ),
                 "enum": ["strict", "portable"],
@@ -5372,8 +5375,8 @@ def tool_analyze_whatif(params: Dict[str, Any]) -> Dict[str, Any]:
             "allow_portable_expectations_update": {
                 "type": "boolean",
                 "description": (
-                    "Required to write expectations while running in portable validity mode. "
-                    "Without this flag, portable runs never modify expectation files."
+                    "In the portable validity profile, expectation writes are disabled by default. "
+                    "Set this flag to allow expectation-file updates."
                 ),
                 "default": False,
             },

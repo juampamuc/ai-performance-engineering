@@ -104,7 +104,7 @@ run_remote() {
 start_service_if_present() {
   local svc="$1"
   if command -v systemctl >/dev/null 2>&1; then
-    if systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -q "^${svc}\\.service$"; then
+    if service_unit_present "$svc"; then
       sudo -n systemctl start "${svc}" >/dev/null 2>&1 || true
     fi
   fi
@@ -112,8 +112,11 @@ start_service_if_present() {
 
 service_unit_present() {
   local svc="$1"
+  local unit="${svc}.service"
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -q "^${svc}\\.service$"
+    local load_state
+    load_state="$(systemctl show -p LoadState --value "$unit" 2>/dev/null || true)"
+    [[ -n "$load_state" && "$load_state" != "not-found" ]]
     return $?
   fi
   return 1
@@ -172,10 +175,19 @@ for raw_host in "${HOST_ARR[@]}"; do
       persistenced_socket="present"
     fi
   else
-    remote_cmd=$(
+remote_cmd=$(
       cat <<'BASH'
 set -euo pipefail
-svc_present() { systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -q "^$1\\.service$"; }
+svc_present() {
+  local svc="$1"
+  local unit="${svc}.service"
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 1
+  fi
+  local load_state
+  load_state="$(systemctl show -p LoadState --value "$unit" 2>/dev/null || true)"
+  [[ -n "$load_state" && "$load_state" != "not-found" ]]
+}
 start_if_present() { if command -v systemctl >/dev/null 2>&1 && svc_present "$1"; then sudo -n systemctl start "$1" >/dev/null 2>&1 || true; fi; }
 is_active() { if command -v systemctl >/dev/null 2>&1; then systemctl is-active "$1" 2>/dev/null || true; fi; }
 get_restart() { if command -v systemctl >/dev/null 2>&1; then systemctl show -p Restart --value "$1" 2>/dev/null || true; fi; }

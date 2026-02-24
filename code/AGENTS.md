@@ -41,6 +41,8 @@
 ### Report Completeness + Sync (CRITICAL)
 - Before finalizing `field-report.md`, diff against prior report revisions and restore any dropped sections/visuals/evidence links that are still relevant.
 - `field-report.md` and `field-report-notes.md` must always be synchronized to the same canonical run id, metrics, issues, and artifact links.
+- For localhost/single-node evaluations, always produce and maintain the full template-style package: `cluster/field-report-localhost.md` + `cluster/field-report-localhost-notes.md` mapped to the canonical localhost RUN_ID.
+- A standalone `results/structured/*_localhost_environment_report.md` is supplemental only and is never an acceptable replacement for the localhost field-report package.
 - If report numbers diverge from current canonical artifacts, treat that as a blocker and fix the report (or rerun collection) before sign-off.
 - Explicitly include required issue ledgers (missing artifacts, GDR requested vs effective, latency knees) and verify each claim against canonical structured artifacts.
 
@@ -201,6 +203,9 @@
 - Do not trust one measurement surface alone; reconcile microbench, fresh-input verify, and (when needed) Popcorn test mode behavior.
 - Prefer single-source runtime plans with stable caching; avoid re-planning per call unless shape/tunable/variant changes.
 - Optimize host-side submission overhead (pointer table updates, copies, graph replay path) only if correctness and final geomean remain green.
+- Current verified per-case CTA order routing for v2 path: `case0=tn_major`, `case1=tm_major`, `case2=tm_major`, `case3=tn_major`.
+- `AISP_NVFP4_GROUP_GEMM_V2_ASSUME_NO_N_TAIL=1` is verify-green and ABAB-positive for case0/case1/case2 on the tuned UnrollN=2 build; keep it disabled for case3 where it regresses.
+- `AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS_COMPRESS_LIST=1` must retain all fused-slot contexts (including padded tensors) to avoid graph-mode illegal-address failures; keep this behind explicit opt-in unless repeated ABAB shows net geomean gain.
 
 ## Expectations Files (CRITICAL)
 - Expectation baselines live next to each chapter as `expectations_{hardware_key}.json`.
@@ -225,7 +230,7 @@
 ## Validity Profiles (CRITICAL)
 - Use only two benchmark validity modes everywhere (CLI, MCP, dashboard): `strict` and `portable`.
 - Default is always `strict` (fail-fast, no implicit downgrades).
-- Portable mode must be explicit: `--validity-profile portable` (or CLI shorthand `--portable`).
+- Portable mode must be explicit: `--validity-profile portable`.
 - In portable mode, expectation writes are disabled unless explicitly enabled with `--allow-portable-expectations-update`.
 - Do not use aliases/synonyms for validity modes (no transitional names); keep terminology exact and stable.
 - When strict mode fails due environment capability gaps (for example virtualization, clock lock, or telemetry constraints), surface the exact recovery flag and consequence in the error/help text:

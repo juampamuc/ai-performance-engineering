@@ -14,11 +14,7 @@ Explores how to move workloads along the roofline: raise arithmetic intensity wi
 | --- | --- |
 | `baseline_compute_bound.py`, `optimized_compute_bound.py`, `baseline_memory_bound.py`, `optimized_memory_bound.py` | Reference kernels that isolate compute vs bandwidth ceilings and demonstrate tuning strategies. |
 | `baseline_micro_tiling_matmul.cu`, `baseline_micro_tiling_matmul.py`, `optimized_micro_tiling_matmul.cu`, `optimized_micro_tiling_matmul.py` | Micro-tiling matmuls with explicit register blocking and cp.async prefetch. |
-| `baseline_cutlass_gemm.cu`, `baseline_cutlass_gemm.py`, `optimized_cutlass_gemm.cu`, `optimized_cutlass_gemm.py` | Library GEMM baselines for comparing hand-tuned kernels against vendor libraries. |
 | `baseline_cublaslt_gemm.cu`, `baseline_cublaslt_gemm.py`, `optimized_cublaslt_gemm.cu`, `optimized_cublaslt_gemm.py`, `tcgen05_pipelined.cu` | cuBLASLt-driven matmuls and tcgen05 pipeline kernels showcasing tcgen05 lowering and occupancy tuning. |
-| `baseline_cute_dsl_nvfp4_gemm.cu`, `baseline_cute_dsl_nvfp4_gemm.py`, `optimized_cute_dsl_nvfp4_gemm.cu`, `optimized_cute_dsl_nvfp4_gemm.py` | CuTe-DSL-inspired NVFP4 GEMM pair (competition shapes) with baseline vs TMA warp-specialized schedule. |
-| `baseline_cutlass_gemm_fp4.cu`, `baseline_cutlass_gemm_fp4.py`, `optimized_cutlass_gemm_fp4.cu`, `optimized_cutlass_gemm_fp4.py` | CUTLASS NVFP4 GEMM pair that isolates scheduling: auto scheduling vs explicit `KernelTmaWarpSpecialized1SmNvf4Sm100`. |
-| `baseline_cutlass_gemm_fp4_all_concepts.cu`, `baseline_cutlass_gemm_fp4_all_concepts.py`, `optimized_cutlass_gemm_fp4_all_concepts.cu`, `optimized_cutlass_gemm_fp4_all_concepts.py` | CUTLASS NVFP4 GEMM pair that isolates CTA clustering (TMA multicast): warp-specialized schedule without vs with `ClusterShape=Shape<_1,_2,_1>`. |
 | `baseline_fused_l2norm.cu`, `baseline_fused_l2norm.py`, `optimized_fused_l2norm.cu`, `optimized_fused_l2norm.py`, `fusedL2Norm/` | Fusion examples that merge L2 norm + scaling while staying numerically stable. |
 | `baseline_triton.py`, `optimized_triton.py` | Triton counterparts for quick prototyping and verifying compiler-generated PTX on Blackwell. |
 | `baseline_tcgen05_tma_pipeline.py`, `optimized_tcgen05_tma_pipeline.py`, `two_stage_pipeline.cu` | Producer/consumer pipelines emphasizing staged TMA loads and inline PTX hooks. |
@@ -32,7 +28,7 @@ python -m cli.aisp bench list-targets --chapter ch09
 python -m cli.aisp bench run --targets ch09 --profile minimal
 ```
 - Override `--profile` or `--iterations` per workload when capturing Nsight traces.
-- Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.
+- Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.
 - Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.
 
 ## Validation Checklist
@@ -42,5 +38,4 @@ python -m cli.aisp bench run --targets ch09 --profile minimal
 
 ## Notes
 - `inline_ptx_example.cu` demonstrates how to wrap tcgen05 intrinsics safely with architecture guards.
-- `baseline_cute_dsl_nvfp4_gemm.cu` / `optimized_cute_dsl_nvfp4_gemm.cu` are inspired by the CuTe DSL NVFP4 kernel walkthrough: https://obolensky.xyz/blog/nvfp4_gemm_kernel_explanation/
 - `requirements.txt` includes Triton nightly pinning so the kernels track PyTorch 2.10-dev features.

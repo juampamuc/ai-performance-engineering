@@ -1,0 +1,139 @@
+{
+  "checks": [
+    {
+      "command": "<missing:uv>",
+      "details": {
+        "required_tool": "uv"
+      },
+      "duration_sec": 0.0,
+      "exit_code": 127,
+      "name": "uv_torch_install",
+      "status": "error",
+      "stderr_excerpt": "uv is not available",
+      "stdout_excerpt": "",
+      "timed_out": false
+    },
+    {
+      "command": "/tmp/quick_friction_2026-02-24_localhost_fullsuite_r5_ai-book-dev_bir953ll/pip_env/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124",
+      "details": {
+        "venv_create_sec": 2.274198,
+        "venv_python": "/tmp/quick_friction_2026-02-24_localhost_fullsuite_r5_ai-book-dev_bir953ll/pip_env/bin/python"
+      },
+      "duration_sec": 117.158609,
+      "exit_code": 0,
+      "name": "pip_torch_install",
+      "status": "ok",
+      "stderr_excerpt": "",
+      "stdout_excerpt": "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 24.6/24.6 MB 43.6 MB/s eta 0:00:00\nCollecting nvidia-cuda-runtime-cu12==12.4.127 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cuda_runtime_cu12-12.4.127-py3-none-manylinux2014_x86_64.whl (883 kB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 883.7/883.7 kB 23.4 MB/s eta 0:00:00\nCollecting nvidia-cuda-cupti-cu12==12.4.127 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cuda_cupti_cu12-12.4.127-py3-none-manylinux2014_x86_64.whl (13.8 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 13.8/13.8 MB 44.5 MB/s eta 0:00:00\nCollecting nvidia-cudnn-cu12==9.1.0.70 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cudnn_cu12-9.1.0.70-py3-none-manylinux2014_x86_64.whl (664.8 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 664.8/664.8 MB 8.8 MB/s eta 0:00:00\nCollecting nvidia-cublas-cu12==12.4.5.8 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cublas_cu12-12.4.5.8-py3-none-manylinux2014_x86_64.whl (363.4 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 363.4/363.4 MB 14.8 MB/s eta 0:00:00\nCollecting nvidia-cufft-cu12==11.2.1.3 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cufft_cu12-11.2.1.3-py3-none-manylinux2014_x86_64.whl (211.5 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 211.5/211.5 MB 20.5 MB/s eta 0:00:00\nCollecting nvidia-curand-cu12==10.3.5.147 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_curand_cu12-10.3.5.147-py3-none-manylinux2014_x86_64.whl (56.3 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 56.3/56.3 MB 36.5 MB/s eta 0:00:00\nCollecting nvidia-cusolver-cu12==11.6.1.9 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cusolver_cu12-11.6.1.9-py3-none-manylinux2014_x86_64.whl (127.9 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 127.9/127.9 MB 26.5 MB/s eta 0:00:00\nCollecting nvidia-cusparse-cu12==12.3.1.170 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_cusparse_cu12-12.3.1.170-py3-none-manylinux2014_x86_64.whl (207.5 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 207.5/207.5 MB 20.6 MB/s eta 0:00:00\nCollecting nvidia-nccl-cu12==2.21.5 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/nvidia_nccl_cu12-2.21.5-py3-none-manylinux2014_x86_64.whl (188.7 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 188.7/188.7 MB 21.5 MB/s eta 0:00:00\nCollecting nvidia-nvtx-cu12==12.4.127 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_nvtx_cu12-12.4.127-py3-none-manylinux2014_x86_64.whl (99 kB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 99.1/99.1 kB 4.5 MB/s eta 0:00:00\nCollecting nvidia-nvjitlink-cu12==12.4.127 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/cu124/nvidia_nvjitlink_cu12-12.4.127-py3-none-manylinux2014_x86_64.whl (21.1 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 21.1/21.1 MB 35.3 MB/s eta 0:00:00\nCollecting triton==3.1.0 (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/triton-3.1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (209.6 MB)\n     \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 209.6/209.6 MB 21.5 MB/s eta 0:00:00\nCollecting setuptools (from torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/setuptools-70.2.0-py3-none-any.whl.metadata (5.8 kB)\nCollecting sympy==1.13.1 (from torch==2.5.1)\n  Downloading sympy-1.13.1-py3-none-any.whl.metadata (12 kB)\nCollecting mpmath<1.4,>=1.1.0 (from sympy==1.13.1->torch==2.5.1)\n  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)\nCollecting MarkupSafe>=2.0 (from jinja2->torch==2.5.1)\n  Downloading https://download.pytorch.org/whl/MarkupSafe-3.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.0 kB)\nDownloading sympy-1.13.1-py3-none-any.whl (6.2 MB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 6.2/6.2 MB 50.4 MB/s eta 0:00:00\nDownloading https://download.pytorch.org/whl/typing_extensions-4.15.0-py3-none-any.whl (44 kB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 44.6/44.6 kB 2.9 MB/s eta 0:00:00\nDownloading filelock-3.20.0-py3-none-any.whl (16 kB)\nDownloading fsspec-2025.12.0-py3-none-any.whl (201 kB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 201.4/201.4 kB 10.2 MB/s eta 0:00:00\nDownloading https://download.pytorch.org/whl/jinja2-3.1.6-py3-none-any.whl (134 kB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 134.9/134.9 kB 6.5 MB/s eta 0:00:00\nDownloading networkx-3.6.1-py3-none-any.whl (2.1 MB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 2.1/2.1 MB 35.0 MB/s eta 0:00:00\nDownloading https://download.pytorch.org/whl/setuptools-70.2.0-py3-none-any.whl (930 kB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 930.8/930.8 kB 22.6 MB/s eta 0:00:00\nDownloading https://download.pytorch.org/whl/MarkupSafe-3.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (23 kB)\nDownloading mpmath-1.3.0-py3-none-any.whl (536 kB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 536.2/536.2 kB 17.9 MB/s eta 0:00:00\nInstalling collected packages: mpmath, typing-extensions, sympy, setuptools, nvidia-nvtx-cu12, nvidia-nvjitlink-cu12, nvidia-nccl-cu12, nvidia-curand-cu12, nvidia-cufft-cu12, nvidia-cuda-runtime-cu12, nvidia-cuda-nvrtc-cu12, nvidia-cuda-cupti-cu12, nvidia-cublas-cu12, networkx, MarkupSafe, fsspec, filelock, triton, nvidia-cusparse-cu12, nvidia-cudnn-cu12, jinja2, nvidia-cusolver-cu12, torch\nSuccessfully installed MarkupSafe-3.0.2 filelock-3.20.0 fsspec-2025.12.0 jinja2-3.1.6 mpmath-1.3.0 networkx-3.6.1 nvidia-cublas-cu12-12.4.5.8 nvidia-cuda-cupti-cu12-12.4.127 nvidia-cuda-nvrtc-cu12-12.4.127 nvidia-cuda-runtime-cu12-12.4.127 nvidia-cudnn-cu12-9.1.0.70 nvidia-cufft-cu12-11.2.1.3 nvidia-curand-cu12-10.3.5.147 nvidia-cusolver-cu12-11.6.1.9 nvidia-cusparse-cu12-12.3.1.170 nvidia-nccl-cu12-2.21.5 nvidia-nvjitlink-cu12-12.4.127 nvidia-nvtx-cu12-12.4.127 setuptools-70.2.0 sympy-1.13.1 torch-2.5.1+cu124 triton-3.1.0 typing-extensions-4.15.0\n",
+      "timed_out": false
+    },
+    {
+      "command": "/usr/bin/docker pull nvcr.io/nvidia/pytorch:24.05-py3",
+      "details": {},
+      "duration_sec": 151.560792,
+      "exit_code": 0,
+      "name": "ngc_pull",
+      "status": "ok",
+      "stderr_excerpt": "",
+      "stdout_excerpt": "24.05-py3: Pulling from nvidia/pytorch\ne311a697a403: Pulling fs layer\na1bb87b1bdf0: Pulling fs layer\na1ceee53b5e4: Pulling fs layer\nb0af13aeaa1d: Pulling fs layer\n6736e27386e2: Pulling fs layer\n0365a1d1e996: Pulling fs layer\nf1c53936bbd1: Pulling fs layer\n16122c894301: Pulling fs layer\n4f4fb700ef54: Pulling fs layer\ndaa57fc4a38c: Pulling fs layer\n3838d439f96b: Pulling fs layer\n068f728715cc: Pulling fs layer\nee67973ac664: Pulling fs layer\nb4c0ed31a6c2: Pulling fs layer\n1605eaca532f: Pulling fs layer\n3211d70dbc71: Pulling fs layer\na42826ae137d: Pulling fs layer\n49d543b38b64: Pulling fs layer\n3bff7e85de19: Pulling fs layer\n0d55198c2909: Pulling fs layer\nec014b2ba69e: Pulling fs layer\nfc24ce2af9ec: Pulling fs layer\nbf82cf860ffe: Pulling fs layer\n8cd7a829f959: Pulling fs layer\nb52ef49b406a: Pulling fs layer\n28e3223edf8b: Pulling fs layer\n8595082e4c4d: Pulling fs layer\nd3d601b344d9: Pulling fs layer\n551e914e0601: Pulling fs layer\nb31eec21bf1b: Pulling fs layer\n4f4fb700ef54: Pulling fs layer\nedc495e385c1: Pulling fs layer\n91387160b320: Pulling fs layer\n10534a2947dd: Pulling fs layer\n49a182c3a716: Pulling fs layer\ne8fa9853f2ca: Pulling fs layer\ndd497867abf1: Pulling fs layer\n4f4fb700ef54: Pulling fs layer\nf585a551a921: Pulling fs layer\na344452058e8: Pulling fs layer\ncd5cc4e923ff: Pulling fs layer\n415616bd3eb5: Pulling fs layer\n0ab80fad63f8: Pulling fs layer\n26dad4c39e1d: Pulling fs layer\n904d64cd649e: Pulling fs layer\nd41f04651b7a: Pulling fs layer\nd2463ee1a411: Pulling fs layer\n20b589f3eab4: Pulling fs layer\n7ee0fb41daf0: Pulling fs layer\nb8c68503ae7c: Pulling fs layer\n30f24dff2367: Pulling fs layer\n4f4fb700ef54: Download complete\n8595082e4c4d: Download complete\na1bb87b1bdf0: Download complete\n20b589f3eab4: Download complete\n28e3223edf8b: Download complete\nbf82cf860ffe: Download complete\n26dad4c39e1d: Download complete\nd3d601b344d9: Download complete\nb31eec21bf1b: Download complete\na344452058e8: Download complete\n6736e27386e2: Download complete\nf1c53936bbd1: Download complete\n49a182c3a716: Download complete\n10534a2947dd: Download complete\nedc495e385c1: Download complete\n1605eaca532f: Download complete\n91387160b320: Download complete\n0365a1d1e996: Download complete\ne311a697a403: Download complete\na42826ae137d: Download complete\nb8c68503ae7c: Download complete\n0ab80fad63f8: Download complete\nb4c0ed31a6c2: Download complete\n49d543b38b64: Download complete\ndd497867abf1: Download complete\n16122c894301: Download complete\nb0af13aeaa1d: Download complete\ncd5cc4e923ff: Download complete\ne311a697a403: Pull complete\nb52ef49b406a: Download complete\n30f24dff2367: Download complete\ndaa57fc4a38c: Download complete\n415616bd3eb5: Download complete\n904d64cd649e: Download complete\n3838d439f96b: Download complete\nf585a551a921: Download complete\nec014b2ba69e: Download complete\n3211d70dbc71: Download complete\n8cd7a829f959: Download complete\n551e914e0601: Download complete\nfc24ce2af9ec: Download complete\n068f728715cc: Download complete\na1ceee53b5e4: Download complete\n3bff7e85de19: Download complete\na1ceee53b5e4: Pull complete\n4f4fb700ef54: Pull complete\nd41f04651b7a: Download complete\n068f728715cc: Pull complete\nd2463ee1a411: Download complete\n1605eaca532f: Pull complete\n7ee0fb41daf0: Download complete\ne8fa9853f2ca: Download complete\nee67973ac664: Download complete\n0d55198c2909: Download complete\n0d55198c2909: Pull complete\nbf82cf860ffe: Pull complete\n8595082e4c4d: Pull complete\nb31eec21bf1b: Pull complete\n10534a2947dd: Pull complete\ndd497867abf1: Pull complete\n415616bd3eb5: Pull complete\n26dad4c39e1d: Pull complete\nd2463ee1a411: Pull complete\nf585a551a921: Pull complete\nb8c68503ae7c: Pull complete\ncd5cc4e923ff: Pull complete\n0ab80fad63f8: Pull complete\na344452058e8: Pull complete\nd41f04651b7a: Pull complete\n7ee0fb41daf0: Pull complete\n904d64cd649e: Pull complete\n20b589f3eab4: Pull complete\n30f24dff2367: Pull complete\n6736e27386e2: Pull complete\nb0af13aeaa1d: Pull complete\nee67973ac664: Pull complete\na42826ae137d: Pull complete\n3bff7e85de19: Pull complete\nfc24ce2af9ec: Pull complete\nb52ef49b406a: Pull complete\nd3d601b344d9: Pull complete\n551e914e0601: Pull complete\n49a182c3a716: Pull complete\n91387160b320: Pull complete\ne8fa9853f2ca: Pull complete\nf1c53936bbd1: Pull complete\n0365a1d1e996: Pull complete\n16122c894301: Pull complete\ndaa57fc4a38c: Pull complete\nedc495e385c1: Pull complete\n3838d439f96b: Pull complete\nb4c0ed31a6c2: Pull complete\n3211d70dbc71: Pull complete\n49d543b38b64: Pull complete\nec014b2ba69e: Pull complete\n8cd7a829f959: Pull complete\na1bb87b1bdf0: Pull complete\n28e3223edf8b: Pull complete\nDigest: sha256:d4030fc006cce2e56497fa07d003c5996de0eb7bde3610599fedbe7e7d03adea\nStatus: Downloaded newer image for nvcr.io/nvidia/pytorch:24.05-py3\nnvcr.io/nvidia/pytorch:24.05-py3\n",
+      "timed_out": false
+    },
+    {
+      "command": "/tmp/quick_friction_2026-02-24_localhost_fullsuite_r5_ai-book-dev_bir953ll/pip_env/bin/python -c 'import torch; print(torch.__version__)'",
+      "details": {
+        "python_executable": "/tmp/quick_friction_2026-02-24_localhost_fullsuite_r5_ai-book-dev_bir953ll/pip_env/bin/python"
+      },
+      "duration_sec": 1.191279,
+      "exit_code": 0,
+      "name": "torch_import",
+      "status": "ok",
+      "stderr_excerpt": "/tmp/quick_friction_2026-02-24_localhost_fullsuite_r5_ai-book-dev_bir953ll/pip_env/lib/python3.12/site-packages/torch/_subclasses/functional_tensor.py:295: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at ../torch/csrc/utils/tensor_numpy.cpp:84.)\n  cpu = _conversion_method_template(device=torch.device(\"cpu\"))\n",
+      "stdout_excerpt": "2.5.1+cu124\n",
+      "timed_out": false
+    },
+    {
+      "command": "/usr/local/bin/hf download openai-community/gpt2 --local-dir /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download",
+      "details": {
+        "binary": "/usr/local/bin/hf",
+        "local_dir": "/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download",
+        "model_id": "openai-community/gpt2"
+      },
+      "duration_sec": 11.895732,
+      "exit_code": 0,
+      "name": "hf_download",
+      "status": "ok",
+      "stderr_excerpt": "face/download/VdUwCXpNPAmSX_wbggcAF5oNFEg=.c966da3b74697803352ca7c6f2f220e7090a557b619de9da0c6b34d89f7825c1.incomplete'\nDownloading '.gitattributes' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/wPaCkH-WbT7GsmxMKKrNZTV4nSM=.602b71f15d40ed68c5f96330e3f3175a76a32126.incomplete'\nDownloading '64-fp16.tflite' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/UTD3GIDVsVbo-flvypuvP4lc3UM=.1ceafd82e733dd4b21570b2a86cf27556a983041806c033a55d086e0ed782cd3.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/README.md\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.gitattributes\n\nFetching 26 files:   4%|\u258d         | 1/26 [00:00<00:13,  1.84it/s]Downloading 'onnx/decoder_model.onnx' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/NE2Uu8jJW0gNxzFP506Cbdzq31s=.e3fc9615868ff8f5e0429b892a0f6ca692784ba6c4ca31c4e9ee8218e7cce34f.incomplete'\nDownloading 'onnx/config.json' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/8_PA_wEVGiVa2goH2H4KQOQpvVY=.00bc2ad81dcdd043bf8490fdbd7cd82629fab389.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/config.json\nDownloading 'onnx/decoder_model_merged.onnx' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/8nAEj8og01VMfTGLDuLvhB35wcw=.e6fc046fe5a7cfeeb8bb3c7d4c1b6a8bd90ced7339a75d5567957e3bc9d48abe.incomplete'\nDownloading 'onnx/decoder_with_past_model.onnx' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/LdC3-bRWeEDyMeNEeGsXefVwwVM=.570d958241de81f12d82a8358dfc0b408a7bf44ff2bd10ac4a97dab24a8118db.incomplete'\nDownloading 'onnx/generation_config.json' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/3EVKVggOldJcKSsGjSdoUCN1AyQ=.30989900f4cebe446d28b25c9593001c7ef2853a.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/generation_config.json\nDownloading 'onnx/merges.txt' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/PtHk0z_I45atnj23IIRhTExwT3w=.226b0752cac7789c48f0cb3ec53eda48b7be36cc.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/merges.txt\nDownloading 'onnx/special_tokens_map.json' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/ahkChHUJFxEmOdq5GDFEmerRzCY=.0204ed10c186a4c7c68f55dff8f26087a45898d6.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/special_tokens_map.json\nDownloading 'onnx/tokenizer.json' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/HgM_lKo9sdSCfRtVg7MMFS7EKqo=.5de8effbe407429dce1f3ad068cd1bbd215d3a5c.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/tokenizer.json\nDownloading 'onnx/tokenizer_config.json' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/vzaExXFZNBay89bvlQv-ZcI6BTg=.546efe6d18ae2ad7758d0c9ef51cacdb81c8dc9d.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/tokenizer_config.json\nDownloading 'onnx/vocab.json' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/onnx/j3m-Hy6QvBddw8RXA1uSWl1AJ0c=.84ef7fb594b5c0979e48bdeddb60a0adef33df0b.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/vocab.json\nDownloading 'pytorch_model.bin' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/Q1p2l2BzM1m6P5jKvr8WTq1TUio=.7c5d3f4b8b76583b422fcb9189ad6c89d5d97a094541ce8932dce3ecabde1421.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/64-fp16.tflite\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/64.tflite\nDownloading 'rust_model.ot' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/ee-WZw9U-e9t7gTGo9Yn82pHA_c=.adf0adedbf4016b249550f866c66a3b3a3d09c8b3b3a1f6e5e9a265d94e0270e.incomplete'\nDownloading 'tf_model.h5' to '/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/.cache/huggingface/download/a7eHxRFT3OeMBIFg52k2nfj5m7w=.d08c1307f7dfae6f878e0a2ca5715d587d2640530db8ef96fc0c1fc474dd9fee.incomplete'\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/flax_model.msgpack\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/decoder_model.onnx\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/pytorch_model.bin\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/decoder_with_past_model.onnx\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/rust_model.ot\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/tf_model.h5\nDownload complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/64-8bits.tflite\n\nFetching 26 files:   8%|\u258a         | 2/26 [00:10<02:21,  5.90s/it]Download complete. Moving file to /tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download/onnx/decoder_model_merged.onnx\n\nFetching 26 files:  50%|\u2588\u2588\u2588\u2588\u2588     | 13/26 [00:11<00:08,  1.48it/s]\nFetching 26 files: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 26/26 [00:11<00:00,  2.28it/s]\n",
+      "stdout_excerpt": "{\"timestamp\":\"2026-02-24T05:48:31.871243Z\",\"level\":\"ERROR\",\"fields\":{\"message\":\"Error logging to file \\\"/home/cfregly/.cache/huggingface/xet/logs/xet_20260224T054831850+0000_4170904.log\\\" (Permission denied (os error 13)); falling back to console logging.\"},\"filename\":\"/home/runner/work/xet-core/xet-core/xet_logging/src/logging.rs\",\"line_number\":58}\n/tmp/2026-02-24_localhost_fullsuite_r5_ai-book-dev_hf_download\n",
+      "timed_out": false
+    },
+    {
+      "command": "<missing:whois>",
+      "details": {
+        "public_ip": "31.22.104.239"
+      },
+      "duration_sec": 0.0,
+      "exit_code": 127,
+      "name": "ip_owner",
+      "status": "error",
+      "stderr_excerpt": "whois is not available",
+      "stdout_excerpt": "",
+      "timed_out": false
+    },
+    {
+      "command": "<missing:speedtest-cli/speedtest>",
+      "details": {
+        "required_tool": "speedtest-cli/speedtest"
+      },
+      "duration_sec": 0.0,
+      "exit_code": 127,
+      "name": "speedtest",
+      "status": "error",
+      "stderr_excerpt": "speedtest-cli or speedtest is not available",
+      "stdout_excerpt": "",
+      "timed_out": false
+    }
+  ],
+  "config": {
+    "hf_local_dir_base": "/tmp",
+    "hf_model": "openai-community/gpt2",
+    "ngc_image": "nvcr.io/nvidia/pytorch:24.05-py3",
+    "timeout_sec": 900,
+    "torch_index_url": "https://download.pytorch.org/whl/cu124",
+    "torch_version": "2.5.1"
+  },
+  "failed_checks": [
+    "uv_torch_install",
+    "ip_owner",
+    "speedtest"
+  ],
+  "host": "ai-book-dev",
+  "passed_checks": [
+    "pip_torch_install",
+    "ngc_pull",
+    "torch_import",
+    "hf_download"
+  ],
+  "run_id": "2026-02-24_localhost_fullsuite_r5",
+  "selected_checks": [
+    "uv_torch_install",
+    "pip_torch_install",
+    "ngc_pull",
+    "torch_import",
+    "hf_download",
+    "ip_owner",
+    "speedtest"
+  ],
+  "status": "degraded",
+  "test": "quick_friction",
+  "timestamp_utc": "2026-02-24T05:48:43Z",
+  "tool_paths": {
+    "curl": "/usr/bin/curl",
+    "docker": "/usr/bin/docker",
+    "hf": "/usr/local/bin/hf",
+    "huggingface_cli": "/usr/local/bin/huggingface-cli",
+    "python3": "/usr/bin/python3",
+    "speedtest": null,
+    "uv": null,
+    "whois": null
+  }
+}
