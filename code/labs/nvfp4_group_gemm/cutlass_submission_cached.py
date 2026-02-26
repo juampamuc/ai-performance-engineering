@@ -35,6 +35,10 @@ _KernelVariant = Literal[
     "1sm",
     "1sm_n64",
     "1sm_n128",
+    "1sm_n192",
+    "1sm_n192_case23",
+    "1sm_n192_case2",
+    "1sm_n192_case3",
     "2sm",
     "2sm_mxf4",
     "2sm_mxf4_s1",
@@ -63,6 +67,10 @@ _SUPPORTED_VARIANTS: Tuple[_KernelVariant, ...] = (
     "1sm",
     "1sm_n64",
     "1sm_n128",
+    "1sm_n192",
+    "1sm_n192_case23",
+    "1sm_n192_case2",
+    "1sm_n192_case3",
     "2sm",
     "2sm_mxf4",
     "2sm_mxf4_s1",
@@ -110,6 +118,14 @@ def _variant_fns(ext: Any, variant: _KernelVariant) -> tuple[Any, Any]:
         return ext.build_metadata_1sm_n64, ext.create_plan_1sm_n64
     if variant == "1sm_n128":
         return ext.build_metadata_1sm_n128, ext.create_plan_1sm_n128
+    if variant == "1sm_n192":
+        return ext.build_metadata_1sm_n192, ext.create_plan_1sm_n192
+    if variant == "1sm_n192_case23":
+        return ext.build_metadata_1sm_n192_case23, ext.create_plan_1sm_n192_case23
+    if variant == "1sm_n192_case2":
+        return ext.build_metadata_1sm_n192_case2, ext.create_plan_1sm_n192_case2
+    if variant == "1sm_n192_case3":
+        return ext.build_metadata_1sm_n192_case3, ext.create_plan_1sm_n192_case3
     if variant == "2sm":
         return ext.build_metadata_2sm, ext.create_plan_2sm
     if variant == "2sm_mxf4":
@@ -441,15 +457,25 @@ def _build_stream_plan_buckets(
 
 def _variant_tile_shape(variant: _KernelVariant) -> Tuple[int, int, int]:
     """Return (m_tile, n_tile, k_tile) used by the selected CUTLASS variant."""
-    if variant in {"1sm", "1sm_n64", "1sm_n128"}:
+    if variant in {
+        "1sm",
+        "1sm_n64",
+        "1sm_n128",
+        "1sm_n192",
+        "1sm_n192_case23",
+        "1sm_n192_case2",
+        "1sm_n192_case3",
+    }:
         m_tile = 128
     else:
         m_tile = 256
 
-    if variant.endswith("_n64"):
+    if "_n64" in variant:
         n_tile = 64
-    elif variant.endswith("_n128"):
+    elif "_n128" in variant:
         n_tile = 128
+    elif "_n192" in variant:
+        n_tile = 192
     else:
         n_tile = 256
 

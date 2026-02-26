@@ -18,6 +18,11 @@ from core.utils.extension_loader_template import load_cuda_extension
 
 _BASE_EXT_NAME = "nvfp4_group_gemm_cutlass_sm100"
 _DEFAULT_S5_RESERVE_BYTES = 8 * 1024
+_DEFAULT_CASE23_S5_RESERVE_BYTES = 16 * 1024
+_DEFAULT_CASE2_RESERVE_BYTES = 12 * 1024
+_DEFAULT_CASE3_RESERVE_BYTES = 6 * 1024
+_DEFAULT_N192_CASE2_RESERVE_BYTES = 10 * 1024
+_DEFAULT_N192_CASE3_RESERVE_BYTES = 6 * 1024
 _EXT_BY_NAME: dict[str, object] = {}
 
 
@@ -47,10 +52,27 @@ def _sanitize_extension_suffix(raw: str) -> str:
     return token
 
 
-def _resolve_extension_name(s5_reserve_bytes: int) -> str:
+def _resolve_extension_name(
+    s5_reserve_bytes: int,
+    case23_s5_reserve_bytes: int,
+    case2_reserve_bytes: int,
+    case3_reserve_bytes: int,
+    n192_case2_reserve_bytes: int,
+    n192_case3_reserve_bytes: int,
+) -> str:
     parts = [_BASE_EXT_NAME]
     if int(s5_reserve_bytes) != int(_DEFAULT_S5_RESERVE_BYTES):
         parts.append(f"s5r{int(s5_reserve_bytes)}")
+    if int(case23_s5_reserve_bytes) != int(_DEFAULT_CASE23_S5_RESERVE_BYTES):
+        parts.append(f"c23s5r{int(case23_s5_reserve_bytes)}")
+    if int(case2_reserve_bytes) != int(_DEFAULT_CASE2_RESERVE_BYTES):
+        parts.append(f"c2r{int(case2_reserve_bytes)}")
+    if int(case3_reserve_bytes) != int(_DEFAULT_CASE3_RESERVE_BYTES):
+        parts.append(f"c3r{int(case3_reserve_bytes)}")
+    if int(n192_case2_reserve_bytes) != int(_DEFAULT_N192_CASE2_RESERVE_BYTES):
+        parts.append(f"n192c2r{int(n192_case2_reserve_bytes)}")
+    if int(n192_case3_reserve_bytes) != int(_DEFAULT_N192_CASE3_RESERVE_BYTES):
+        parts.append(f"n192c3r{int(n192_case3_reserve_bytes)}")
     user_suffix = _sanitize_extension_suffix(os.environ.get("AISP_NVFP4_GROUP_GEMM_CUTLASS_EXT_SUFFIX", ""))
     if user_suffix:
         parts.append(user_suffix)
@@ -63,7 +85,34 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         "AISP_NVFP4_GROUP_GEMM_1SM_N128_S5_RESERVE_BYTES",
         _DEFAULT_S5_RESERVE_BYTES,
     )
-    ext_name = _resolve_extension_name(s5_reserve_bytes)
+    case23_s5_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N128_CASE23_S5_RESERVE_BYTES",
+        _DEFAULT_CASE23_S5_RESERVE_BYTES,
+    )
+    case2_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N128_CASE2_RESERVE_BYTES",
+        _DEFAULT_CASE2_RESERVE_BYTES,
+    )
+    case3_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N128_CASE3_RESERVE_BYTES",
+        _DEFAULT_CASE3_RESERVE_BYTES,
+    )
+    n192_case2_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N192_CASE2_RESERVE_BYTES",
+        _DEFAULT_N192_CASE2_RESERVE_BYTES,
+    )
+    n192_case3_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N192_CASE3_RESERVE_BYTES",
+        _DEFAULT_N192_CASE3_RESERVE_BYTES,
+    )
+    ext_name = _resolve_extension_name(
+        s5_reserve_bytes,
+        case23_s5_reserve_bytes,
+        case2_reserve_bytes,
+        case3_reserve_bytes,
+        n192_case2_reserve_bytes,
+        n192_case3_reserve_bytes,
+    )
     cached_local = _EXT_BY_NAME.get(ext_name)
     if cached_local is not None:
         return cached_local
@@ -96,6 +145,11 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         # B200 (SM100). We keep this narrow to reduce compile time.
         "-gencode=arch=compute_100a,code=sm_100a",
         f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_S5_RESERVE_BYTES={int(s5_reserve_bytes)}",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE23_S5_RESERVE_BYTES={int(case23_s5_reserve_bytes)}",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE2_RESERVE_BYTES={int(case2_reserve_bytes)}",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE3_RESERVE_BYTES={int(case3_reserve_bytes)}",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N192_CASE2_RESERVE_BYTES={int(n192_case2_reserve_bytes)}",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N192_CASE3_RESERVE_BYTES={int(n192_case3_reserve_bytes)}",
     ]
 
     ext = load_cuda_extension(

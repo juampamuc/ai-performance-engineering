@@ -57,18 +57,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 _CASE_DEFAULT_TUNABLES: dict[int, dict[str, int]] = {
-    0: {"cluster_m": 2, "cluster_n": 1, "raster_order": 2, "use_pdl": 1, "max_swizzle": 0},
-    1: {"cluster_m": 2, "cluster_n": 1, "raster_order": 1, "use_pdl": 1, "max_swizzle": 0},
-    # Case2/3 tuned defaults: disable PDL and use case-specific swizzle for lower launch/scheduler overhead.
-    2: {"cluster_m": 1, "cluster_n": 2, "raster_order": 2, "use_pdl": 0, "max_swizzle": 32},
-    3: {"cluster_m": 1, "cluster_n": 2, "raster_order": 2, "use_pdl": 0, "max_swizzle": 0},
+    0: {"cluster_m": 2, "cluster_n": 1, "raster_order": 2, "use_pdl": 1, "max_swizzle": 8},
+    1: {"cluster_m": 2, "cluster_n": 1, "raster_order": 2, "use_pdl": 0, "max_swizzle": 8},
+    # Case2/3 tuned defaults from strict-verify ABAB.
+    2: {"cluster_m": 1, "cluster_n": 2, "raster_order": 0, "use_pdl": 0, "max_swizzle": 16},
+    3: {"cluster_m": 1, "cluster_n": 2, "raster_order": 0, "use_pdl": 0, "max_swizzle": 8},
 }
 
 _CASE_DEFAULT_VARIANTS: dict[int, str] = {
-    0: "2sm_s4",
+    0: "2sm",
     1: "2sm",
-    2: "1sm_n128_s7",
-    3: "1sm_n128_s7",
+    2: "1sm_n128_case23_s4",
+    3: "1sm_n128_case23_s4",
 }
 
 
@@ -443,7 +443,7 @@ def _run_runtime(runtime_ctx: dict[str, Any]) -> None:
 _CASE_SIG_MAP = _build_case_signature_map()
 _CASE_FAST_MAP = _build_fast_case_map()
 _CUDA_AVAILABLE = torch.cuda.is_available()
-_USE_NATIVE_PTR_UPDATE = _env_bool("AISP_NVFP4_GROUP_GEMM_NATIVE_PTR_UPDATE", False)
+_USE_NATIVE_PTR_UPDATE = _env_bool("AISP_NVFP4_GROUP_GEMM_NATIVE_PTR_UPDATE", True)
 _SKIP_PTR_UPDATE_ON_SAME_DATA = _env_bool("AISP_NVFP4_GROUP_GEMM_SKIP_PTR_UPDATE_ON_SAME_DATA", True)
 _SINGLE_SLOT_FAST = _env_bool("AISP_NVFP4_GROUP_GEMM_SINGLE_SLOT_FAST", True)
 _MAX_RUNTIME_CACHE_ENTRIES = 16
@@ -457,7 +457,53 @@ _LAST_RUNTIME_CTX: dict[str, Any] | None = None
 _LAST_OUTPUTS: list[torch.Tensor] | None = None
 _LAST_DATA_ID: int = -1
 _CASE_CTX_CACHE: dict[tuple[str, int, int, int, int, bool, tuple[tuple[int, int, int, int], ...]], dict[str, Any]] = {}
+
+
+def _case_config_env_fingerprint() -> tuple[str | None, ...]:
+    vals: list[str | None] = []
+    global_keys = (
+        "AISP_NVFP4_GROUP_GEMM_VARIANT",
+        "AISP_NVFP4_GROUP_GEMM_CLUSTER_M",
+        "AISP_NVFP4_GROUP_GEMM_CLUSTER_N",
+        "AISP_NVFP4_GROUP_GEMM_RASTER_ORDER",
+        "AISP_NVFP4_GROUP_GEMM_USE_PDL",
+        "AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE",
+    )
+    case_keys = ("VARIANT", "CLUSTER_M", "CLUSTER_N", "RASTER_ORDER", "USE_PDL", "MAX_SWIZZLE")
+    for k in global_keys:
+        vals.append(os.environ.get(k))
+    for case_idx in range(4):
+        pref = f"AISP_NVFP4_GROUP_GEMM_CASE{int(case_idx)}_"
+        for k in case_keys:
+            vals.append(os.environ.get(pref + k))
+    return tuple(vals)
+
+
 _CASE_CONFIGS = _build_static_case_configs()
+_CASE_CONFIGS_ENV_FINGERPRINT = _case_config_env_fingerprint()
+
+
+def refresh_case_configs_from_env(clear_caches: bool = True) -> bool:
+    global _CASE_CONFIGS, _CASE_CONFIGS_ENV_FINGERPRINT
+    global _LAST_DATA_REF, _LAST_RUNTIME_CTX, _LAST_OUTPUTS, _LAST_DATA_ID
+
+    fp = _case_config_env_fingerprint()
+    if fp == _CASE_CONFIGS_ENV_FINGERPRINT:
+        return False
+
+    _CASE_CONFIGS = _build_static_case_configs()
+    _CASE_CONFIGS_ENV_FINGERPRINT = fp
+    if clear_caches:
+        _RUNTIME_CACHE.clear()
+        _RUNTIME_CACHE_ORDER.clear()
+        _DATA_FAST_CACHE.clear()
+        _DATA_FAST_CACHE_ORDER.clear()
+        _CASE_CTX_CACHE.clear()
+        _LAST_DATA_REF = None
+        _LAST_RUNTIME_CTX = None
+        _LAST_OUTPUTS = None
+        _LAST_DATA_ID = -1
+    return True
 
 
 def _runtime_cache_insert(cache_key: tuple[Any, ...]) -> None:
@@ -571,4 +617,4 @@ def _prewarm_default_runtime_cache() -> None:
 _prewarm_default_runtime_cache()
 
 
-__all__ = ["custom_kernel"]
+__all__ = ["custom_kernel", "refresh_case_configs_from_env"]

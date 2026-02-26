@@ -479,9 +479,12 @@ def _config_fingerprint() -> str:
         "AISP_NVFP4_GROUP_GEMM_V2_CTA2_PARTITION_B",
         "AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST",
         "AISP_NVFP4_GROUP_GEMM_V2_TMA_L2_PROMOTION",
+        "AISP_NVFP4_GROUP_GEMM_V2_CTA_ORDER",
+        "AISP_NVFP4_GROUP_GEMM_V2_ASSUME_NO_N_TAIL",
         "AISP_NVFP4_GROUP_GEMM_V2_PIPELINE_STAGES",
         "AISP_NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS",
         "AISP_NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA",
+        "AISP_NVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER",
         "AISP_NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32",
         "AISP_NVFP4_GROUP_GEMM_V2_MAXRREGCOUNT",
     ]
@@ -494,16 +497,17 @@ def _set_popcorn_defaults() -> None:
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", "2")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_PIPELINE_STAGES", "2")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS", "512")
-    # Warp-specialized UnrollN=2 path is now correctness-fixed for Popcorn test shapes.
-    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA", "1")
+    # Best strict-verify all-case geomean currently uses producer-overlap + x32 epilogue.
+    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_WS_UNROLL2_MMA", "0")
+    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_WS_TMA_PRODUCER", "1")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32", "1")
-    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_MAXRREGCOUNT", "88")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CTA_ORDER", "tm_major")
-    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X", "2")
+    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X", "1")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_EXPERIMENTAL_CTA2", "0")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CTA2_PARTITION_B", "1")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", "0")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_TMA_L2_PROMOTION", "3")
+    os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ASSUME_NO_N_TAIL", "1")
     # Correctness gate: UTCCP64 path is currently incorrect on case1 strict verify.
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B", "0")
     os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_USE_CUDA_GRAPH", "1")
