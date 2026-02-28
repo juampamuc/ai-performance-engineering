@@ -1383,7 +1383,8 @@ template <
     bool UseCase3InlineTnMajorMap = false,
     bool UseCase3StaticMeta = false,
     bool ForceWarp0OnlyMainloop = false,
-    bool ForceWsSplitU0Segs = false>
+    bool ForceWsSplitU0Segs = false,
+    bool UseCase2InlineTnMajorMap = false>
 __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     const uint64_t* __restrict__ a_ptrs,
     const uint64_t* __restrict__ b_ptrs,
@@ -1553,6 +1554,29 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       const int local = cta_linear - kCase2Group0Ctas;
       tile_m = local / kCase2PairsPerMTile;
       tile_n = (local % kCase2PairsPerMTile) * UnrollN;
+    }
+  } else if constexpr (UseCase2InlineTnMajorMap && (CtaGroup == 1) && (UnrollN == 2)) {
+    // Case2-only packed CTA map in tn_major order, inlined to avoid per-CTA global map loads:
+    // group0: M=192 -> 2 M-tiles, group1: M=320 -> 3 M-tiles, N=3072 -> 12 unroll2 CTA columns.
+    // Each N-pair issues CTAs in order: g0.m0, g0.m1, g1.m0, g1.m1, g1.m2.
+    constexpr int kCase2PairsPerN = 12;
+    constexpr int kCase2Group0MTiles = 2;
+    constexpr int kCase2Group1MTiles = 3;
+    constexpr int kCase2CtasPerNPair = kCase2Group0MTiles + kCase2Group1MTiles;  // 5
+    constexpr int kCase2TotalCtas = kCase2PairsPerN * kCase2CtasPerNPair;         // 60
+    const int cta_linear = static_cast<int>(blockIdx.x);
+    if (cta_linear >= kCase2TotalCtas) {
+      return;
+    }
+    const int n_pair = cta_linear / kCase2CtasPerNPair;
+    const int local = cta_linear - n_pair * kCase2CtasPerNPair;
+    tile_n = n_pair * UnrollN;
+    if (local < kCase2Group0MTiles) {
+      group_idx = 0;
+      tile_m = local;
+    } else {
+      group_idx = 1;
+      tile_m = local - kCase2Group0MTiles;
     }
   } else if constexpr (UseCase3InlineTnMajorMap && (CtaGroup == 1) && (UnrollN == 2)) {
     // Case3-only packed CTA map in tn_major order, inlined to avoid per-CTA global map loads:
@@ -4065,6 +4089,8 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
       parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_CASE2_SPECIALIZED_EPILOGUE", 0) != 0;
   const bool enable_case2_inline_tm_major_map =
       parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_CASE2_INLINE_TM_MAJOR_MAP", 0) != 0;
+  const bool enable_case2_inline_tn_major_map =
+      parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_CASE2_INLINE_TN_MAJOR_MAP", 0) != 0;
   const bool enable_case2_inline_warp0_mainloop =
       parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_CASE2_INLINE_WARP0_MAINLOOP", 0) != 0;
   const bool enable_case2_inline_rows_aligned32 =
@@ -4098,9 +4124,13 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
   const bool use_case2_specialized_epilogue =
       enable_case2_specialized_epilogue && (groups == 2) && (max_n_size == 3072) && (max_m_size == 320) &&
       (unroll_n == 2) && (cluster_dim_x == 1);
+  const bool use_case2_inline_tn_major_map =
+      enable_case2_inline_tn_major_map && (groups == 2) && (max_n_size == 3072) && (max_m_size == 320) &&
+      (unroll_n == 2) && (cluster_dim_x == 1) && assume_no_n_tail;
   const bool use_case2_inline_tm_major_map =
       enable_case2_inline_tm_major_map && (groups == 2) && (max_n_size == 3072) && (max_m_size == 320) &&
-      (unroll_n == 2) && (cluster_dim_x == 1) && assume_no_n_tail && cta_order_tm_major;
+      (unroll_n == 2) && (cluster_dim_x == 1) && assume_no_n_tail && cta_order_tm_major &&
+      (!use_case2_inline_tn_major_map);
   const bool use_case2_inline_tm_major_warp0_mainloop =
       use_case2_inline_tm_major_map && enable_case2_inline_warp0_mainloop;
   const bool use_case2_inline_tm_major_rows_aligned32 =
@@ -4799,13 +4829,13 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
   // packed-CTA mapping to avoid extra early-return blocks for small M/N groups.
   constexpr int kCase2InlineTotalCtas = 60;  // g=2, m_tiles={2,3}, n_pairs=12 -> (2+3)*12
   constexpr int kCase3InlineTotalCtas = 64;  // g=2, m_tiles={1,3}, n_pairs=16 -> (1+3)*16
-  if (!use_case2_inline_tm_major_map && !use_case3_inline_tn_major_map) {
+  if (!use_case2_inline_tm_major_map && !use_case2_inline_tn_major_map && !use_case3_inline_tn_major_map) {
     TORCH_CHECK(cta_group_idx_map.numel() > 0, "cta_group_idx_map must be non-empty for non-cluster launch");
     TORCH_CHECK(cta_tile_m_map.numel() == cta_group_idx_map.numel(), "cta_tile_m_map length mismatch");
     TORCH_CHECK(cta_tile_n_map.numel() == cta_group_idx_map.numel(), "cta_tile_n_map length mismatch");
   }
   int total_ctas = static_cast<int>(cta_group_idx_map.numel());
-  if (use_case2_inline_tm_major_map) {
+  if (use_case2_inline_tm_major_map || use_case2_inline_tn_major_map) {
     total_ctas = kCase2InlineTotalCtas;
   } else if (use_case3_inline_tn_major_map) {
     total_ctas = kCase3InlineTotalCtas;
@@ -4814,7 +4844,7 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
 
 #if NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS == 512
   if (unroll_n == 2) {
-    if (use_case2_inline_tm_major_map) {
+    if (use_case2_inline_tm_major_map || use_case2_inline_tn_major_map) {
       auto launch_case2_inline = [&](auto kernel_fn) {
         configure_kernel_launch_attrs(kernel_fn, max_shared_optin, false);
         kernel_fn<<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
@@ -4855,7 +4885,10 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
             /*cluster_dim_x=*/1);
       };
 
-      if (use_case2_inline_tm_major_rows_aligned32) {
+      if (use_case2_inline_tn_major_map) {
+        launch_case2_inline(
+            nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true, false, false, true, false, false, false, false, true>);
+      } else if (use_case2_inline_tm_major_rows_aligned32) {
         if (use_case2_inline_tm_major_warp0_mainloop) {
           launch_case2_inline(
               nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true, true, true, true, false, false, true>);

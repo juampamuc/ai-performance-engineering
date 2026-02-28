@@ -23,6 +23,7 @@ _DEFAULT_CASE2_RESERVE_BYTES = 12 * 1024
 _DEFAULT_CASE2_S5_RESERVE_BYTES = 20 * 1024
 _DEFAULT_CASE2_NVF4_RESERVE_BYTES = 8 * 1024
 _DEFAULT_CASE3_RESERVE_BYTES = 6 * 1024
+_DEFAULT_CASE3_NVF4_RESERVE_BYTES = 8 * 1024
 _DEFAULT_N192_CASE2_RESERVE_BYTES = 10 * 1024
 _DEFAULT_N192_CASE3_RESERVE_BYTES = 6 * 1024
 _EXT_BY_NAME: dict[str, object] = {}
@@ -61,6 +62,7 @@ def _resolve_extension_name(
     case2_s5_reserve_bytes: int,
     case2_nvf4_reserve_bytes: int,
     case3_reserve_bytes: int,
+    case3_nvf4_reserve_bytes: int,
     n192_case2_reserve_bytes: int,
     n192_case3_reserve_bytes: int,
 ) -> str:
@@ -77,6 +79,8 @@ def _resolve_extension_name(
         parts.append(f"c2nvf4r{int(case2_nvf4_reserve_bytes)}")
     if int(case3_reserve_bytes) != int(_DEFAULT_CASE3_RESERVE_BYTES):
         parts.append(f"c3r{int(case3_reserve_bytes)}")
+    if int(case3_nvf4_reserve_bytes) != int(_DEFAULT_CASE3_NVF4_RESERVE_BYTES):
+        parts.append(f"c3nvf4r{int(case3_nvf4_reserve_bytes)}")
     if int(n192_case2_reserve_bytes) != int(_DEFAULT_N192_CASE2_RESERVE_BYTES):
         parts.append(f"n192c2r{int(n192_case2_reserve_bytes)}")
     if int(n192_case3_reserve_bytes) != int(_DEFAULT_N192_CASE3_RESERVE_BYTES):
@@ -113,6 +117,10 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         "AISP_NVFP4_GROUP_GEMM_1SM_N128_CASE3_RESERVE_BYTES",
         _DEFAULT_CASE3_RESERVE_BYTES,
     )
+    case3_nvf4_reserve_bytes = _read_nonnegative_int_env(
+        "AISP_NVFP4_GROUP_GEMM_1SM_N128_CASE3_NVF4_RESERVE_BYTES",
+        _DEFAULT_CASE3_NVF4_RESERVE_BYTES,
+    )
     n192_case2_reserve_bytes = _read_nonnegative_int_env(
         "AISP_NVFP4_GROUP_GEMM_1SM_N192_CASE2_RESERVE_BYTES",
         _DEFAULT_N192_CASE2_RESERVE_BYTES,
@@ -128,6 +136,7 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         case2_s5_reserve_bytes,
         case2_nvf4_reserve_bytes,
         case3_reserve_bytes,
+        case3_nvf4_reserve_bytes,
         n192_case2_reserve_bytes,
         n192_case3_reserve_bytes,
     )
@@ -168,6 +177,7 @@ def load_cutlass_nvfp4_grouped_gemm_sm100(*, verbose: bool = False) -> object:
         f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE2_S5_RESERVE_BYTES={int(case2_s5_reserve_bytes)}",
         f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE2_NVF4_RESERVE_BYTES={int(case2_nvf4_reserve_bytes)}",
         f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE3_RESERVE_BYTES={int(case3_reserve_bytes)}",
+        f"-DAISP_NVFP4_GROUP_GEMM_1SM_N128_CASE3_NVF4_RESERVE_BYTES={int(case3_nvf4_reserve_bytes)}",
         f"-DAISP_NVFP4_GROUP_GEMM_1SM_N192_CASE2_RESERVE_BYTES={int(n192_case2_reserve_bytes)}",
         f"-DAISP_NVFP4_GROUP_GEMM_1SM_N192_CASE3_RESERVE_BYTES={int(n192_case3_reserve_bytes)}",
     ]

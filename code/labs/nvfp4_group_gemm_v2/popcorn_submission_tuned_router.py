@@ -66,15 +66,15 @@ _CASE_DEFAULT_TUNABLES: dict[int, dict[str, int]] = {
     0: {"cluster_m": 2, "cluster_n": 1, "raster_order": 2, "use_pdl": 1, "max_swizzle": 8},
     1: {"cluster_m": 2, "cluster_n": 1, "raster_order": 2, "use_pdl": 0, "max_swizzle": 8},
     # Case2/3 tuned defaults from strict-verify ABAB.
-    2: {"cluster_m": 1, "cluster_n": 2, "raster_order": 0, "use_pdl": 0, "max_swizzle": 16},
+    2: {"cluster_m": 1, "cluster_n": 2, "raster_order": 2, "use_pdl": 1, "max_swizzle": 16},
     3: {"cluster_m": 1, "cluster_n": 2, "raster_order": 0, "use_pdl": 0, "max_swizzle": 8},
 }
 
 _CASE_DEFAULT_VARIANTS: dict[int, str] = {
     0: "2sm",
     1: "2sm",
-    2: "1sm_n128_case23_s4",
-    3: "1sm_n128_case23_s4",
+    2: "1sm_n128_case2_nvf4",
+    3: "1sm_n128_case3",
 }
 
 
@@ -409,7 +409,7 @@ def _build_runtime_ctx(data: tuple[Any, ...], case_idx: int, variant: str, tunab
         "graph_obj": graph_obj,
         "group_count": int(len(abc_tensors)),
         # Fast path: if the same input object is replayed, pointer retarget is unnecessary.
-        "last_data_id": int(id(data)),
+        "last_data_ref": data,
     }
 
 
@@ -456,8 +456,11 @@ _CASE_SIG_MAP = _build_case_signature_map()
 _CASE_FAST_MAP = _build_fast_case_map()
 _CUDA_AVAILABLE = torch.cuda.is_available()
 _USE_NATIVE_PTR_UPDATE = _env_bool("AISP_NVFP4_GROUP_GEMM_NATIVE_PTR_UPDATE", True)
+# Keep same-data ptr-skip enabled by default for static replay performance.
 _SKIP_PTR_UPDATE_ON_SAME_DATA = _env_bool("AISP_NVFP4_GROUP_GEMM_SKIP_PTR_UPDATE_ON_SAME_DATA", True)
 _SINGLE_SLOT_FAST = _env_bool("AISP_NVFP4_GROUP_GEMM_SINGLE_SLOT_FAST", True)
+# Multi-entry data cache is net-positive in fresh-input ABAB and neutral/slightly positive in static ABAB.
+_ENABLE_DATA_FAST_CACHE = _env_bool("AISP_NVFP4_GROUP_GEMM_ENABLE_DATA_FAST_CACHE", True)
 _MAX_RUNTIME_CACHE_ENTRIES = 16
 _RUNTIME_CACHE_ORDER: list[tuple[Any, ...]] = []
 _RUNTIME_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
@@ -549,18 +552,19 @@ def custom_kernel(data):
         return _LAST_OUTPUTS
 
     data_id = int(id(data))
-    fast_entry = _DATA_FAST_CACHE.get(data_id)
-    if fast_entry is not None:
-        cached_data, cached_runtime_ctx, cached_outputs = fast_entry
-        if (cached_data is data) and (_SKIP_PTR_UPDATE_ON_SAME_DATA):
-            if _SINGLE_SLOT_FAST:
-                _LAST_DATA_REF = data
-                _LAST_RUNTIME_CTX = cached_runtime_ctx
-                _LAST_OUTPUTS = cached_outputs
-                _LAST_DATA_ID = data_id
-            _run_runtime(cached_runtime_ctx)
-            return cached_outputs
-        _DATA_FAST_CACHE.pop(data_id, None)
+    if _SKIP_PTR_UPDATE_ON_SAME_DATA and _ENABLE_DATA_FAST_CACHE:
+        fast_entry = _DATA_FAST_CACHE.get(data_id)
+        if fast_entry is not None:
+            cached_data, cached_runtime_ctx, cached_outputs = fast_entry
+            if cached_data is data:
+                if _SINGLE_SLOT_FAST:
+                    _LAST_DATA_REF = data
+                    _LAST_RUNTIME_CTX = cached_runtime_ctx
+                    _LAST_OUTPUTS = cached_outputs
+                    _LAST_DATA_ID = data_id
+                _run_runtime(cached_runtime_ctx)
+                return cached_outputs
+            _DATA_FAST_CACHE.pop(data_id, None)
 
     problem_sizes = data[3]
     if len(problem_sizes) == 0:
@@ -590,14 +594,15 @@ def custom_kernel(data):
         _runtime_cache_insert(cache_key)
     else:
         data_id = int(id(data))
-        if (not _SKIP_PTR_UPDATE_ON_SAME_DATA) or int(runtime_ctx.get("last_data_id", -1)) != data_id:
+        if (not _SKIP_PTR_UPDATE_ON_SAME_DATA) or (runtime_ctx.get("last_data_ref") is not data):
             _update_runtime_ptrs(runtime_ctx, data)
-            runtime_ctx["last_data_id"] = data_id
+            runtime_ctx["last_data_ref"] = data
     abc_tensors = data[0]
     outputs = [abc_tensors[i][2] for i in range(len(abc_tensors))]
-    _DATA_FAST_CACHE[data_id] = (data, runtime_ctx, outputs)
-    _data_fast_cache_insert(data_id)
-    if _SINGLE_SLOT_FAST:
+    if _SKIP_PTR_UPDATE_ON_SAME_DATA and _ENABLE_DATA_FAST_CACHE:
+        _DATA_FAST_CACHE[data_id] = (data, runtime_ctx, outputs)
+        _data_fast_cache_insert(data_id)
+    if _SINGLE_SLOT_FAST and _SKIP_PTR_UPDATE_ON_SAME_DATA:
         _LAST_DATA_REF = data
         _LAST_RUNTIME_CTX = runtime_ctx
         _LAST_OUTPUTS = outputs
