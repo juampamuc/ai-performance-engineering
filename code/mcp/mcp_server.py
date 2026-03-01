@@ -4996,19 +4996,45 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
     if not benchmarks:
         return make_error("Benchmark file contains no results", include_context, context_level, data_file=str(data_path))
 
+    def _status_bucket(status: Any) -> str:
+        normalized = str(status or "").strip().lower()
+        if normalized in {"success", "ok"}:
+            normalized = "succeeded"
+        elif normalized in {"skip"}:
+            normalized = "skipped"
+        elif normalized in {"error"}:
+            normalized = "failed"
+        if normalized.startswith("failed_"):
+            return "failed"
+        if normalized in {"succeeded", "failed", "skipped"}:
+            return normalized
+        return normalized or "unknown"
+
+    status_counts_raw: Dict[str, int] = {}
+    for b in benchmarks:
+        raw = str(b.get("status", "unknown")).strip().lower() or "unknown"
+        status_counts_raw[raw] = status_counts_raw.get(raw, 0) + 1
+
     # Analyze results
     total = len(benchmarks)
-    passed = sum(1 for b in benchmarks if b.get("speedup", 0) >= 1.0)
-    failed = total - passed
+    passed = sum(1 for b in benchmarks if _status_bucket(b.get("status")) == "succeeded")
+    failed = sum(1 for b in benchmarks if _status_bucket(b.get("status")) == "failed")
+    skipped = sum(1 for b in benchmarks if _status_bucket(b.get("status")) == "skipped")
 
     # Find regressions and improvements
     regressions = sorted(
-        [b for b in benchmarks if b.get("speedup", 1.0) < 0.95],
+        [
+            b for b in benchmarks
+            if _status_bucket(b.get("status")) == "succeeded" and b.get("speedup", 1.0) < 0.95
+        ],
         key=lambda x: x.get("speedup", 1.0)
     )[:10]
 
     improvements = sorted(
-        [b for b in benchmarks if b.get("speedup", 1.0) > 1.05],
+        [
+            b for b in benchmarks
+            if _status_bucket(b.get("status")) == "succeeded" and b.get("speedup", 1.0) > 1.05
+        ],
         key=lambda x: x.get("speedup", 1.0),
         reverse=True
     )[:10]
@@ -5082,6 +5108,10 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
             "total_benchmarks": total,
             "passed": passed,
             "failed": failed,
+            "skipped": skipped,
+            "failure_classes": {
+                k: v for k, v in status_counts_raw.items() if k.startswith("failed_") or k == "failed"
+            },
             "pass_rate": f"{(passed / total) * 100:.1f}%" if total > 0 else "N/A",
             "avg_speedup": sum(b.get("speedup", 1.0) for b in benchmarks) / total if total > 0 else 0,
         },
@@ -8648,8 +8678,16 @@ def tool_job_status(params: Dict[str, Any]) -> Dict[str, Any]:
     has_progress = bool(progress_payload)
     note_text = str(payload.get("note", "")).lower()
     waiting_for_queue_runner = "waiting for mcp queue runner" in note_text
+    running_via_queue_runner = "running via mcp queue runner" in note_text
 
-    if reported_status == "running" and (waiting_for_queue_runner or (not run_dir_exists and not has_progress)):
+    queue_managed_tools = {"run_benchmarks", "profile_nsys", "profile_ncu", "profile_torch", "profile_hta"}
+    queue_managed_job = str(payload.get("tool", "") or "") in queue_managed_tools
+
+    if reported_status == "running" and (
+        waiting_for_queue_runner
+        or (queue_managed_job and (not has_progress) and (not running_via_queue_runner))
+        or ((not run_dir_exists and not has_progress) and (not running_via_queue_runner))
+    ):
         effective_status = "queued"
     elif reported_status == "queued" and has_progress:
         effective_status = "running"

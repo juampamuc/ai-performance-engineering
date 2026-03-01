@@ -134,3 +134,52 @@ def test_job_status_queued_with_progress_reports_effective_running(tmp_path: Pat
     finally:
         with store._lock:
             store._store.pop(job_id, None)
+
+
+def test_job_status_running_via_queue_runner_keeps_running_without_run_dir(tmp_path: Path) -> None:
+    store = mcp_server.JOB_STORE
+    job_id = f"run_benchmarks-{uuid.uuid4().hex[:8]}"
+    run_dir = tmp_path / "artifacts" / "pending_run_dir"
+    with store._lock:
+        store._store[job_id] = {
+            "job_id": job_id,
+            "tool": "run_benchmarks",
+            "status": "running",
+            "submitted_at": time.time(),
+            "run_id": "run_pending",
+            "run_dir": str(run_dir),
+            "progress_path": str(run_dir / "progress" / "run_progress.json"),
+            "note": "Running via MCP queue runner.",
+        }
+    try:
+        payload = mcp_server.tool_job_status({"job_id": job_id})
+        assert payload["status"] == "running"
+        assert "reported_status" not in payload
+    finally:
+        with store._lock:
+            store._store.pop(job_id, None)
+
+
+def test_job_status_running_without_progress_with_existing_run_dir_reports_queued(tmp_path: Path) -> None:
+    store = mcp_server.JOB_STORE
+    job_id = f"run_benchmarks-{uuid.uuid4().hex[:8]}"
+    run_dir = tmp_path / "artifacts" / "existing_run_dir"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with store._lock:
+        store._store[job_id] = {
+            "job_id": job_id,
+            "tool": "run_benchmarks",
+            "status": "running",
+            "submitted_at": time.time(),
+            "run_id": "run_existing_dir",
+            "run_dir": str(run_dir),
+            "progress_path": str(run_dir / "progress" / "run_progress.json"),
+            "note": "Poll job status to track completion.",
+        }
+    try:
+        payload = mcp_server.tool_job_status({"job_id": job_id})
+        assert payload["status"] == "queued"
+        assert payload["reported_status"] == "running"
+    finally:
+        with store._lock:
+            store._store.pop(job_id, None)
