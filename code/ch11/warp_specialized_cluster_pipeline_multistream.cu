@@ -67,30 +67,39 @@ extern "C" __global__ void warp_specialized_cluster_pipeline(
     using pipe_state = cuda::pipeline_shared_state<cuda::thread_scope_block, 1>;
     __shared__ alignas(pipe_state) unsigned char pipe_storage[sizeof(pipe_state)];
     auto* state = reinterpret_cast<pipe_state*>(pipe_storage);
+    if (threadIdx.x == 0) {
+        new (state) pipe_state();
+    }
+    cta.sync();
     auto pipe = cuda::make_pipeline(cta, state);
+    auto warp = cg::tiled_partition<32>(cta);
 
     const int lane_id = threadIdx.x & 31;
     const int warp_id = threadIdx.x >> 5;
     const int cluster_rank = cluster.block_rank();
     const dim3 cluster_dims = cluster.dim_blocks();
     const int blocks_in_cluster = cluster_dims.x * cluster_dims.y * cluster_dims.z;
+    constexpr size_t tile_bytes = static_cast<size_t>(TILE_ELEMS) * sizeof(float);
 
     for (int tile = blockIdx.x / cluster_dims.x; tile < numTiles;
          tile += gridDim.x / cluster_dims.x) {
         const size_t offset = static_cast<size_t>(tile) * TILE_ELEMS;
 
-        if (cluster_rank == 0 && warp_id == 0) {
+        if (cluster_rank == 0) {
+            // Block-scoped pipeline collectives must be called uniformly by the block.
             pipe.producer_acquire();
-            cuda::memcpy_async(cta,
-                               A_tile_local,
-                               A_global + offset,
-                               TILE_ELEMS * sizeof(float),
-                               pipe);
-            cuda::memcpy_async(cta,
-                               B_tile_local,
-                               B_global + offset,
-                               TILE_ELEMS * sizeof(float),
-                               pipe);
+            if (warp_id == 0) {
+                cuda::memcpy_async(warp,
+                                   A_tile_local,
+                                   A_global + offset,
+                                   cuda::aligned_size_t<16>(tile_bytes),
+                                   pipe);
+                cuda::memcpy_async(warp,
+                                   B_tile_local,
+                                   B_global + offset,
+                                   cuda::aligned_size_t<16>(tile_bytes),
+                                   pipe);
+            }
             pipe.producer_commit();
             pipe.consumer_wait();
             pipe.consumer_release();
@@ -165,6 +174,24 @@ void launch_warp_specialized_cluster_pipeline_multistream(
         cudaFuncAttributeNonPortableClusterSizeAllowed,
         1));
 
+    const size_t shmemBytes = 3ull * TILE_ELEMS * sizeof(float);
+    int max_dynamic_smem = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(
+        &max_dynamic_smem,
+        cudaDevAttrMaxSharedMemoryPerBlockOptin,
+        device));
+    if (shmemBytes > static_cast<size_t>(max_dynamic_smem)) {
+        std::fprintf(stderr,
+                     "Requested shared memory (%zu bytes) exceeds device opt-in limit (%d bytes).\n",
+                     shmemBytes,
+                     max_dynamic_smem);
+        return;
+    }
+    CUDA_CHECK(cudaFuncSetAttribute(
+        warp_specialized_cluster_pipeline,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        static_cast<int>(shmemBytes)));
+
     std::vector<cudaStream_t> streams(numStreams);
     for (auto& stream : streams) {
         NVTX_RANGE("tile");
@@ -173,7 +200,6 @@ void launch_warp_specialized_cluster_pipeline_multistream(
 
     const int blocksPerGrid = std::max(CLUSTER_BLOCKS, prop.multiProcessorCount * CLUSTER_BLOCKS);
     const dim3 blockDim(96);
-    const size_t shmemBytes = 3ull * TILE_ELEMS * sizeof(float);
 
     cudaLaunchAttribute attr[1]{};
     attr[0].id = cudaLaunchAttributeClusterDimension;
