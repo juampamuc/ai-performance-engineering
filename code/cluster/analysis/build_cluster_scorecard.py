@@ -41,6 +41,7 @@ def _detect_labels(structured_dir: Path, run_id: str) -> List[str]:
     suffixes = [
         "_gemm_gpu_sanity.csv",
         "_vllm_serve_sweep.csv",
+        "_vllm_serve_slo_goodput.json",
         "_nvbandwidth.json",
         "_gpu_stream.json",
         "_fio.json",
@@ -126,6 +127,15 @@ def _label_metrics(structured_dir: Path, run_id: str, label: str) -> Dict[str, A
                 (last["p99_ttft_ms"] / first["p99_ttft_ms"]) if first["p99_ttft_ms"] > 0 else 0.0
             )
 
+    vllm_slo_json = structured_dir / f"{run_id}_{label}_vllm_serve_slo_goodput.json"
+    if vllm_slo_json.exists():
+        payload = _load_json(vllm_slo_json)
+        summary = payload.get("summary") or {}
+        out["vllm_slo_max_goodput_tok_s"] = _float(summary.get("max_goodput_tok_s"))
+        out["vllm_slo_max_goodput_req_s"] = _float(summary.get("max_goodput_req_s"))
+        out["vllm_slo_goodput_efficiency_tok_ratio"] = _float(summary.get("goodput_efficiency_tok_ratio"))
+        out["vllm_slo_knee_concurrency"] = _float(summary.get("knee_concurrency"))
+
     fio_json = structured_dir / f"{run_id}_{label}_fio.json"
     if fio_json.exists():
         payload = _load_json(fio_json).get("results") or {}
@@ -150,6 +160,7 @@ def _classify_bottleneck(summary: Dict[str, Any]) -> Dict[str, Any]:
     hbm_gbps = _float(summary.get("nvbandwidth_hbm_gbps"))
     gemm_tflops = _float(summary.get("gemm_max_tflops"))
     pcie_h2d = _float(summary.get("nvbandwidth_pcie_h2d_gbps"))
+    goodput_eff = _float(summary.get("vllm_goodput_efficiency_tok_ratio"))
 
     if comm_scale > 0 and comm_scale < 0.65:
         bottleneck_type = "communication-bound"
@@ -163,12 +174,17 @@ def _classify_bottleneck(summary: Dict[str, Any]) -> Dict[str, Any]:
                 "Profile collective overlap with compute using Nsight Systems NVTX ranges.",
             ]
         )
-    elif vllm_ttft_ratio >= 3.0 and vllm_gain <= 2.2:
+    elif (goodput_eff > 0 and goodput_eff < 0.60) or (vllm_ttft_ratio >= 3.0 and vllm_gain <= 2.2):
         bottleneck_type = "host-bound"
-        confidence = "high"
-        reasons.append(
-            f"vLLM tail latency knee is severe (p99 TTFT ratio={vllm_ttft_ratio:.2f}) while throughput gain is limited ({vllm_gain:.2f}x)."
-        )
+        confidence = "high" if goodput_eff > 0 and goodput_eff < 0.60 else "medium"
+        if goodput_eff > 0:
+            reasons.append(
+                f"Only {goodput_eff:.2f} of peak token throughput meets SLO (goodput efficiency), indicating host/scheduler latency pressure."
+            )
+        if vllm_ttft_ratio > 0:
+            reasons.append(
+                f"vLLM tail latency growth is steep (p99 TTFT ratio={vllm_ttft_ratio:.2f}) with limited throughput gain ({vllm_gain:.2f}x)."
+            )
         recommendations.extend(
             [
                 "Inspect scheduler/data-path overhead and CPU-side batching limits.",
@@ -255,6 +271,9 @@ def _build_markdown(payload: Dict[str, Any]) -> str:
     lines.append(f"| Host transfer | nvbandwidth H2D GB/s | `{_fmt(summary.get('nvbandwidth_pcie_h2d_gbps'), 1)}` |")
     lines.append(f"| Workload | vLLM throughput gain ratio | `{_fmt(summary.get('vllm_throughput_gain_ratio'), 2)}` |")
     lines.append(f"| Workload | vLLM p99 TTFT ratio | `{_fmt(summary.get('vllm_p99_ttft_ratio'), 2)}` |")
+    lines.append(f"| Workload | vLLM max SLO goodput tok/s | `{_fmt(summary.get('vllm_max_goodput_tok_s'), 2)}` |")
+    lines.append(f"| Workload | vLLM goodput efficiency ratio | `{_fmt(summary.get('vllm_goodput_efficiency_tok_ratio'), 2)}` |")
+    lines.append(f"| Workload | vLLM knee concurrency | `{_fmt(summary.get('vllm_knee_concurrency'), 0)}` |")
     lines.append("")
     lines.append("## Bottleneck Classification")
     lines.append("")
@@ -276,12 +295,12 @@ def _build_markdown(payload: Dict[str, Any]) -> str:
     lines.append("## Per-Node Metrics")
     lines.append("")
     lines.append(
-        "| Label | GEMM max TFLOPS | nvbandwidth HBM GB/s | STREAM triad GB/s | vLLM tok/s gain | vLLM p99 TTFT ratio | fio seq read MB/s | fio seq write MB/s |"
+        "| Label | GEMM max TFLOPS | nvbandwidth HBM GB/s | STREAM triad GB/s | vLLM tok/s gain | vLLM p99 TTFT ratio | vLLM max SLO goodput tok/s | vLLM knee concurrency | fio seq read MB/s | fio seq write MB/s |"
     )
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in payload.get("per_label_metrics", []):
         lines.append(
-            f"| `{row.get('label','')}` | `{_fmt(row.get('gemm_max_tflops'), 1)}` | `{_fmt(row.get('nvbandwidth_hbm_gbps'), 1)}` | `{_fmt(row.get('gpu_stream_triad_gbps'), 1)}` | `{_fmt(row.get('vllm_throughput_gain_ratio'), 2)}` | `{_fmt(row.get('vllm_p99_ttft_ratio'), 2)}` | `{_fmt(row.get('fio_seq_read_mb_s'), 1)}` | `{_fmt(row.get('fio_seq_write_mb_s'), 1)}` |"
+            f"| `{row.get('label','')}` | `{_fmt(row.get('gemm_max_tflops'), 1)}` | `{_fmt(row.get('nvbandwidth_hbm_gbps'), 1)}` | `{_fmt(row.get('gpu_stream_triad_gbps'), 1)}` | `{_fmt(row.get('vllm_throughput_gain_ratio'), 2)}` | `{_fmt(row.get('vllm_p99_ttft_ratio'), 2)}` | `{_fmt(row.get('vllm_slo_max_goodput_tok_s'), 2)}` | `{_fmt(row.get('vllm_slo_knee_concurrency'), 0)}` | `{_fmt(row.get('fio_seq_read_mb_s'), 1)}` | `{_fmt(row.get('fio_seq_write_mb_s'), 1)}` |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -335,6 +354,10 @@ def main() -> int:
         "nccl_multi_to_single_busbw_ratio": nccl_ratio if nccl_ratio > 0 else 0.0,
         "vllm_throughput_gain_ratio": _float(primary_row.get("vllm_throughput_gain_ratio")),
         "vllm_p99_ttft_ratio": _float(primary_row.get("vllm_p99_ttft_ratio")),
+        "vllm_max_goodput_tok_s": _float(primary_row.get("vllm_slo_max_goodput_tok_s")),
+        "vllm_max_goodput_req_s": _float(primary_row.get("vllm_slo_max_goodput_req_s")),
+        "vllm_goodput_efficiency_tok_ratio": _float(primary_row.get("vllm_slo_goodput_efficiency_tok_ratio")),
+        "vllm_knee_concurrency": _float(primary_row.get("vllm_slo_knee_concurrency")),
     }
     if summary["nvbandwidth_hbm_gbps"] > 0:
         summary["gpu_stream_to_hbm_ratio"] = summary["gpu_stream_triad_gbps"] / summary["nvbandwidth_hbm_gbps"]

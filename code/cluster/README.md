@@ -228,9 +228,13 @@ python3 scripts/write_manifest.py --run-id <run_id> --hosts node1,node2 --includ
 - `results/structured/<run_id>_<label>_vllm_serve_sweep.csv`
 - `results/structured/<run_id>_<label>_vllm_serve_sweep.jsonl`
 - `results/structured/<run_id>_<label>_vllm_serve_sweep_clock_lock.json`
+- `results/structured/<run_id>_<label>_vllm_serve_slo_goodput.json`
+- `results/structured/<run_id>_<label>_vllm_serve_slo_goodput.csv`
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.json` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.csv` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.jsonl` (when `--run-vllm-multinode`)
+- `results/structured/<run_id>_<leader_label>_vllm_multinode_slo_goodput.json` (when `--run-vllm-multinode`)
+- `results/structured/<run_id>_<leader_label>_vllm_multinode_slo_goodput.csv` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_leader_clock_lock.json` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<worker_label>_vllm_multinode_worker_clock_lock.json` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<label>_nvbandwidth.json` (when running `scripts/repro/run_nvbandwidth_bundle.sh`)

@@ -29,7 +29,7 @@ Runs a reusable "field report" eval suite:
   18) Optional: checkpoint-like I/O benchmark (all nodes)
   19) Storage: fio (all nodes)
   20) Optional: nvbandwidth bundle (all nodes; auto-on for multi-node runs)
-  21) Plots (includes NVLink topology) + scorecard + manifest refresh + artifact validation
+  21) Plots (includes NVLink topology) + SLO-aware vLLM goodput analysis + scorecard + manifest refresh + artifact validation
 
 Notes:
   - GPU benchmarks are strict: they FAIL if GPU clock lock cannot be acquired.
@@ -92,6 +92,8 @@ Options:
   --osl <n>                vLLM output seq len (default: 1024)
   --concurrency-range "…"  vLLM concurrencies (default: "32 64 128 256 512")
   --port <port>            vLLM server port (default: 8888)
+  --vllm-slo-p99-ttft-ms <ms>  SLO threshold for vLLM p99 TTFT (default: 2000)
+  --vllm-slo-p99-tpot-ms <ms>  SLO threshold for vLLM p99 TPOT (default: 200)
   --run-vllm-multinode     Force-enable 2-node vLLM serving benchmark via Ray
   --skip-vllm-multinode    Force-disable 2-node vLLM serving benchmark via Ray
   --vllm-multinode-concurrency <n>  Multinode vLLM max concurrency (single-point mode, default: 64)
@@ -287,6 +289,8 @@ ISL="1024"
 OSL="1024"
 CONCURRENCY_RANGE="32 64 128 256 512"
 PORT="8888"
+VLLM_SLO_P99_TTFT_MS="2000"
+VLLM_SLO_P99_TPOT_MS="200"
 RUN_VLLM_MULTINODE_MODE="auto"
 RUN_VLLM_MULTINODE=0
 VLLM_MULTINODE_CONCURRENCY="64"
@@ -457,6 +461,8 @@ while [[ $# -gt 0 ]]; do
     --osl) OSL="$2"; shift 2 ;;
     --concurrency-range) CONCURRENCY_RANGE="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    --vllm-slo-p99-ttft-ms) VLLM_SLO_P99_TTFT_MS="$2"; shift 2 ;;
+    --vllm-slo-p99-tpot-ms) VLLM_SLO_P99_TPOT_MS="$2"; shift 2 ;;
     --run-vllm-multinode) RUN_VLLM_MULTINODE_MODE="on"; shift ;;
     --skip-vllm-multinode) RUN_VLLM_MULTINODE_MODE="off"; shift ;;
     --vllm-multinode-concurrency) VLLM_MULTINODE_CONCURRENCY="$2"; shift 2 ;;
@@ -651,6 +657,18 @@ if ! [[ "$GPU_STREAM_WARMUP" =~ ^[0-9]+$ ]]; then
 fi
 if [[ "$GPU_STREAM_DTYPE" != "fp32" && "$GPU_STREAM_DTYPE" != "fp16" && "$GPU_STREAM_DTYPE" != "bf16" ]]; then
   echo "ERROR: --gpu-stream-dtype must be fp32, fp16, or bf16 (got: ${GPU_STREAM_DTYPE})" >&2
+  exit 2
+fi
+if ! python3 - "$VLLM_SLO_P99_TTFT_MS" "$VLLM_SLO_P99_TPOT_MS" <<'PY'
+import sys
+
+ttft = float(sys.argv[1])
+tpot = float(sys.argv[2])
+if ttft <= 0 or tpot <= 0:
+    raise SystemExit(1)
+PY
+then
+  echo "ERROR: --vllm-slo-p99-ttft-ms and --vllm-slo-p99-tpot-ms must be positive numbers" >&2
   exit 2
 fi
 
@@ -1175,6 +1193,42 @@ PY
     done
   fi
 
+  path="${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep.csv"
+  if [[ ! -f "$path" ]]; then
+    echo "ERROR: missing required vLLM serve sweep artifact: ${path}" >&2
+    missing=1
+  fi
+  for suffix in "_vllm_serve_slo_goodput.json" "_vllm_serve_slo_goodput.csv"; do
+    path="${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
+    if [[ ! -f "$path" ]]; then
+      echo "ERROR: missing required vLLM SLO goodput artifact: ${path}" >&2
+      missing=1
+    fi
+  done
+  path="${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_slo_goodput.json"
+  if [[ -f "$path" ]]; then
+    if ! python3 - "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if payload.get("status") != "ok":
+    raise SystemExit(f"vLLM SLO goodput status is not ok: {payload.get('status')}")
+summary = payload.get("summary") or {}
+if int(summary.get("concurrency_points", 0)) <= 0:
+    raise SystemExit("vLLM SLO goodput concurrency_points is not positive")
+if float(summary.get("peak_total_tok_s", 0.0)) <= 0:
+    raise SystemExit("vLLM SLO goodput peak_total_tok_s is not positive")
+if float(summary.get("max_goodput_tok_s", 0.0)) < 0:
+    raise SystemExit("vLLM SLO goodput max_goodput_tok_s is negative")
+PY
+    then
+      echo "ERROR: invalid vLLM SLO goodput summary: ${path}" >&2
+      missing=1
+    fi
+  fi
+
   if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
     local leader_label worker_label
     leader_label="$(label_for_index 0)"
@@ -1184,6 +1238,13 @@ PY
       path="${ROOT_DIR}/results/structured/${RUN_ID}_${leader_label}${suffix}"
       if [[ ! -f "$path" ]]; then
         echo "ERROR: missing required multinode vLLM artifact: ${path}" >&2
+        missing=1
+      fi
+    done
+    for suffix in "_vllm_multinode_slo_goodput.json" "_vllm_multinode_slo_goodput.csv"; do
+      path="${ROOT_DIR}/results/structured/${RUN_ID}_${leader_label}${suffix}"
+      if [[ ! -f "$path" ]]; then
+        echo "ERROR: missing required multinode vLLM SLO goodput artifact: ${path}" >&2
         missing=1
       fi
     done
@@ -1226,6 +1287,26 @@ if (metrics.get("total_token_throughput") or 0) <= 0:
 PY
       then
         echo "ERROR: invalid multinode vLLM summary: ${path}" >&2
+        missing=1
+      fi
+    fi
+
+    path="${ROOT_DIR}/results/structured/${RUN_ID}_${leader_label}_vllm_multinode_slo_goodput.json"
+    if [[ -f "$path" ]]; then
+      if ! python3 - "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if payload.get("status") != "ok":
+    raise SystemExit(f"multinode vLLM SLO goodput status is not ok: {payload.get('status')}")
+summary = payload.get("summary") or {}
+if int(summary.get("concurrency_points", 0)) <= 0:
+    raise SystemExit("multinode vLLM SLO goodput concurrency_points is not positive")
+PY
+      then
+        echo "ERROR: invalid multinode vLLM SLO goodput summary: ${path}" >&2
         missing=1
       fi
     fi
@@ -1311,6 +1392,7 @@ if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
   echo "NCCL_NVLS_ENABLE: ${NCCL_NVLS_ENABLE:-<unset>}"
 fi
 echo "vLLM: model=${MODEL} tp=${TP:-<auto>} isl=${ISL} osl=${OSL} conc='${CONCURRENCY_RANGE}' port=${PORT}"
+echo "vLLM(SLO): p99_ttft_ms<=${VLLM_SLO_P99_TTFT_MS} p99_tpot_ms<=${VLLM_SLO_P99_TPOT_MS}"
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
   echo "vLLM(multinode): enabled mode=${RUN_VLLM_MULTINODE_MODE} conc='${VLLM_MULTINODE_CONCURRENCY_VALUES[*]}' prompts=${VLLM_MULTINODE_NUM_PROMPTS:-<auto>} ray_port=${VLLM_MULTINODE_RAY_PORT} ray_timeout_s=${VLLM_MULTINODE_RAY_TIMEOUT} server_timeout_s=${VLLM_MULTINODE_SERVER_TIMEOUT} worker_startup_wait_s=${VLLM_MULTINODE_WORKER_STARTUP_WAIT} image=${VLLM_MULTINODE_IMAGE:-<auto>}"
 else
@@ -2063,6 +2145,20 @@ if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_s
     --input "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep.csv" \
     --out-dir "${ROOT_DIR}/docs/figures" \
     --run-id "${RUN_ID}_${PRIMARY_LABEL}"
+
+  run_step "analyze_vllm_slo_goodput" python3 "${ROOT_DIR}/analysis/analyze_vllm_slo_goodput.py" \
+    --input "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep.csv" \
+    --run-id "${RUN_ID}" \
+    --label "${PRIMARY_LABEL}" \
+    --slo-p99-ttft-ms "${VLLM_SLO_P99_TTFT_MS}" \
+    --slo-p99-tpot-ms "${VLLM_SLO_P99_TPOT_MS}" \
+    --output-json "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_slo_goodput.json" \
+    --output-csv "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_slo_goodput.csv"
+
+  run_step "plot_vllm_slo_goodput" python3 "${ROOT_DIR}/analysis/plot_vllm_goodput_slo.py" \
+    --input-json "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_slo_goodput.json" \
+    --out-dir "${ROOT_DIR}/docs/figures" \
+    --run-id "${RUN_ID}_${PRIMARY_LABEL}"
 fi
 
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
@@ -2070,6 +2166,20 @@ if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
   if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_serve.csv" ]]; then
     run_step "plot_vllm_serve_multinode" python3 "${ROOT_DIR}/analysis/plot_vllm_serve_sweep.py" \
       --input "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_serve.csv" \
+      --out-dir "${ROOT_DIR}/docs/figures" \
+      --run-id "${RUN_ID}_${vllm_multi_label}_multinode"
+
+    run_step "analyze_vllm_multinode_slo_goodput" python3 "${ROOT_DIR}/analysis/analyze_vllm_slo_goodput.py" \
+      --input "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_serve.csv" \
+      --run-id "${RUN_ID}" \
+      --label "${vllm_multi_label}_multinode" \
+      --slo-p99-ttft-ms "${VLLM_SLO_P99_TTFT_MS}" \
+      --slo-p99-tpot-ms "${VLLM_SLO_P99_TPOT_MS}" \
+      --output-json "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_slo_goodput.json" \
+      --output-csv "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_slo_goodput.csv"
+
+    run_step "plot_vllm_multinode_slo_goodput" python3 "${ROOT_DIR}/analysis/plot_vllm_goodput_slo.py" \
+      --input-json "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_slo_goodput.json" \
       --out-dir "${ROOT_DIR}/docs/figures" \
       --run-id "${RUN_ID}_${vllm_multi_label}_multinode"
   fi
