@@ -42,6 +42,7 @@ def _detect_labels(structured_dir: Path, run_id: str) -> List[str]:
         "_gemm_gpu_sanity.csv",
         "_vllm_serve_sweep.csv",
         "_vllm_serve_slo_goodput.json",
+        "_vllm_serve_request_rate_sweep.csv",
         "_nvbandwidth.json",
         "_gpu_stream.json",
         "_fio.json",
@@ -135,6 +136,29 @@ def _label_metrics(structured_dir: Path, run_id: str, label: str) -> Dict[str, A
         out["vllm_slo_max_goodput_req_s"] = _float(summary.get("max_goodput_req_s"))
         out["vllm_slo_goodput_efficiency_tok_ratio"] = _float(summary.get("goodput_efficiency_tok_ratio"))
         out["vllm_slo_knee_concurrency"] = _float(summary.get("knee_concurrency"))
+
+    vllm_rate_csv = structured_dir / f"{run_id}_{label}_vllm_serve_request_rate_sweep.csv"
+    if vllm_rate_csv.exists():
+        rows = _read_csv_rows(vllm_rate_csv)
+        parsed = []
+        for row in rows:
+            rate = _float(row.get("request_rate"), 0.0)
+            parsed.append(
+                {
+                    "request_rate": rate,
+                    "total_tok_s": _float(row.get("total_token_throughput")),
+                    "p99_ttft_ms": _float(row.get("p99_ttft_ms")),
+                    "p99_tpot_ms": _float(row.get("p99_tpot_ms")),
+                }
+            )
+        parsed = [r for r in parsed if r["request_rate"] > 0 and r["total_tok_s"] > 0]
+        parsed.sort(key=lambda r: r["request_rate"])
+        if parsed:
+            best = max(parsed, key=lambda r: r["total_tok_s"])
+            out["vllm_rate_max_total_tok_s"] = best["total_tok_s"]
+            out["vllm_rate_at_max_total_tok_s"] = best["request_rate"]
+            out["vllm_rate_p99_ttft_ms_at_max_total_tok_s"] = best["p99_ttft_ms"]
+            out["vllm_rate_p99_tpot_ms_at_max_total_tok_s"] = best["p99_tpot_ms"]
 
     fio_json = structured_dir / f"{run_id}_{label}_fio.json"
     if fio_json.exists():
@@ -274,6 +298,8 @@ def _build_markdown(payload: Dict[str, Any]) -> str:
     lines.append(f"| Workload | vLLM max SLO goodput tok/s | `{_fmt(summary.get('vllm_max_goodput_tok_s'), 2)}` |")
     lines.append(f"| Workload | vLLM goodput efficiency ratio | `{_fmt(summary.get('vllm_goodput_efficiency_tok_ratio'), 2)}` |")
     lines.append(f"| Workload | vLLM knee concurrency | `{_fmt(summary.get('vllm_knee_concurrency'), 0)}` |")
+    lines.append(f"| Workload | vLLM request-rate max tok/s | `{_fmt(summary.get('vllm_rate_max_total_tok_s'), 2)}` |")
+    lines.append(f"| Workload | vLLM request-rate at max tok/s | `{_fmt(summary.get('vllm_rate_at_max_total_tok_s'), 2)}` |")
     lines.append("")
     lines.append("## Bottleneck Classification")
     lines.append("")
@@ -358,6 +384,8 @@ def main() -> int:
         "vllm_max_goodput_req_s": _float(primary_row.get("vllm_slo_max_goodput_req_s")),
         "vllm_goodput_efficiency_tok_ratio": _float(primary_row.get("vllm_slo_goodput_efficiency_tok_ratio")),
         "vllm_knee_concurrency": _float(primary_row.get("vllm_slo_knee_concurrency")),
+        "vllm_rate_max_total_tok_s": _float(primary_row.get("vllm_rate_max_total_tok_s")),
+        "vllm_rate_at_max_total_tok_s": _float(primary_row.get("vllm_rate_at_max_total_tok_s")),
     }
     if summary["nvbandwidth_hbm_gbps"] > 0:
         summary["gpu_stream_to_hbm_ratio"] = summary["gpu_stream_triad_gbps"] / summary["nvbandwidth_hbm_gbps"]

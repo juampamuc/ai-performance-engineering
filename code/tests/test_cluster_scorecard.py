@@ -69,6 +69,13 @@ def test_cluster_scorecard_detects_memory_bound(tmp_path: Path) -> None:
         "test,1,128,64,8,80,1,650,1200,14,13,18,8,7,9,70,80,1100,1300,80,0\n",
         encoding="utf-8",
     )
+    # Request-rate sweep captures a secondary operating curve.
+    (structured / f"{run_id}_{label}_vllm_serve_request_rate_sweep.csv").write_text(
+        "model,tp,isl,osl,request_rate,max_concurrency,num_prompts,request_throughput,output_throughput,total_token_throughput,mean_ttft_ms,median_ttft_ms,p99_ttft_ms,mean_tpot_ms,median_tpot_ms,p99_tpot_ms,completed,failed\n"
+        "test,1,128,64,1,32,200,1,100,140,15,14,20,7,6,9,200,0\n"
+        "test,1,128,64,2,32,200,2,150,210,20,19,30,8,7,10,200,0\n",
+        encoding="utf-8",
+    )
 
     out_json = structured / f"{run_id}_cluster_scorecard.json"
     out_md = structured / f"{run_id}_cluster_scorecard.md"
@@ -92,3 +99,4 @@ def test_cluster_scorecard_detects_memory_bound(tmp_path: Path) -> None:
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     assert payload["bottleneck"]["bottleneck_type"] == "memory-bound"
     assert payload["summary"]["gpu_stream_to_hbm_ratio"] < 0.55
+    assert payload["summary"]["vllm_rate_max_total_tok_s"] == 210.0

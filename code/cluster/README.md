@@ -230,6 +230,11 @@ python3 scripts/write_manifest.py --run-id <run_id> --hosts node1,node2 --includ
 - `results/structured/<run_id>_<label>_vllm_serve_sweep_clock_lock.json`
 - `results/structured/<run_id>_<label>_vllm_serve_slo_goodput.json`
 - `results/structured/<run_id>_<label>_vllm_serve_slo_goodput.csv`
+- `results/structured/<run_id>_<label>_vllm_serve_request_rate_sweep.csv` (when `--run-vllm-request-rate-sweep`)
+- `results/structured/<run_id>_<label>_vllm_serve_request_rate_sweep.jsonl` (when `--run-vllm-request-rate-sweep`)
+- `results/structured/<run_id>_<label>_vllm_serve_request_rate_sweep_clock_lock.json` (when `--run-vllm-request-rate-sweep`)
+- `results/structured/<run_id>_<label>_vllm_request_rate_slo_goodput.json` (when `--run-vllm-request-rate-sweep`)
+- `results/structured/<run_id>_<label>_vllm_request_rate_slo_goodput.csv` (when `--run-vllm-request-rate-sweep`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.json` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.csv` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.jsonl` (when `--run-vllm-multinode`)
@@ -249,6 +254,8 @@ python3 scripts/write_manifest.py --run-id <run_id> --hosts node1,node2 --includ
 - `results/structured/<run_id>_<label>_nvlink_topology.json`
 - `results/structured/<run_id>_cluster_scorecard.json`
 - `results/structured/<run_id>_cluster_scorecard.md`
+- `results/structured/<run_id>_benchmark_coverage_analysis.json`
+- `results/structured/<run_id>_benchmark_coverage_analysis.md`
 - `results/structured/<run_id>_fp4_attestation_consistency.json` (when FP4 checks are enabled)
 
 ## Documentation Map

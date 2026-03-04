@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Run a vLLM online-serving request-rate sweep in the official vLLM container.
+
+Usage:
+  scripts/repro/run_vllm_serve_request_rate_sweep_container.sh [options]
+
+Options:
+  --run-id <id>                 RUN_ID prefix (default: YYYY-MM-DD)
+  --label <label>               Label for output paths (default: hostname)
+  --model <hf_model_id>         (default: openai/gpt-oss-120b)
+  --tp <n>                      Tensor parallel size (default: all visible GPUs)
+  --isl <n>                     Input sequence length (default: 1024)
+  --osl <n>                     Output sequence length (default: 1024)
+  --request-rate-range "..."    Space-separated request rates (default: "1 2 4 8 16")
+  --max-concurrency <n>         Max concurrency cap during request-rate sweep (default: 256)
+  --num-prompts <n>             Prompts per sweep point (default: max_concurrency*20)
+  --port <port>                 (default: 8888)
+  --image <docker_image>        (default: auto by architecture)
+  --detach                      Start the sweep container in detached mode.
+
+Env:
+  HF_TOKEN can be set to enable gated model downloads.
+EOF
+}
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUN_ID="$(date +%Y-%m-%d)"
+LABEL="$(hostname)"
+
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
+MODEL="${MODEL:-openai/gpt-oss-120b}"
+TP="${TP:-}"
+ISL="${ISL:-1024}"
+OSL="${OSL:-1024}"
+REQUEST_RATE_RANGE="${REQUEST_RATE_RANGE:-1 2 4 8 16}"
+MAX_CONCURRENCY="${MAX_CONCURRENCY:-256}"
+NUM_PROMPTS="${NUM_PROMPTS:-}"
+PORT="${PORT:-8888}"
+DETACH=0
+
+ORIG_ARGS=("$@")
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run-id) RUN_ID="$2"; shift 2 ;;
+    --label) LABEL="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --tp) TP="$2"; shift 2 ;;
+    --isl) ISL="$2"; shift 2 ;;
+    --osl) OSL="$2"; shift 2 ;;
+    --request-rate-range) REQUEST_RATE_RANGE="$2"; shift 2 ;;
+    --max-concurrency) MAX_CONCURRENCY="$2"; shift 2 ;;
+    --num-prompts) NUM_PROMPTS="$2"; shift 2 ;;
+    --port) PORT="$2"; shift 2 ;;
+    --image) CONTAINER_IMAGE="$2"; shift 2 ;;
+    --detach) DETACH=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+if ! [[ "$MAX_CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --max-concurrency must be a positive integer." >&2
+  exit 2
+fi
+if [[ -n "$NUM_PROMPTS" && ! "$NUM_PROMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --num-prompts must be a positive integer." >&2
+  exit 2
+fi
+if [[ -z "$NUM_PROMPTS" ]]; then
+  NUM_PROMPTS=$((MAX_CONCURRENCY * 20))
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "ERROR: docker not found" >&2
+  exit 1
+fi
+
+ARCH="$(uname -m)"
+if [[ -z "$CONTAINER_IMAGE" ]]; then
+  if [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+    CONTAINER_IMAGE="vllm/vllm-openai:cu130-nightly-aarch64"
+  else
+    CONTAINER_IMAGE="vllm/vllm-openai:cu130-nightly"
+  fi
+fi
+
+GPU_COUNT="$(nvidia-smi -L | wc -l | tr -d ' ')"
+if [[ -z "$TP" ]]; then
+  TP="$GPU_COUNT"
+fi
+if [[ "$TP" -gt "$GPU_COUNT" ]]; then
+  echo "WARNING: Requested TP=$TP but only $GPU_COUNT GPUs available. Using TP=$GPU_COUNT" >&2
+  TP="$GPU_COUNT"
+fi
+
+OUT_DIR="${ROOT_DIR}/results/raw/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep"
+mkdir -p "$OUT_DIR"
+
+MAX_MODEL_LEN=$((ISL + OSL + 256))
+
+STRUCT_DIR="${ROOT_DIR}/results/structured"
+mkdir -p "$STRUCT_DIR"
+LOCK_META_OUT="${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep_clock_lock.json"
+
+if [[ ! -S "/run/nvidia-persistenced/socket" ]]; then
+  if command -v systemctl >/dev/null 2>&1; then
+    if sudo -n true >/dev/null 2>&1; then
+      sudo systemctl start nvidia-persistenced >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+if [[ ! -S "/run/nvidia-persistenced/socket" ]]; then
+  echo "ERROR: /run/nvidia-persistenced/socket is missing." >&2
+  echo "Fix: sudo systemctl start nvidia-persistenced" >&2
+  exit 1
+fi
+
+# Enforce strict GPU clock locking for the entire sweep.
+if [[ "${AISP_CLOCK_LOCKED:-}" != "1" ]]; then
+  export RUN_ID LABEL
+  exec "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
+    --lock-meta-out "$LOCK_META_OUT" \
+    -- "$0" "${ORIG_ARGS[@]}"
+fi
+
+HF_CACHE_DIR="${HF_HOME:-$HOME/.cache/huggingface}"
+TIKTOKEN_CACHE="${HOME}/.cache/tiktoken_rs"
+VLLM_CACHE_DIR="${VLLM_CACHE_DIR:-$HOME/.cache/vllm}"
+FLASHINFER_CACHE_DIR="${FLASHINFER_CACHE_DIR:-$HOME/.cache/flashinfer}"
+mkdir -p "$HF_CACHE_DIR" "$TIKTOKEN_CACHE" "$VLLM_CACHE_DIR" "$FLASHINFER_CACHE_DIR"
+
+TIKTOKEN_VOCAB_FILE="${TIKTOKEN_CACHE}/fb374d419588a4632f3f557e76b4b70aebbca790"
+if [[ ! -f "$TIKTOKEN_VOCAB_FILE" ]]; then
+  echo "Downloading harmony tiktoken vocab file to ${TIKTOKEN_VOCAB_FILE}..."
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -O "$TIKTOKEN_VOCAB_FILE" https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken || true
+  else
+    curl -fsSL https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken -o "$TIKTOKEN_VOCAB_FILE" || true
+  fi
+fi
+
+HF_MOUNT=()
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  HF_MOUNT+=(-e "HF_TOKEN=${HF_TOKEN}" -e "HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}")
+fi
+
+read -r -a RATE_ARR <<<"$REQUEST_RATE_RANGE"
+for rate in "${RATE_ARR[@]}"; do
+  if ! python3 - "$rate" <<'PY'
+import sys
+val = float(sys.argv[1])
+if val <= 0:
+    raise SystemExit(1)
+PY
+  then
+    echo "ERROR: --request-rate-range contains non-positive value '${rate}'" >&2
+    exit 2
+  fi
+done
+
+echo "========================================"
+echo "vLLM Request-Rate Sweep (Containerized)"
+echo "========================================"
+echo "Date: $(date)"
+echo "Hostname: $(hostname)"
+echo "Architecture: $(uname -m)"
+echo "Container: $CONTAINER_IMAGE"
+echo ""
+echo "Model: $MODEL"
+echo "TP: $TP"
+echo "ISL: $ISL"
+echo "OSL: $OSL"
+echo "Max model len: $MAX_MODEL_LEN"
+echo "Request-rate range: ${RATE_ARR[*]}"
+echo "Max concurrency cap: $MAX_CONCURRENCY"
+echo "Num prompts: $NUM_PROMPTS"
+echo "Output dir: $OUT_DIR"
+echo ""
+
+echo "Pulling container (best-effort)..."
+docker pull "$CONTAINER_IMAGE" 2>/dev/null || echo "Using cached container"
+
+INNER="${ROOT_DIR}/scripts/repro/vllm_serve_request_rate_inner.sh"
+if [[ ! -f "$INNER" ]]; then
+  echo "Missing inner script at ${INNER}" >&2
+  exit 1
+fi
+
+LOG_PATH="${OUT_DIR}/rate_sweep_log.txt"
+
+DOCKER_ARGS=(
+  --gpus all
+  --ipc=host
+  --ulimit memlock=-1
+  --ulimit stack=67108864
+  --network host
+  -e TIKTOKEN_RS_CACHE_DIR=/root/.cache/tiktoken_rs
+  "${HF_MOUNT[@]}"
+  -v "$INNER":/sweep.sh:ro
+  -v "$OUT_DIR":/results
+  -v "$HF_CACHE_DIR":/root/.cache/huggingface
+  -v "$TIKTOKEN_CACHE":/root/.cache/tiktoken_rs
+  -v "$VLLM_CACHE_DIR":/root/.cache/vllm
+  -v "$FLASHINFER_CACHE_DIR":/root/.cache/flashinfer
+  --entrypoint bash
+  "$CONTAINER_IMAGE"
+)
+
+if [[ "$DETACH" -eq 1 ]]; then
+  safe_name="$(echo "vllm_rate_sweep_${RUN_ID}_${LABEL}" | tr -c '[:alnum:]_.' '_' )_$(date +%s)"
+  echo "Starting detached container (will still wait to keep GPU clocks locked): ${safe_name}"
+  docker run -d --name "$safe_name" \
+    "${DOCKER_ARGS[@]}" \
+    -lc "/sweep.sh \"$MODEL\" \"$TP\" \"$ISL\" \"$OSL\" \"$MAX_MODEL_LEN\" \"$PORT\" \"/results\" \"$MAX_CONCURRENCY\" \"$NUM_PROMPTS\" ${RATE_ARR[*]} > /results/rate_sweep_log.txt 2>&1"
+  tail -n +1 -F "$LOG_PATH" &
+  TAIL_PID=$!
+  rc="$(docker wait "$safe_name")"
+  kill "$TAIL_PID" 2>/dev/null || true
+  wait "$TAIL_PID" 2>/dev/null || true
+  docker rm "$safe_name" >/dev/null 2>&1 || true
+  if [[ "$rc" -ne 0 ]]; then
+    echo "ERROR: vLLM request-rate sweep container exited with code ${rc}" >&2
+    exit "$rc"
+  fi
+fi
+
+if [[ "$DETACH" -ne 1 ]]; then
+  docker run --rm "${DOCKER_ARGS[@]}" \
+    /sweep.sh \
+      "$MODEL" "$TP" "$ISL" "$OSL" "$MAX_MODEL_LEN" "$PORT" \
+      "/results" "$MAX_CONCURRENCY" "$NUM_PROMPTS" "${RATE_ARR[@]}" 2>&1 | tee "$LOG_PATH"
+fi
+
+if [[ -f "$OUT_DIR/rate_summary.txt" ]]; then
+  cp -f "$OUT_DIR/rate_summary.txt" "${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_request_rate_sweep_summary.txt"
+  echo "Wrote ${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_request_rate_sweep_summary.txt"
+fi
+if [[ -f "$OUT_DIR/rate_sweep_summary.csv" ]]; then
+  cp -f "$OUT_DIR/rate_sweep_summary.csv" "${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep.csv"
+  echo "Wrote ${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep.csv"
+fi
+if [[ -f "$OUT_DIR/rate_sweep_summary.jsonl" ]]; then
+  cp -f "$OUT_DIR/rate_sweep_summary.jsonl" "${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep.jsonl"
+  echo "Wrote ${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep.jsonl"
+fi
+
+echo "Wrote ${LOG_PATH}"

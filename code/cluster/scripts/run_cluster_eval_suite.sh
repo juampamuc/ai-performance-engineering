@@ -15,7 +15,7 @@ Runs a reusable "field report" eval suite:
   6) Benchmark A: NCCL all_reduce_perf (single-node + multi-node)
   7) Required: NCCL env sensitivity sweep (CROSS_NIC / QPS / CTAs)
   8) Optional: cluster health suite (iperf/IB/NCCL/torchdist, with optional GDR)
-  9) Benchmark B: vLLM online serving sweep (containerized, single-node)
+  9) Benchmark B: vLLM online serving sweep (containerized, single-node; optional request-rate sweep)
   10) Optional: vLLM multinode serving benchmark (Ray, 2-node; auto-on for multi-node runs)
   11) Benchmark C: BF16 GEMM per-GPU sanity (all nodes)
   12) Benchmark D: GPU STREAM-style memory behavior probe (all nodes)
@@ -91,6 +91,11 @@ Options:
   --isl <n>                vLLM input seq len (default: 1024)
   --osl <n>                vLLM output seq len (default: 1024)
   --concurrency-range "…"  vLLM concurrencies (default: "32 64 128 256 512")
+  --run-vllm-request-rate-sweep    Run single-node vLLM request-rate sweep (default: off)
+  --skip-vllm-request-rate-sweep   Skip single-node vLLM request-rate sweep
+  --vllm-request-rate-range "..."  Request-rate sweep values (default: "1 2 4 8 16")
+  --vllm-request-rate-max-concurrency <n>  Max concurrency cap for request-rate sweep (default: 256)
+  --vllm-request-rate-num-prompts <n>      Prompts per request-rate point (default: max_concurrency*20)
   --port <port>            vLLM server port (default: 8888)
   --vllm-slo-p99-ttft-ms <ms>  SLO threshold for vLLM p99 TTFT (default: 2000)
   --vllm-slo-p99-tpot-ms <ms>  SLO threshold for vLLM p99 TPOT (default: 200)
@@ -291,6 +296,10 @@ CONCURRENCY_RANGE="32 64 128 256 512"
 PORT="8888"
 VLLM_SLO_P99_TTFT_MS="2000"
 VLLM_SLO_P99_TPOT_MS="200"
+RUN_VLLM_REQUEST_RATE_SWEEP=0
+VLLM_REQUEST_RATE_RANGE="1 2 4 8 16"
+VLLM_REQUEST_RATE_MAX_CONCURRENCY="256"
+VLLM_REQUEST_RATE_NUM_PROMPTS=""
 RUN_VLLM_MULTINODE_MODE="auto"
 RUN_VLLM_MULTINODE=0
 VLLM_MULTINODE_CONCURRENCY="64"
@@ -460,6 +469,11 @@ while [[ $# -gt 0 ]]; do
     --isl) ISL="$2"; shift 2 ;;
     --osl) OSL="$2"; shift 2 ;;
     --concurrency-range) CONCURRENCY_RANGE="$2"; shift 2 ;;
+    --run-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=1; shift ;;
+    --skip-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=0; shift ;;
+    --vllm-request-rate-range) VLLM_REQUEST_RATE_RANGE="$2"; shift 2 ;;
+    --vllm-request-rate-max-concurrency) VLLM_REQUEST_RATE_MAX_CONCURRENCY="$2"; shift 2 ;;
+    --vllm-request-rate-num-prompts) VLLM_REQUEST_RATE_NUM_PROMPTS="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --vllm-slo-p99-ttft-ms) VLLM_SLO_P99_TTFT_MS="$2"; shift 2 ;;
     --vllm-slo-p99-tpot-ms) VLLM_SLO_P99_TPOT_MS="$2"; shift 2 ;;
@@ -670,6 +684,37 @@ PY
 then
   echo "ERROR: --vllm-slo-p99-ttft-ms and --vllm-slo-p99-tpot-ms must be positive numbers" >&2
   exit 2
+fi
+if ! [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" =~ ^[01]$ ]]; then
+  echo "ERROR: invalid request-rate sweep toggle: ${RUN_VLLM_REQUEST_RATE_SWEEP}" >&2
+  exit 2
+fi
+if ! [[ "$VLLM_REQUEST_RATE_MAX_CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --vllm-request-rate-max-concurrency must be a positive integer (got: ${VLLM_REQUEST_RATE_MAX_CONCURRENCY})" >&2
+  exit 2
+fi
+if [[ -n "$VLLM_REQUEST_RATE_NUM_PROMPTS" && ! "$VLLM_REQUEST_RATE_NUM_PROMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --vllm-request-rate-num-prompts must be a positive integer (got: ${VLLM_REQUEST_RATE_NUM_PROMPTS})" >&2
+  exit 2
+fi
+VLLM_REQUEST_RATE_RANGE="${VLLM_REQUEST_RATE_RANGE//,/ }"
+if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
+  if [[ -z "${VLLM_REQUEST_RATE_RANGE// }" ]]; then
+    echo "ERROR: --vllm-request-rate-range resolved to an empty list" >&2
+    exit 2
+  fi
+  for rate in $VLLM_REQUEST_RATE_RANGE; do
+    if ! python3 - "$rate" <<'PY'
+import sys
+val = float(sys.argv[1])
+if val <= 0:
+    raise SystemExit(1)
+PY
+    then
+      echo "ERROR: --vllm-request-rate-range contains non-positive value '${rate}'" >&2
+      exit 2
+    fi
+  done
 fi
 
 if [[ -n "$VLLM_MULTINODE_CONCURRENCY_RANGE" ]]; then
@@ -1228,6 +1273,52 @@ PY
       missing=1
     fi
   fi
+  if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
+    for suffix in "_vllm_serve_request_rate_sweep.csv" "_vllm_serve_request_rate_sweep.jsonl" "_vllm_serve_request_rate_sweep_clock_lock.json" "_vllm_request_rate_slo_goodput.json" "_vllm_request_rate_slo_goodput.csv"; do
+      path="${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
+      if [[ ! -f "$path" ]]; then
+        echo "ERROR: missing required vLLM request-rate artifact: ${path}" >&2
+        missing=1
+      fi
+    done
+    path="${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep.csv"
+    if [[ -f "$path" ]]; then
+      if ! python3 - "$path" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+rows = list(csv.DictReader(Path(sys.argv[1]).open("r", encoding="utf-8", newline="")))
+if not rows:
+    raise SystemExit("request-rate sweep csv has no rows")
+if not any(float((r.get("total_token_throughput") or 0.0)) > 0 for r in rows):
+    raise SystemExit("request-rate sweep total_token_throughput has no positive values")
+PY
+      then
+        echo "ERROR: invalid vLLM request-rate sweep csv: ${path}" >&2
+        missing=1
+      fi
+    fi
+    path="${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_request_rate_slo_goodput.json"
+    if [[ -f "$path" ]]; then
+      if ! python3 - "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if payload.get("status") != "ok":
+    raise SystemExit(f"request-rate SLO goodput status is not ok: {payload.get('status')}")
+summary = payload.get("summary") or {}
+if int(summary.get("request_rate_points", 0)) <= 0:
+    raise SystemExit("request-rate SLO goodput request_rate_points is not positive")
+PY
+      then
+        echo "ERROR: invalid vLLM request-rate SLO goodput summary: ${path}" >&2
+        missing=1
+      fi
+    fi
+  fi
 
   if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
     local leader_label worker_label
@@ -1361,6 +1452,16 @@ PY
     echo "ERROR: missing required scorecard artifact: ${path}" >&2
     missing=1
   fi
+  path="${ROOT_DIR}/results/structured/${RUN_ID}_benchmark_coverage_analysis.json"
+  if [[ ! -f "$path" ]]; then
+    echo "ERROR: missing required benchmark coverage artifact: ${path}" >&2
+    missing=1
+  fi
+  path="${ROOT_DIR}/results/structured/${RUN_ID}_benchmark_coverage_analysis.md"
+  if [[ ! -f "$path" ]]; then
+    echo "ERROR: missing required benchmark coverage artifact: ${path}" >&2
+    missing=1
+  fi
 
   if [[ "$missing" -ne 0 ]]; then
     return 1
@@ -1393,6 +1494,11 @@ if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
 fi
 echo "vLLM: model=${MODEL} tp=${TP:-<auto>} isl=${ISL} osl=${OSL} conc='${CONCURRENCY_RANGE}' port=${PORT}"
 echo "vLLM(SLO): p99_ttft_ms<=${VLLM_SLO_P99_TTFT_MS} p99_tpot_ms<=${VLLM_SLO_P99_TPOT_MS}"
+if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
+  echo "vLLM(request-rate): enabled rates='${VLLM_REQUEST_RATE_RANGE}' max_concurrency=${VLLM_REQUEST_RATE_MAX_CONCURRENCY} num_prompts=${VLLM_REQUEST_RATE_NUM_PROMPTS:-<auto>}"
+else
+  echo "vLLM(request-rate): disabled"
+fi
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
   echo "vLLM(multinode): enabled mode=${RUN_VLLM_MULTINODE_MODE} conc='${VLLM_MULTINODE_CONCURRENCY_VALUES[*]}' prompts=${VLLM_MULTINODE_NUM_PROMPTS:-<auto>} ray_port=${VLLM_MULTINODE_RAY_PORT} ray_timeout_s=${VLLM_MULTINODE_RAY_TIMEOUT} server_timeout_s=${VLLM_MULTINODE_SERVER_TIMEOUT} worker_startup_wait_s=${VLLM_MULTINODE_WORKER_STARTUP_WAIT} image=${VLLM_MULTINODE_IMAGE:-<auto>}"
 else
@@ -1712,6 +1818,26 @@ if [[ -n "$TP" ]]; then
   vllm_args+=(--tp "$TP")
 fi
 run_step "vllm_serve_sweep" "${ROOT_DIR}/scripts/repro/run_vllm_serve_sweep_container.sh" "${vllm_args[@]}"
+
+if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
+  vllm_rate_args=(
+    --run-id "$RUN_ID"
+    --label "$PRIMARY_LABEL"
+    --model "$MODEL"
+    --isl "$ISL"
+    --osl "$OSL"
+    --request-rate-range "$VLLM_REQUEST_RATE_RANGE"
+    --max-concurrency "$VLLM_REQUEST_RATE_MAX_CONCURRENCY"
+    --port "$PORT"
+  )
+  if [[ -n "$TP" ]]; then
+    vllm_rate_args+=(--tp "$TP")
+  fi
+  if [[ -n "$VLLM_REQUEST_RATE_NUM_PROMPTS" ]]; then
+    vllm_rate_args+=(--num-prompts "$VLLM_REQUEST_RATE_NUM_PROMPTS")
+  fi
+  run_step "vllm_request_rate_sweep" "${ROOT_DIR}/scripts/repro/run_vllm_serve_request_rate_sweep_container.sh" "${vllm_rate_args[@]}"
+fi
 
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
   if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
@@ -2161,6 +2287,29 @@ if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_s
     --run-id "${RUN_ID}_${PRIMARY_LABEL}"
 fi
 
+if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
+  if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep.csv" ]]; then
+    run_step "analyze_vllm_request_rate_slo_goodput" python3 "${ROOT_DIR}/analysis/analyze_vllm_request_rate_slo_goodput.py" \
+      --input "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep.csv" \
+      --run-id "${RUN_ID}" \
+      --label "${PRIMARY_LABEL}" \
+      --slo-p99-ttft-ms "${VLLM_SLO_P99_TTFT_MS}" \
+      --slo-p99-tpot-ms "${VLLM_SLO_P99_TPOT_MS}" \
+      --output-json "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_request_rate_slo_goodput.json" \
+      --output-csv "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_request_rate_slo_goodput.csv"
+
+    run_step "plot_vllm_request_rate_sweep" python3 "${ROOT_DIR}/analysis/plot_vllm_request_rate_sweep.py" \
+      --input "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep.csv" \
+      --out-dir "${ROOT_DIR}/docs/figures" \
+      --run-id "${RUN_ID}_${PRIMARY_LABEL}"
+
+    run_step "plot_vllm_request_rate_slo_goodput" python3 "${ROOT_DIR}/analysis/plot_vllm_request_rate_slo_goodput.py" \
+      --input-json "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_request_rate_slo_goodput.json" \
+      --out-dir "${ROOT_DIR}/docs/figures" \
+      --run-id "${RUN_ID}_${PRIMARY_LABEL}"
+  fi
+fi
+
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
   vllm_multi_label="$(label_for_index 0)"
   if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_serve.csv" ]]; then
@@ -2363,6 +2512,10 @@ if [[ "$RUN_QUICK_FRICTION" -eq 1 || "$RUN_MONITORING_EXPECTATIONS" -eq 1 ]]; th
 fi
 
 run_step "build_cluster_scorecard" python3 "${ROOT_DIR}/analysis/build_cluster_scorecard.py" \
+  --run-id "${RUN_ID}" \
+  --structured-dir "${ROOT_DIR}/results/structured"
+
+run_step "analyze_benchmark_coverage" python3 "${ROOT_DIR}/analysis/analyze_benchmark_coverage.py" \
   --run-id "${RUN_ID}" \
   --structured-dir "${ROOT_DIR}/results/structured"
 
