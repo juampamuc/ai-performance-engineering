@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import core.benchmark.bench_commands as bench_commands
 from core.analysis.history_index import update_history_index
 from core.analysis.regressions import compare_suite_summaries
 from core.analysis.trends import build_trend_snapshot
@@ -195,3 +196,22 @@ def test_tier1_doc_mentions_current_targets_and_artifacts() -> None:
 
     for target in suite.targets:
         assert f"`{target.target}`" in text
+
+
+def test_execute_benchmarks_defaults_bench_root_to_repo_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(bench_commands, "BENCHMARK_AVAILABLE", False)
+    monkeypatch.setattr(bench_commands, "TEST_FUNCTIONS_AVAILABLE", False)
+
+    result = bench_commands._execute_benchmarks(
+        targets=["ch04:gradient_fusion"],
+        bench_root=None,
+        output_format="json",
+        profile_type="none",
+        artifacts_dir=str(tmp_path / "artifacts"),
+        run_id="tier1_default_root_smoke",
+        exit_on_failure=False,
+    )
+
+    assert Path(result["bench_root"]) == Path(bench_commands.__file__).resolve().parents[2]
+    assert result["run_id"] == "tier1_default_root_smoke"
+    assert result["error"] == "Benchmark dependencies missing"

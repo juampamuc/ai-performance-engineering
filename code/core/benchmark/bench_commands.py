@@ -387,7 +387,7 @@ def _execute_benchmarks(
     use_llm_cache: bool = True,
     llm_explain: bool = False,
     exit_on_failure: bool = True,
-) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
     """Execute selected benchmarks with optional profiling."""
     validity_profile = _validate_validity_profile(validity_profile)
     portable_mode = validity_profile == "portable"
@@ -413,6 +413,7 @@ def _execute_benchmarks(
             sys.exit(1)
 
     parsed_extra_args = _parse_target_extra_args(target_extra_args)
+    repo_root = Path(__file__).resolve().parents[2]
     active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
 
     if single_gpu:
@@ -438,6 +439,8 @@ def _execute_benchmarks(
     )
     if log_file is None:
         log_file = artifact_manager.get_log_path()
+    output_json = artifact_manager.get_result_path("benchmark_test_results.json")
+    output_md = artifact_manager.get_report_path("benchmark_test_results.md")
 
     setup_logging(level=log_level, log_file=log_file, log_format="json", use_rich=True)
     logger = get_logger(__name__)
@@ -466,26 +469,24 @@ def _execute_benchmarks(
         logger.error("Benchmark dependencies missing (torch/benchmark_harness or test functions).")
         if exit_on_failure:
             sys.exit(1)
-    return {
-        "run_id": artifact_manager.run_id,
-        "artifact_root": str(artifact_manager.run_dir),
-        "output_json": str(output_json),
-        "output_markdown": (
-            str(output_md)
-            if output_format in ["markdown", "both"]
-            else None
-        ),
-        "manifest_path": (
-            str(artifact_manager.manifest_path)
-            if manifests
-            else None
-        ),
-        "bench_root": str(active_bench_root),
-        "total_failed": total_failed,
-        "total_successful": total_successful,
-        "total_skipped": total_skipped,
-        "results": all_results,
-    }
+        event_logger.close()
+        return {
+            "run_id": artifact_manager.run_id,
+            "artifact_root": str(artifact_manager.run_dir),
+            "output_json": str(output_json),
+            "output_markdown": (
+                str(output_md)
+                if output_format in ["markdown", "both"]
+                else None
+            ),
+            "manifest_path": None,
+            "bench_root": str(active_bench_root),
+            "total_failed": 0,
+            "total_successful": 0,
+            "total_skipped": 0,
+            "results": [],
+            "error": "Benchmark dependencies missing",
+        }
 
     try:
         dump_environment_and_capabilities()
@@ -928,8 +929,6 @@ def _execute_benchmarks(
             json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "manifests": manifests}, f, indent=2)
         logger.info(f"Manifest saved to: {artifact_manager.manifest_path}")
 
-    output_md = artifact_manager.get_report_path("benchmark_test_results.md")
-
     if output_format in ["json", "both"]:
         with open(output_json, "w") as f:
             json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "results": all_results}, f, indent=2)
@@ -969,8 +968,28 @@ def _execute_benchmarks(
     heartbeat_stop.set()
     heartbeat_thread.join(timeout=5.0)
     event_logger.close()
-    if total_failed > 0:
+    if total_failed > 0 and exit_on_failure:
         sys.exit(1)
+    return {
+        "run_id": artifact_manager.run_id,
+        "artifact_root": str(artifact_manager.run_dir),
+        "output_json": str(output_json),
+        "output_markdown": (
+            str(output_md)
+            if output_format in ["markdown", "both"]
+            else None
+        ),
+        "manifest_path": (
+            str(artifact_manager.manifest_path)
+            if manifests
+            else None
+        ),
+        "bench_root": str(active_bench_root),
+        "total_failed": total_failed,
+        "total_successful": total_successful,
+        "total_skipped": total_skipped,
+        "results": all_results,
+    }
 
 
 if TYPER_AVAILABLE:
