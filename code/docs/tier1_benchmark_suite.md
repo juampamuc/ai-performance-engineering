@@ -19,18 +19,18 @@ The recurring CI entrypoint is [`tier1-nightly.yml`](/home/cfregly/ai-performanc
 ## Latest Snapshot
 Latest recorded canonical history package:
 
-- Run id: `20260309_230500_tier1_green_to_green`
+- Run id: `20260309_211715_tier1_nightly_local`
 - Succeeded targets: `6/6`
-- Representative speedup: `7.29x` geomean
-- Median speedup: `8.59x`
-- Arithmetic average speedup: `21.95x`
-- Largest measured win: `ch04:gradient_fusion` at `96.14x`
-- Latest canonical comparison is green-to-green with `0` tracked regressions against the prior successful run.
+- Representative speedup: `7.16x` geomean
+- Median speedup: `8.29x`
+- Arithmetic average speedup: `21.79x`
+- Largest measured win: `ch04:gradient_fusion` at `95.84x`
+- Latest canonical comparison is green-to-green with `0` tracked regressions against `20260309_230500_tier1_green_to_green`.
 
 Primary artifacts:
-- `artifacts/history/tier1/20260309_230500_tier1_green_to_green/summary.json`
-- `artifacts/history/tier1/20260309_230500_tier1_green_to_green/regression_summary.md`
-- `artifacts/history/tier1/20260309_230500_tier1_green_to_green/trend_snapshot.json`
+- `artifacts/history/tier1/20260309_211715_tier1_nightly_local/summary.json`
+- `artifacts/history/tier1/20260309_211715_tier1_nightly_local/regression_summary.md`
+- `artifacts/history/tier1/20260309_211715_tier1_nightly_local/trend_snapshot.json`
 
 The dashboard now exposes this same artifact package directly on the Tier-1 page, including per-target trend drilldown and direct artifact links from the latest canonical run.
 
