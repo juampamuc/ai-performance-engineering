@@ -20,9 +20,11 @@ class BaselineFlashAttentionGluonBenchmark(VerificationPayloadMixin, BaseBenchma
     def __init__(self) -> None:
         super().__init__()
         self.batch = 2
+        self.batch_size = self.batch
         self.seq_len = 1024  # modest size to keep baseline cost reasonable
         self.heads = 8
         self.head_dim = 64
+        self.hidden_dim = self.heads * self.head_dim
         self.dtype = torch.float16
         self.inputs: Optional[FlashAttentionInputs] = None
         self.output: Optional[torch.Tensor] = None

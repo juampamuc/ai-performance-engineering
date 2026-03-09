@@ -36,6 +36,7 @@ from core.harness.benchmark_harness import (
     BenchmarkConfig,
     WorkloadMetadata,
 )
+from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
 
 # Check for FlexAttention availability
 HAS_FLEX_ATTENTION = False
@@ -249,6 +250,7 @@ class FlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.batch_size = 1
         self.num_heads = 16
         self.head_dim = 64
+        self.hidden_dim = self.num_heads * self.head_dim
         self.seq_len = 2048
         self.window_size = 256
         self._last = 0.0
@@ -294,8 +296,11 @@ class FlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def benchmark_fn(self) -> None:
         """Benchmark: FlexAttention sliding window forward pass."""
-        with torch.no_grad():
-            self.output = self.attn(self.x)
+        config = self.get_config()
+        enable_nvtx = get_nvtx_enabled(config) if config else False
+        with nvtx_range("optimized_flex_attention_sparse", enable=enable_nvtx):
+            with torch.no_grad():
+                self.output = self.attn(self.x)
         if self.output is None or self.x is None:
             raise RuntimeError("benchmark_fn() must produce output")
         self._payload_dtype = self.x.dtype

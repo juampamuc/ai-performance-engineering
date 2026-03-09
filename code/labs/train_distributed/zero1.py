@@ -5,25 +5,34 @@ from __future__ import annotations
 import argparse
 import sys
 
-import labs.train_distributed.baseline_zero1_multigpu as baseline_run
-import labs.train_distributed.optimized_zero1_multigpu as optimized_run
+import labs.train_distributed.baseline_zero1 as baseline_single_run
+import labs.train_distributed.baseline_zero1_multigpu as baseline_multi_run
+import labs.train_distributed.optimized_zero1 as optimized_single_run
+import labs.train_distributed.optimized_zero1_multigpu as optimized_multi_run
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="ZeRO-1 training examples.")
     parser.add_argument(
         "--mode",
         choices=["baseline", "optimized"],
         default="optimized",
         help="Select which variant to run.",
     )
+    parser.add_argument(
+        "--variant",
+        choices=["single", "multigpu"],
+        default="single",
+        help="Select the single-GPU or multi-GPU implementation.",
+    )
     args, remaining = parser.parse_known_args()
 
     sys.argv = [sys.argv[0]] + remaining
-    if args.mode == "baseline":
-        baseline_run.main()
+    if args.variant == "multigpu":
+        run = baseline_multi_run if args.mode == "baseline" else optimized_multi_run
     else:
-        optimized_run.main()
+        run = baseline_single_run if args.mode == "baseline" else optimized_single_run
+    run.main()
 
 
 if __name__ == "__main__":

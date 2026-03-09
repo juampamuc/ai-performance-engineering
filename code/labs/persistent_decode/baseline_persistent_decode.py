@@ -22,10 +22,12 @@ class BaselinePersistentDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.device = resolve_device()
         self.inputs = None
         self.output: Optional[torch.Tensor] = None
-        batch, seq_len, _ = resolve_shapes()
+        batch, seq_len, head_dim = resolve_shapes()
         self.seq_len = seq_len
         self.batch = batch
-        self.head_dim = None
+        self.batch_size = batch
+        self.head_dim = head_dim
+        self.hidden_dim = head_dim
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())
 
     def setup(self) -> None:
@@ -34,6 +36,7 @@ class BaselinePersistentDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
             torch.cuda.manual_seed_all(42)
         self.inputs = build_inputs(self.device)
         self.head_dim = self.inputs.q.shape[-1]
+        self.hidden_dim = self.head_dim
         self._synchronize()
 
     def _decode_step(self, t: int) -> None:

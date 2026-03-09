@@ -31,6 +31,8 @@ class BaselineTmaPrefillDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.inputs = None
         self.output: Optional[torch.Tensor] = None
         self.batch, self.seq_len, self.head_dim = resolve_shapes()
+        self.batch_size = self.batch
+        self.hidden_dim = self.head_dim
         self.prefill_chunks = 8
         self.prefill_chunk_elems = 128 * 128
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())

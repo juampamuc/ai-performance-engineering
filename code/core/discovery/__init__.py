@@ -388,7 +388,11 @@ def discover_benchmarks(
     """
     pairs = []
     # Only discover Python files - CUDA benchmarks are handled by discover_cuda_benchmarks()
-    baseline_files = sorted(chapter_dir.glob("baseline_*.py"))
+    baseline_files = sorted(
+        path
+        for path in chapter_dir.glob("baseline_*.py")
+        if not _is_submission_helper(path)
+    )
 
     example_names = {
         baseline_file.stem.replace("baseline_", "")
@@ -410,6 +414,8 @@ def discover_benchmarks(
         # Pattern 1: optimized_{name}_*.{ext} (e.g., optimized_moe_sparse.py)
         pattern1 = chapter_dir / f"optimized_{example_name}_*{ext}"
         for opt_path in pattern1.parent.glob(pattern1.name):
+            if _is_submission_helper(opt_path):
+                continue
             # Always exclude Python files missing get_benchmark(); warnings are optional.
             if not validate_benchmark_file(opt_path, warn=warn_missing):
                 continue
@@ -434,6 +440,8 @@ def discover_benchmarks(
         # Pattern 2: optimized_{name}.{ext} (e.g., optimized_moe.py / optimized_moe.cu)
         pattern2 = chapter_dir / f"optimized_{example_name}{ext}"
         if pattern2.exists():
+            if _is_submission_helper(pattern2):
+                continue
             if validate_benchmark_file(pattern2, warn=warn_missing):
                 optimized_files.append(pattern2)
         
@@ -443,6 +451,11 @@ def discover_benchmarks(
                 pairs.append((baseline_file, [opt_path], variant_name))
     
     return pairs
+
+
+def _is_submission_helper(path: Path) -> bool:
+    """Ignore challenge submission helpers that are not harness benchmarks."""
+    return path.name in {"baseline_submission.py", "optimized_submission.py", "reference_submission.py"}
 
 
 def discover_cuda_benchmarks(repo_root: Path) -> List[Path]:

@@ -45,6 +45,8 @@ class OptimizedPersistentDecodeGraphsBenchmark(VerificationPayloadMixin, BaseBen
         self.options = get_decode_options()
         self.profile = get_decode_profile()
         self.batch, self.seq_len, self.head_dim = resolve_shapes()
+        self.batch_size = self.batch
+        self.hidden_dim = self.head_dim
         self.block_k = self.profile.block_k
         self.num_programs = self.profile.num_programs
         self.prefill_graph: torch.cuda.CUDAGraph | None = None

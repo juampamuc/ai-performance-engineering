@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.optim import Adam, Optimizer
+from torch.optim import AdamW, Optimizer
 
 from labs.train_distributed.training_utils.memory import print_memory_stats
 from labs.train_distributed.training_utils.utils import get
@@ -124,6 +124,10 @@ def _build_model(hidden_size: int, device):
     return nn.Sequential(*layers).to(device)
 
 
+def _build_adamw(params) -> AdamW:
+    return AdamW(params, lr=1e-3, betas=(0.9, 0.95), weight_decay=0.05, foreach=False)
+
+
 def train(model, optimizer, batch_size, device, steps, label, shard_map=None):
     rank = get("rank")
     input_dim = model[0].in_features
@@ -175,11 +179,11 @@ def main():
     device = torch.device(f"cuda:{local_rank}")
 
     baseline_model = _build_model(args.hidden_size, device)
-    baseline_opt = Adam(baseline_model.parameters(), lr=1e-3)
+    baseline_opt = _build_adamw(baseline_model.parameters())
     baseline_peak = train(baseline_model, baseline_opt, args.batch_size, device, args.steps, "baseline-adam")
 
     zero3_model = _build_model(args.hidden_size, device)
-    zero3_opt = Zero3Optimizer(Adam(zero3_model.parameters(), lr=1e-3))
+    zero3_opt = Zero3Optimizer(_build_adamw(zero3_model.parameters()))
     peak_zero3 = train(
         zero3_model, zero3_opt, args.batch_size, device, args.steps, "zero3", shard_map=zero3_opt.shards
     )
@@ -201,7 +205,7 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "zero3.py",
-        base_args=["--mode", "baseline"],
+        base_args=["--mode", "baseline", "--variant", "single", "--batch-size", "16", "--hidden-size", "10000"],
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:zero3",
         default_nproc_per_node=1,

@@ -123,6 +123,8 @@ def get_benchmark():
         base_args=[
             "--mode",
             "baseline",
+            "--variant",
+            "multigpu",
             "--batch-size",
             "16",
             "--hidden-size",

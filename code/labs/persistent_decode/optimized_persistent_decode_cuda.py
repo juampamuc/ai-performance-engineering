@@ -51,6 +51,8 @@ class OptimizedPersistentDecodeCUDABenchmark(VerificationPayloadMixin, BaseBench
         self.device = resolve_device()
         self.inputs = None
         self.batch, self.seq_len, self.head_dim = resolve_shapes()
+        self.batch_size = self.batch
+        self.hidden_dim = self.head_dim
         self.blocks = 8
         self._ext: Optional[object] = None
         self.output: Optional[torch.Tensor] = None
@@ -80,13 +82,14 @@ class OptimizedPersistentDecodeCUDABenchmark(VerificationPayloadMixin, BaseBench
             raise RuntimeError("SKIPPED: persistent_decode_ext not initialized")
         
         # Call the extension's forward pass
-        self._ext.persistent_decode(
-            self.inputs.q,
-            self.inputs.k,
-            self.inputs.v,
-            self.inputs.out,
-            self.blocks,
-        )
+        with self._nvtx_range("persistent_decode_cuda"):
+            self._ext.persistent_decode(
+                self.inputs.q,
+                self.inputs.k,
+                self.inputs.v,
+                self.inputs.out,
+                self.blocks,
+            )
         # Capture a representative slice of the output
         self.output = self.inputs.out[:1, : min(8, self.inputs.out.shape[1])].detach().float().clone()
         if self.inputs is None or self.output is None:

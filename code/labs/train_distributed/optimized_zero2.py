@@ -145,7 +145,18 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "zero2.py",
-        base_args=["--mode", "optimized"],
+        base_args=[
+            "--mode",
+            "optimized",
+            "--variant",
+            "single",
+            "--batch-size",
+            "16",
+            "--hidden-size",
+            "10000",
+            "--grad-accum",
+            "1",
+        ],
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:zero2",
         default_nproc_per_node=1,

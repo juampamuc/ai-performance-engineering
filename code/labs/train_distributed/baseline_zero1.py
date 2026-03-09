@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.optim import Adam, Optimizer
+from torch.optim import AdamW, Optimizer
 
 from labs.train_distributed.training_utils.memory import print_memory_stats
 from labs.train_distributed.training_utils.utils import get
@@ -94,6 +94,10 @@ def _build_model(hidden_size: int, device):
     return model
 
 
+def _build_adamw(params) -> AdamW:
+    return AdamW(params, lr=1e-3, betas=(0.9, 0.95), weight_decay=0.1)
+
+
 def run_training(model, optimizer, batch_size: int, device, steps: int, label: str):
     rank = get("rank")
 
@@ -143,14 +147,14 @@ def main():
     device = torch.device(f"cuda:{local_rank}")
     # Baseline: full optimizer state on every rank.
     base_model = _build_model(args.hidden_size, device)
-    baseline_opt = Adam(base_model.parameters(), lr=1e-3)
+    baseline_opt = _build_adamw(base_model.parameters())
     mem_baseline = run_training(
         base_model, baseline_opt, args.batch_size, device, args.steps, label="baseline-adam"
     )
 
     # ZeRO-1 style optimizer state partitioning.
     sharded_model = _build_model(args.hidden_size, device)
-    sharded_opt = OptimizerStateSharder(Adam(sharded_model.parameters(), lr=1e-3))
+    sharded_opt = OptimizerStateSharder(_build_adamw(sharded_model.parameters()))
     mem_zero1 = run_training(
         sharded_model, sharded_opt, args.batch_size, device, args.steps, label="zero1"
     )
@@ -172,7 +176,7 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "zero1.py",
-        base_args=["--mode", "baseline"],
+        base_args=["--mode", "baseline", "--variant", "single", "--batch-size", "16", "--hidden-size", "10000"],
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:zero1",
         default_nproc_per_node=1,

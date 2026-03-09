@@ -21,6 +21,7 @@ import torch.nn.functional as F
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +42,7 @@ class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.output: Optional[torch.Tensor] = None
         self.batch_size = 4
         self.seq_length = 4096
+        self.seq_len = self.seq_length
         self.hidden_dim = 1024
         self.num_heads = 16
         self.head_dim = self.hidden_dim // self.num_heads
@@ -112,8 +114,11 @@ class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def benchmark_fn(self) -> None:
         """Benchmark: Flash Attention with FP8 KV cache benefits."""
-        with torch.no_grad():
-            self.output = self._forward_flash()
+        config = self.get_config()
+        enable_nvtx = get_nvtx_enabled(config) if config else False
+        with nvtx_range("optimized_paged_attention_blackwell", enable=enable_nvtx):
+            with torch.no_grad():
+                self.output = self._forward_flash()
         if self._verify_input is None:
             raise RuntimeError("Verification input missing")
         parameter_count = 0

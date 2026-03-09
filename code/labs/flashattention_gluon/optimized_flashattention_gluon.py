@@ -22,9 +22,11 @@ class OptimizedFlashAttentionGluonBenchmark(VerificationPayloadMixin, BaseBenchm
     def __init__(self) -> None:
         super().__init__()
         self.batch = 2
+        self.batch_size = self.batch
         self.seq_len = 1024
         self.heads = 8
         self.head_dim = 64
+        self.hidden_dim = self.heads * self.head_dim
         self.dtype = torch.float16
         self.inputs: Optional[FlashAttentionInputs] = None
         self.kernel: Optional[FlashAttentionKernel] = None
@@ -55,12 +57,13 @@ class OptimizedFlashAttentionGluonBenchmark(VerificationPayloadMixin, BaseBenchm
             raise RuntimeError("FlashAttention inputs/kernel not initialized")
 
         with torch.inference_mode():
-            with self._nvtx_range(f"flashattention_optimized_{self.kernel.provider}"):
-                q = self.inputs.q
-                k = self.inputs.k
-                v = self.inputs.v
-                result = self.kernel.fn(q, k, v)
-                self.output = result.detach().float().clone()
+            with self._nvtx_range("flashattention_optimized_fused"):
+                with self._nvtx_range(f"flashattention_optimized_{self.kernel.provider}"):
+                    q = self.inputs.q
+                    k = self.inputs.k
+                    v = self.inputs.v
+                    result = self.kernel.fn(q, k, v)
+                    self.output = result.detach().float().clone()
         if self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
         self._payload_k = k
