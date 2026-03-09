@@ -4,13 +4,25 @@ import json
 from pathlib import Path
 
 import core.benchmark.bench_commands as bench_commands
+from cli.aisp import app
 from core.analysis.history_index import update_history_index
 from core.analysis.regressions import compare_suite_summaries
 from core.analysis.trends import build_trend_snapshot
-from core.benchmark.suites.tier1 import build_tier1_suite_summary, load_tier1_suite
+from core.benchmark.suites.tier1 import (
+    _confirm_speedup_regressions,
+    build_tier1_suite_summary,
+    load_tier1_suite,
+)
+from typer.testing import CliRunner
 
 
-def _write_result_payload(path: Path, *, block_scaling_speedup: float, flash_speedup: float) -> None:
+def _write_result_payload(
+    path: Path,
+    *,
+    block_scaling_speedup: float,
+    flash_speedup: float,
+    kv_speedup: float = 1.58,
+) -> None:
     payload = {
         "timestamp": "2026-03-08T00:00:00Z",
         "results": [
@@ -71,7 +83,7 @@ def _write_result_payload(path: Path, *, block_scaling_speedup: float, flash_spe
                         "example": "kv_standard",
                         "status": "succeeded",
                         "baseline_time_ms": 1585.6,
-                        "best_speedup": 1.58,
+                        "best_speedup": kv_speedup,
                         "best_optimization": "kv_standard",
                         "optimization_goal": "memory",
                         "baseline_memory_mb": 32140.0,
@@ -133,6 +145,7 @@ def test_build_tier1_suite_summary_and_history_artifacts(tmp_path: Path) -> None
 
     block_scaling = next(target for target in summary["targets"] if target["key"] == "block_scaling")
     assert block_scaling["best_speedup"] == 1.45
+    assert block_scaling["best_optimized_time_ms"] == 0.1074 / 1.45
     assert block_scaling["artifacts"]["nsys_rep"] == "artifacts/block_scaling.nsys-rep"
 
     summary_path = tmp_path / "summary.json"
@@ -176,18 +189,138 @@ def test_compare_suite_summaries_detects_speedup_regression_and_new_targets(tmp_
 
     baseline_summary = build_tier1_suite_summary(baseline_json, suite, run_id="tier1_old")
     current_summary = build_tier1_suite_summary(current_json, suite, run_id="tier1_new")
+    llama_baseline = next(target for target in baseline_summary["targets"] if target["target"] == "labs/real_world_models:llama_3_1_8b")
+    llama_current = next(target for target in current_summary["targets"] if target["target"] == "labs/real_world_models:llama_3_1_8b")
+    llama_baseline["best_speedup"] = 2.49
+    llama_baseline["best_optimized_time_ms"] = 13.143 / 2.49
+    llama_current["best_speedup"] = 2.20
+    llama_current["best_optimized_time_ms"] = 13.143 / 2.20
 
     comparison = compare_suite_summaries(current_summary, baseline_summary)
 
     assert comparison["baseline_run_id"] == "tier1_old"
     assert any(
-        row["target"] == "labs/block_scaling:block_scaling" and row["reason"] == "speedup"
+        row["target"] == "labs/real_world_models:llama_3_1_8b" and row["reason"] == "speedup"
         for row in comparison["regressions"]
     )
     assert any(
         row["target"] == "labs/flashattention4:flashattention4_alibi" and row["reason"] == "speedup"
         for row in comparison["improvements"]
     )
+
+
+def test_compare_suite_summaries_ignores_small_absolute_speedup_drift(tmp_path: Path) -> None:
+    suite = load_tier1_suite()
+    baseline_json = tmp_path / "baseline.json"
+    current_json = tmp_path / "current.json"
+    _write_result_payload(baseline_json, block_scaling_speedup=1.60, flash_speedup=12.0)
+    _write_result_payload(current_json, block_scaling_speedup=1.45, flash_speedup=14.45)
+
+    baseline_summary = build_tier1_suite_summary(baseline_json, suite, run_id="tier1_old")
+    current_summary = build_tier1_suite_summary(current_json, suite, run_id="tier1_new")
+
+    comparison = compare_suite_summaries(current_summary, baseline_summary)
+
+    assert not any(
+        row["target"] == "labs/block_scaling:block_scaling" and row["reason"] == "speedup"
+        for row in comparison["regressions"]
+    )
+
+
+def test_confirm_speedup_regressions_suppresses_unconfirmed_noise(tmp_path: Path, monkeypatch) -> None:
+    suite = load_tier1_suite()
+    baseline_json = tmp_path / "baseline.json"
+    current_json = tmp_path / "current.json"
+    recheck_json = tmp_path / "recheck.json"
+    _write_result_payload(baseline_json, block_scaling_speedup=1.60, flash_speedup=12.0, kv_speedup=1.58)
+    _write_result_payload(current_json, block_scaling_speedup=1.45, flash_speedup=14.45, kv_speedup=1.16)
+    _write_result_payload(recheck_json, block_scaling_speedup=1.62, flash_speedup=14.45, kv_speedup=1.67)
+
+    baseline_summary = build_tier1_suite_summary(baseline_json, suite, run_id="tier1_old")
+    current_summary = build_tier1_suite_summary(current_json, suite, run_id="tier1_new")
+    comparison = compare_suite_summaries(current_summary, baseline_summary)
+
+    recheck_result_path = tmp_path / "recheck_results.json"
+    recheck_result_path.write_text(recheck_json.read_text(encoding="utf-8"), encoding="utf-8")
+    recheck_manifest_path = tmp_path / "recheck_manifest.json"
+    recheck_manifest_path.write_text("{}", encoding="utf-8")
+    recheck_markdown_path = tmp_path / "recheck_report.md"
+    recheck_markdown_path.write_text("# recheck\n", encoding="utf-8")
+
+    def _fake_execute_benchmarks(**kwargs):
+        assert kwargs["targets"] == ["labs/kv_optimization:kv_standard"]
+        return {
+            "run_id": "tier1_new__recheck__kv_standard",
+            "output_json": str(recheck_result_path),
+            "manifest_path": str(recheck_manifest_path),
+            "output_markdown": str(recheck_markdown_path),
+        }
+
+    monkeypatch.setattr(bench_commands, "_execute_benchmarks", _fake_execute_benchmarks)
+
+    updated = _confirm_speedup_regressions(
+        comparison=comparison,
+        current_summary=current_summary,
+        previous_summary=baseline_summary,
+        suite=suite,
+        suite_run_dir=tmp_path / "suite_run",
+        bench_root=None,
+        execution_run_id="tier1_new",
+        profile_type="minimal",
+        output_format="both",
+        suite_timeout=14400,
+        timeout_multiplier=3.0,
+        validity_profile="strict",
+        allow_portable_expectations_update=False,
+        reproducible=False,
+        cold_start=False,
+        force_synchronize=False,
+        iterations=None,
+        warmup=None,
+        gpu_sm_clock_mhz=None,
+        gpu_mem_clock_mhz=None,
+        artifacts_dir=str(tmp_path / "artifacts"),
+        log_level="INFO",
+        log_file=None,
+        single_gpu=False,
+        accept_regressions=False,
+        update_expectations=False,
+        allow_mixed_provenance=False,
+        ncu_metric_set="minimal",
+        ncu_replay_mode="kernel",
+        pm_sampling_interval=None,
+        nsys_timeout_seconds=None,
+        ncu_timeout_seconds=None,
+        launch_via="python",
+        nproc_per_node=None,
+        nnodes=None,
+        rdzv_backend=None,
+        rdzv_endpoint=None,
+        torchrun_env=None,
+        target_extra_args=None,
+        verify_input=True,
+        verify_output=True,
+        llm_analysis=False,
+        force_llm=False,
+        llm_provider=None,
+        apply_llm_patches=False,
+        rebenchmark_llm_patches=False,
+        patch_strategy="ast",
+        llm_patch_retries=2,
+        use_llm_cache=True,
+        llm_explain=False,
+    )
+
+    assert not any(
+        row["target"] == "labs/kv_optimization:kv_standard" and row["reason"] == "speedup"
+        for row in updated["regressions"]
+    )
+    assert any(
+        row["target"] == "labs/kv_optimization:kv_standard"
+        and row["suppression_reason"] == "recheck_not_regressed"
+        for row in updated["suppressed_regressions"]
+    )
+    assert updated["rechecks"][0]["confirmed_regression"] is False
 
 
 def test_tier1_doc_mentions_current_targets_and_artifacts() -> None:
@@ -221,3 +354,34 @@ def test_execute_benchmarks_defaults_bench_root_to_repo_root(tmp_path: Path, mon
     assert Path(result["bench_root"]) == Path(bench_commands.__file__).resolve().parents[2]
     assert result["run_id"] == "tier1_default_root_smoke"
     assert result["error"] == "Benchmark dependencies missing"
+
+
+def test_bench_run_defaults_bench_root_to_repo_root(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_execute_benchmarks(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(bench_commands, "_execute_benchmarks", _fake_execute_benchmarks)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "run",
+            "--targets",
+            "labs/flashattention4:flashattention4_alibi",
+            "--profile",
+            "none",
+            "--artifacts-dir",
+            str(tmp_path / "artifacts"),
+            "--run-id",
+            "bench_run_default_root_smoke",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert Path(captured["bench_root"]) == Path(bench_commands.__file__).resolve().parents[2]
+    assert captured["targets"] == ["labs/flashattention4:flashattention4_alibi"]

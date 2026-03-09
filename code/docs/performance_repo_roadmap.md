@@ -29,11 +29,11 @@ The target state is:
 ## Current Status
 | Phase | Status | Notes |
 | --- | --- | --- |
-| Tier-1 canonical benchmark suite | Implemented | `python -m cli.aisp bench run-tier1` is live, backed by `configs/benchmark_suites/tier1.yaml` and `core/benchmark/suites/tier1.py`, with `.github/workflows/tier1-nightly.yml` as the recurring CI entrypoint. The first real canonical local run completed successfully as `20260308_091500_tier1_local`. |
-| Historical trend and regression artifacts | Implemented | `summary.json`, `regression_summary.md`, `regression_summary.json`, `trend_snapshot.json`, and `artifacts/history/tier1/index.json` are live and populated from `20260308_091500_tier1_local`; the history package now emits representative geomean and median speedups in addition to arithmetic average speedup. |
+| Tier-1 canonical benchmark suite | Implemented | `python -m cli.aisp bench run-tier1` is live, backed by `configs/benchmark_suites/tier1.yaml` and `core/benchmark/suites/tier1.py`, with `.github/workflows/tier1-nightly.yml` as the recurring CI entrypoint. The latest real canonical local run completed successfully as `20260309_140000_tier1_recheck_refresh2` with `6/6` targets succeeding. |
+| Historical trend and regression artifacts | Implemented | `summary.json`, `regression_summary.md`, `regression_summary.json`, `trend_snapshot.json`, and `artifacts/history/tier1/index.json` are live and now contain multiple canonical runs. The latest package reports `7.38x` geomean representative speedup, `8.79x` median speedup, and a fully green rerun after the harness cleanup. The dashboard now exposes that canonical history directly through a dedicated Tier-1 page instead of leaving it buried in artifact JSON. |
 | Performance anti-pattern checks | In progress | Cross-module helper traversal is live in `core/benchmark/hot_path_checks.py`, and the full repo-wide benchmark contract audit is blocking CI again with `856` benchmark entrypoints clean. |
 | Shared benchmark bases | In progress | High-traffic families have already been moved onto shared/common benchmark scaffolding; more consolidation is still possible. |
-| Evidence-first docs | In progress | Root README plus the benchmark-facing lab/chapter READMEs are now being generated around measured deltas and reproducible commands; `ch04`, `ch07`, `ch08`, `ch09`, `ch10`, `ch11`, `ch12`, `ch13`, `ch14`, `ch15`, `ch16`, `ch17`, `ch18`, `ch19`, `ch20`, and the priority labs are in that format. |
+| Evidence-first docs | In progress | Root README plus the benchmark-facing lab/chapter READMEs are now being generated around measured deltas and reproducible commands; `ch01`-`ch20` public benchmark chapters are covered, and every current `labs/**/README.md` is generator-backed as well. Benchmark-pair labs use measured baseline/optimized deltas, while non-pair/workflow/component docs such as `labs/README.md`, `nanochat_fullstack/rustbpe`, `python_concurrency`, and `vllm-deepseek-tuning` use honest doc shapes instead of pretending to be baseline/optimized benchmark pairs. |
 
 ## Phase 1: Tier-1 Canonical Benchmark Suite
 ### Objective
@@ -208,9 +208,31 @@ Rewrite the top-traffic READMEs first.
 - [ch14/README.md](/home/cfregly/ai-performance-engineering/code/ch14/README.md)
 - [ch18/README.md](/home/cfregly/ai-performance-engineering/code/ch18/README.md)
 - [labs/block_scaling/README.md](/home/cfregly/ai-performance-engineering/code/labs/block_scaling/README.md)
+- [labs/async_input_pipeline/README.md](/home/cfregly/ai-performance-engineering/code/labs/async_input_pipeline/README.md)
+- [labs/blackwell_matmul/README.md](/home/cfregly/ai-performance-engineering/code/labs/blackwell_matmul/README.md)
+- [labs/custom_vs_cublas/README.md](/home/cfregly/ai-performance-engineering/code/labs/custom_vs_cublas/README.md)
+- [labs/cudnn_sdpa_bench/README.md](/home/cfregly/ai-performance-engineering/code/labs/cudnn_sdpa_bench/README.md)
+- [labs/decode_optimization/README.md](/home/cfregly/ai-performance-engineering/code/labs/decode_optimization/README.md)
 - [labs/flashattention4/README.md](/home/cfregly/ai-performance-engineering/code/labs/flashattention4/README.md)
+- [labs/flashattention_gluon/README.md](/home/cfregly/ai-performance-engineering/code/labs/flashattention_gluon/README.md)
+- [labs/flashinfer_attention/README.md](/home/cfregly/ai-performance-engineering/code/labs/flashinfer_attention/README.md)
+- [labs/flexattention/README.md](/home/cfregly/ai-performance-engineering/code/labs/flexattention/README.md)
+- [labs/fullstack_cluster/README.md](/home/cfregly/ai-performance-engineering/code/labs/fullstack_cluster/README.md)
+- [labs/kv_cache_compression/README.md](/home/cfregly/ai-performance-engineering/code/labs/kv_cache_compression/README.md)
+- [labs/kv_optimization/README.md](/home/cfregly/ai-performance-engineering/code/labs/kv_optimization/README.md)
+- [labs/moe_cuda/README.md](/home/cfregly/ai-performance-engineering/code/labs/moe_cuda/README.md)
+- [labs/moe_optimization_journey/README.md](/home/cfregly/ai-performance-engineering/code/labs/moe_optimization_journey/README.md)
+- [labs/nanochat_fullstack/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README.md)
+- [labs/nvfp4_dual_gemm/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_dual_gemm/README.md)
+- [labs/nvfp4_gemm/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_gemm/README.md)
+- [labs/nvfp4_gemv/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_gemv/README.md)
+- [labs/nvfp4_group_gemm/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_group_gemm/README.md)
+- [labs/occupancy_tuning/README.md](/home/cfregly/ai-performance-engineering/code/labs/occupancy_tuning/README.md)
 - [labs/persistent_decode/README.md](/home/cfregly/ai-performance-engineering/code/labs/persistent_decode/README.md)
 - [labs/real_world_models/README.md](/home/cfregly/ai-performance-engineering/code/labs/real_world_models/README.md)
+- [labs/speculative_decode/README.md](/home/cfregly/ai-performance-engineering/code/labs/speculative_decode/README.md)
+- [labs/train_distributed/README.md](/home/cfregly/ai-performance-engineering/code/labs/train_distributed/README.md)
+- [labs/trtllm_phi_3_5_moe/README.md](/home/cfregly/ai-performance-engineering/code/labs/trtllm_phi_3_5_moe/README.md)
 
 ### README Template
 Each target README should include:

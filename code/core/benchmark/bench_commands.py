@@ -1114,6 +1114,7 @@ if TYPER_AVAILABLE:
         CUDA binaries execute only via Python wrappers (CudaBinaryBenchmark).
         """
         # LLM features are always available - no capability check needed
+        repo_root = Path(__file__).resolve().parents[2]
 
         active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
 

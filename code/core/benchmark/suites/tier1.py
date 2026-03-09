@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import re
 import statistics
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -116,6 +117,195 @@ def _geometric_mean(values: Iterable[float]) -> float:
     return math.exp(sum(math.log(value) for value in positive) / len(positive))
 
 
+def _single_target_suite(suite: Tier1SuiteDefinition, target: Tier1Target) -> Tier1SuiteDefinition:
+    return Tier1SuiteDefinition(
+        name=suite.name,
+        version=suite.version,
+        description=suite.description,
+        history_root=suite.history_root,
+        default_profile=suite.default_profile,
+        default_output_format=suite.default_output_format,
+        targets=[target],
+    )
+
+
+def _sanitize_component(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "target"
+
+
+def _confirm_speedup_regressions(
+    *,
+    comparison: Dict[str, Any],
+    current_summary: Dict[str, Any],
+    previous_summary: Optional[Dict[str, Any]],
+    suite: Tier1SuiteDefinition,
+    suite_run_dir: Path,
+    bench_root: Optional[Path],
+    execution_run_id: str,
+    profile_type: str,
+    output_format: str,
+    suite_timeout: Optional[int],
+    timeout_multiplier: float,
+    validity_profile: str,
+    allow_portable_expectations_update: bool,
+    reproducible: bool,
+    cold_start: bool,
+    force_synchronize: bool,
+    iterations: Optional[int],
+    warmup: Optional[int],
+    gpu_sm_clock_mhz: Optional[int],
+    gpu_mem_clock_mhz: Optional[int],
+    artifacts_dir: Optional[str],
+    log_level: str,
+    log_file: Optional[str],
+    single_gpu: bool,
+    accept_regressions: bool,
+    update_expectations: bool,
+    allow_mixed_provenance: bool,
+    ncu_metric_set: str,
+    ncu_replay_mode: Optional[str],
+    pm_sampling_interval: Optional[int],
+    nsys_timeout_seconds: Optional[int],
+    ncu_timeout_seconds: Optional[int],
+    launch_via: str,
+    nproc_per_node: Optional[int],
+    nnodes: Optional[str],
+    rdzv_backend: Optional[str],
+    rdzv_endpoint: Optional[str],
+    torchrun_env: Optional[List[str]],
+    target_extra_args: Optional[List[str]],
+    verify_input: bool,
+    verify_output: bool,
+    llm_analysis: bool,
+    force_llm: bool,
+    llm_provider: Optional[str],
+    apply_llm_patches: bool,
+    rebenchmark_llm_patches: bool,
+    patch_strategy: str,
+    llm_patch_retries: int,
+    use_llm_cache: bool,
+    llm_explain: bool,
+) -> Dict[str, Any]:
+    from core.analysis.regressions import compare_suite_summaries
+    from core.benchmark.bench_commands import _execute_benchmarks
+
+    if previous_summary is None:
+        comparison["rechecks"] = []
+        comparison["suppressed_regressions"] = []
+        return comparison
+
+    regressions = list(comparison.get("regressions", []))
+    confirmed: List[Dict[str, Any]] = []
+    suppressed: List[Dict[str, Any]] = []
+    rechecks: List[Dict[str, Any]] = []
+    target_map = suite.by_target()
+
+    for regression in regressions:
+        if regression.get("reason") != "speedup":
+            confirmed.append(regression)
+            continue
+        target_name = str(regression.get("target") or "")
+        target = target_map.get(target_name)
+        if target is None:
+            confirmed.append(regression)
+            continue
+
+        recheck_run_id = f"{execution_run_id}__recheck__{_sanitize_component(target.key)}"
+        recheck_execution = _execute_benchmarks(
+            targets=[target.target],
+            bench_root=bench_root,
+            output_format=output_format,
+            profile_type=profile_type,
+            suite_timeout=suite_timeout,
+            timeout_multiplier=timeout_multiplier,
+            validity_profile=validity_profile,
+            allow_portable_expectations_update=allow_portable_expectations_update,
+            reproducible=reproducible,
+            cold_start=cold_start,
+            force_synchronize=force_synchronize,
+            iterations=iterations,
+            warmup=warmup,
+            gpu_sm_clock_mhz=gpu_sm_clock_mhz,
+            gpu_mem_clock_mhz=gpu_mem_clock_mhz,
+            artifacts_dir=artifacts_dir,
+            run_id=recheck_run_id,
+            log_level=log_level,
+            log_file=log_file,
+            single_gpu=single_gpu,
+            accept_regressions=accept_regressions,
+            update_expectations=update_expectations,
+            allow_mixed_provenance=allow_mixed_provenance,
+            ncu_metric_set=ncu_metric_set,
+            ncu_replay_mode=ncu_replay_mode,
+            pm_sampling_interval=pm_sampling_interval,
+            nsys_timeout_seconds=nsys_timeout_seconds,
+            ncu_timeout_seconds=ncu_timeout_seconds,
+            launch_via=launch_via,
+            nproc_per_node=nproc_per_node,
+            nnodes=nnodes,
+            rdzv_backend=rdzv_backend,
+            rdzv_endpoint=rdzv_endpoint,
+            torchrun_env=torchrun_env,
+            target_extra_args=target_extra_args,
+            verify_input=verify_input,
+            verify_output=verify_output,
+            llm_analysis=llm_analysis,
+            force_llm=force_llm,
+            llm_provider=llm_provider,
+            apply_llm_patches=apply_llm_patches,
+            rebenchmark_llm_patches=rebenchmark_llm_patches,
+            patch_strategy=patch_strategy,
+            llm_patch_retries=llm_patch_retries,
+            use_llm_cache=use_llm_cache,
+            llm_explain=llm_explain,
+            exit_on_failure=False,
+        )
+
+        recheck_summary = build_tier1_suite_summary(
+            Path(recheck_execution["output_json"]),
+            _single_target_suite(suite, target),
+            run_id=recheck_execution["run_id"],
+            manifest_path=Path(recheck_execution["manifest_path"]) if recheck_execution.get("manifest_path") else None,
+            report_path=Path(recheck_execution["output_markdown"]) if recheck_execution.get("output_markdown") else None,
+        )
+        recheck_target = recheck_summary["targets"][0]
+        recheck_comparison = compare_suite_summaries(recheck_summary, previous_summary)
+        recheck_record = {
+            "target": target_name,
+            "recheck_run_id": recheck_execution["run_id"],
+            "recheck_output_json": recheck_execution["output_json"],
+            "recheck_summary": recheck_target,
+            "confirmed_regression": any(
+                row.get("target") == target_name and row.get("reason") == "speedup"
+                for row in recheck_comparison.get("regressions", [])
+            ),
+        }
+        rechecks.append(recheck_record)
+
+        if recheck_record["confirmed_regression"]:
+            confirmed.append(regression)
+        else:
+            suppressed.append(
+                {
+                    **regression,
+                    "suppression_reason": "recheck_not_regressed",
+                    "recheck_run_id": recheck_execution["run_id"],
+                    "recheck_speedup": recheck_target.get("best_speedup"),
+                    "recheck_optimized_time_ms": recheck_target.get("best_optimized_time_ms"),
+                }
+            )
+
+    comparison["regressions"] = confirmed
+    comparison["suppressed_regressions"] = suppressed
+    comparison["rechecks"] = rechecks
+
+    recheck_path = suite_run_dir / "regression_rechecks.json"
+    recheck_path.parent.mkdir(parents=True, exist_ok=True)
+    recheck_path.write_text(json.dumps(rechecks, indent=2), encoding="utf-8")
+    comparison["regression_rechecks_path"] = str(recheck_path)
+    return comparison
+
+
 def build_tier1_suite_summary(
     result_json_path: Path,
     suite: Tier1SuiteDefinition,
@@ -159,6 +349,13 @@ def build_tier1_suite_summary(
                 "status": bench.get("status", "unknown"),
                 "baseline_time_ms": bench.get("baseline_time_ms"),
                 "best_speedup": bench.get("best_speedup"),
+                "best_optimized_time_ms": (
+                    float(bench.get("baseline_time_ms", 0.0) or 0.0)
+                    / float(bench.get("best_speedup", 0.0) or 1.0)
+                    if float(bench.get("baseline_time_ms", 0.0) or 0.0) > 0.0
+                    and float(bench.get("best_speedup", 0.0) or 0.0) > 0.0
+                    else None
+                ),
                 "best_optimization": _find_best_optimization_name(bench),
                 "optimization_goal": bench.get("optimization_goal"),
                 "baseline_memory_mb": bench.get("baseline_memory_mb"),
@@ -331,6 +528,58 @@ def run_tier1_suite(
 
     regression_summary_path = suite_run_dir / "regression_summary.md"
     comparison = compare_suite_summaries(summary, previous_summary)
+    comparison = _confirm_speedup_regressions(
+        comparison=comparison,
+        current_summary=summary,
+        previous_summary=previous_summary,
+        suite=suite,
+        suite_run_dir=suite_run_dir,
+        bench_root=bench_root,
+        execution_run_id=execution["run_id"],
+        profile_type=profile_type or suite.default_profile,
+        output_format=output_format or suite.default_output_format,
+        suite_timeout=suite_timeout,
+        timeout_multiplier=timeout_multiplier,
+        validity_profile=validity_profile,
+        allow_portable_expectations_update=allow_portable_expectations_update,
+        reproducible=reproducible,
+        cold_start=cold_start,
+        force_synchronize=force_synchronize,
+        iterations=iterations,
+        warmup=warmup,
+        gpu_sm_clock_mhz=gpu_sm_clock_mhz,
+        gpu_mem_clock_mhz=gpu_mem_clock_mhz,
+        artifacts_dir=artifacts_dir,
+        log_level=log_level,
+        log_file=log_file,
+        single_gpu=single_gpu,
+        accept_regressions=accept_regressions,
+        update_expectations=update_expectations,
+        allow_mixed_provenance=allow_mixed_provenance,
+        ncu_metric_set=ncu_metric_set,
+        ncu_replay_mode=ncu_replay_mode,
+        pm_sampling_interval=pm_sampling_interval,
+        nsys_timeout_seconds=nsys_timeout_seconds,
+        ncu_timeout_seconds=ncu_timeout_seconds,
+        launch_via=launch_via,
+        nproc_per_node=nproc_per_node,
+        nnodes=nnodes,
+        rdzv_backend=rdzv_backend,
+        rdzv_endpoint=rdzv_endpoint,
+        torchrun_env=torchrun_env,
+        target_extra_args=target_extra_args,
+        verify_input=verify_input,
+        verify_output=verify_output,
+        llm_analysis=llm_analysis,
+        force_llm=force_llm,
+        llm_provider=llm_provider,
+        apply_llm_patches=apply_llm_patches,
+        rebenchmark_llm_patches=rebenchmark_llm_patches,
+        patch_strategy=patch_strategy,
+        llm_patch_retries=llm_patch_retries,
+        use_llm_cache=use_llm_cache,
+        llm_explain=llm_explain,
+    )
     regression_summary_path.write_text(
         render_regression_summary(summary, previous_summary, comparison),
         encoding="utf-8",

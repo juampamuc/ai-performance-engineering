@@ -11,6 +11,7 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from labs.flashattention4.flashattention4_common import (
     BEST_AVAILABLE_PROVIDERS,
+    FLASHATTENTION4_PROVIDER_ORDER,
     FlashAttention4Config,
     FlashAttention4Inputs,
     FlashAttention4Kernel,
@@ -157,7 +158,7 @@ class FlashAttention4BenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
             default=self.default_claim_type,
         )
         decision = resolve_flashattention4_mode_decision(self.config.mode)
-        return {
+        metrics = {
             "flashattention4.mode": self.config.mode,
             "flashattention4.block_size": float(self.config.block_size),
             "flashattention4.window_size": float(self.config.window_size),
@@ -167,7 +168,15 @@ class FlashAttention4BenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
             "flashattention4.recommended_provider_id": flashattention4_provider_id(
                 decision.recommended_backend
             ),
+            "flashattention4.provider_matches_recommended": (
+                1.0 if self._selected_provider == decision.recommended_backend else 0.0
+            ),
         }
+        for provider in FLASHATTENTION4_PROVIDER_ORDER:
+            metrics[f"flashattention4.selected.{provider}"] = (
+                1.0 if self._selected_provider == provider else 0.0
+            )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         state_error = self._validate_state()

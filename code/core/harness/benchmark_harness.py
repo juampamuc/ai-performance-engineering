@@ -2070,6 +2070,7 @@ class BenchmarkHarness:
 
         repo_root = Path(__file__).resolve().parents[2]
         env = build_repo_python_env(repo_root, base_env=os.environ.copy())
+        env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", str(os.getpid())))
         for key in getattr(config, "env_passthrough", []) or []:
             if key in os.environ:
                 env[key] = os.environ[key]
@@ -2846,6 +2847,7 @@ class BenchmarkHarness:
             import signal
             repo_root = Path(__file__).resolve().parents[2]
             env = build_repo_python_env(repo_root, base_env=os.environ.copy())
+            env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", str(os.getpid())))
             if getattr(config, "single_gpu", False):
                 env["CUDA_VISIBLE_DEVICES"] = self._select_single_gpu_visible()
             process = subprocess.Popen(
@@ -3303,6 +3305,7 @@ class BenchmarkHarness:
         inference_timing_data = None
         seed_metadata = copy.deepcopy(getattr(self, "_seed_info", None))
         locked_gpu_metrics: Optional[Dict[str, Optional[float | str]]] = None
+        captured_custom_metrics: Optional[Dict[str, float]] = None
         
         # Get benchmark name for error messages (same as subprocess path)
         benchmark_class = benchmark.__class__.__name__
@@ -3396,7 +3399,7 @@ class BenchmarkHarness:
         
         def run_benchmark_internal():
             """Internal benchmark execution function."""
-            nonlocal times_ms, memory_peak_mb, memory_allocated_mb, profiling_outputs, errors, nsys_metrics, ncu_metrics, timeout_result_storage, inference_timing_data, locked_gpu_metrics
+            nonlocal times_ms, memory_peak_mb, memory_allocated_mb, profiling_outputs, errors, nsys_metrics, ncu_metrics, timeout_result_storage, inference_timing_data, locked_gpu_metrics, captured_custom_metrics
             validity_profile = str(getattr(config, "validity_profile", "strict")).strip().lower()
             portable_mode = validity_profile == "portable"
             clock_lock_active = False
@@ -3750,6 +3753,9 @@ class BenchmarkHarness:
                         except Exception:
                             # Execution marker is advisory; failures are surfaced in verification
                             pass
+
+                    # Capture benchmark-specific metrics before teardown mutates benchmark state.
+                    captured_custom_metrics = self._resolve_custom_metrics(benchmark)
                     
                     if stage_watchdog['measurement']['status'] == 'running':
                         finish_stage('measurement')
@@ -3946,7 +3952,7 @@ class BenchmarkHarness:
         result.seeds = copy.deepcopy(seed_metadata)
 
         # Attach benchmark-specific metrics and throughput (parity with subprocess path)
-        custom_metrics = self._resolve_custom_metrics(benchmark)
+        custom_metrics = captured_custom_metrics or self._resolve_custom_metrics(benchmark)
         if custom_metrics:
             result.custom_metrics = custom_metrics
         self._attach_throughput_metrics(result, benchmark)

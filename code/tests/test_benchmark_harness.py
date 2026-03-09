@@ -259,6 +259,41 @@ class TestPyTorchTimerCorrectness:
         assert benchmark.calls > config.warmup
 
 
+def test_thread_mode_captures_custom_metrics_before_teardown():
+    class CustomMetricBenchmark(SimpleBenchmark):
+        def __init__(self):
+            super().__init__()
+            self.provider_name = None
+
+        def setup(self) -> None:
+            super().setup()
+            self.provider_name = "flash_backend"
+
+        def get_custom_metrics(self) -> Optional[dict]:
+            return {
+                "flashattention4.provider_id": 2.0 if self.provider_name == "flash_backend" else 0.0,
+            }
+
+        def teardown(self) -> None:
+            self.provider_name = None
+            super().teardown()
+
+    benchmark = CustomMetricBenchmark()
+    config = BenchmarkConfig(
+        iterations=5,
+        warmup=5,
+        enable_profiling=False,
+        enable_memory_tracking=False,
+        use_subprocess=False,
+        execution_mode="thread",
+    )
+    harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
+
+    result = harness._benchmark_with_threading(benchmark, config)
+
+    assert result.custom_metrics["flashattention4.provider_id"] == 2.0
+
+
 class TestTimeoutMultiplierPropagation:
     """Ensure timeout multipliers behave correctly inside the harness."""
     

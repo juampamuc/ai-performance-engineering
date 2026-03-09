@@ -752,6 +752,28 @@ def _pid_is_live_process(pid: int, proc_root: Path = Path("/proc")) -> bool:
     return state not in {"Z", "X", "x"}
 
 
+def _read_process_environ_value(
+    pid: int,
+    key: str,
+    proc_root: Path = Path("/proc"),
+) -> Optional[str]:
+    """Return a single environment variable from `/proc/<pid>/environ` when readable."""
+    env_path = proc_root / str(int(pid)) / "environ"
+    try:
+        raw = env_path.read_bytes()
+    except Exception:
+        return None
+
+    prefix = f"{key}=".encode("utf-8")
+    for entry in raw.split(b"\0"):
+        if entry.startswith(prefix):
+            try:
+                return entry[len(prefix) :].decode("utf-8", errors="ignore")
+            except Exception:
+                return None
+    return None
+
+
 def validate_environment(
     *,
     device: Optional["torch.device"] = None,
@@ -832,10 +854,21 @@ def validate_environment(
                     owned_process_tree = _collect_process_tree_pids(os.getpid())
                     owned_process_lineage = _collect_process_lineage_pids(os.getpid())
                     owned_related_pids = owned_process_tree | owned_process_lineage
+                    owned_run_marker = str(probe.env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+                    if owned_run_marker:
+                        details["owned_benchmark_run_id"] = owned_run_marker
                     foreign_procs = [
                         proc
                         for proc in foreign_procs
                         if int(proc.get("pid", -1)) not in owned_related_pids
+                        and (
+                            not owned_run_marker
+                            or _read_process_environ_value(
+                                int(proc.get("pid", -1)),
+                                "AISP_BENCHMARK_OWNER_RUN_ID",
+                            )
+                            != owned_run_marker
+                        )
                         and _pid_is_live_process(int(proc.get("pid", -1)))
                     ]
                     details["foreign_cuda_compute_processes"] = foreign_procs

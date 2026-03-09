@@ -379,3 +379,54 @@ def test_environment_enforcement_foreign_gpu_processes_ignore_dead_pids(
     )
     assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
     assert result.details.get("foreign_cuda_compute_processes") == [], result.details
+
+
+def test_environment_enforcement_foreign_gpu_processes_ignore_same_run_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    monkeypatch.setattr(validity_checks.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(validity_checks.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(validity_checks.torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_tree_pids",
+        lambda _pid, proc_root=Path("/proc"): {int(os.getpid())},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_lineage_pids",
+        lambda _pid, proc_root=Path("/proc"): {int(os.getpid())},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_list_foreign_cuda_compute_processes",
+        lambda **kwargs: (
+            [{"pid": 4444, "process_name": "python", "used_memory_mb": 2048.0}],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_read_process_environ_value",
+        lambda pid, key, proc_root=Path("/proc"): "tier1-owner" if int(pid) == 4444 else None,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_pid_is_live_process",
+        lambda pid, proc_root=Path("/proc"): True,
+    )
+
+    result = validate_environment(
+        device=torch.device("cuda"),
+        probe=EnvironmentProbe(
+            root=Path("/"),
+            env={
+                "AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0",
+                "AISP_BENCHMARK_OWNER_RUN_ID": "tier1-owner",
+            },
+        ),
+    )
+    assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
+    assert result.details.get("foreign_cuda_compute_processes") == [], result.details

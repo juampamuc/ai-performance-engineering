@@ -13,6 +13,7 @@ Usage:
 
 import sys
 import os
+import atexit
 from pathlib import Path
 import json
 import shutil
@@ -2239,6 +2240,84 @@ def _terminate_process_group(process: subprocess.Popen, reason: str, timeout_sec
             logger.warning("  NCU profiling cleanup triggered (%s); killed process group", reason)
 
 
+def _collect_descendant_pids(root_pid: int) -> List[int]:
+    """Collect descendant PIDs for the current run process."""
+    parent_to_children: Dict[int, Set[int]] = {}
+    try:
+        proc_entries = list(Path("/proc").iterdir())
+    except Exception:
+        return []
+
+    for proc_dir in proc_entries:
+        if not proc_dir.name.isdigit():
+            continue
+        try:
+            stat_text = (proc_dir / "stat").read_text(encoding="utf-8")
+        except Exception:
+            continue
+        close_paren = stat_text.rfind(")")
+        if close_paren < 0:
+            continue
+        tail = stat_text[close_paren + 1 :].strip().split()
+        if len(tail) < 2:
+            continue
+        try:
+            pid = int(proc_dir.name)
+            ppid = int(tail[1])
+        except ValueError:
+            continue
+        parent_to_children.setdefault(ppid, set()).add(pid)
+
+    descendants: List[int] = []
+    stack = [int(root_pid)]
+    seen = {int(root_pid)}
+    while stack:
+        parent = stack.pop()
+        for child in parent_to_children.get(parent, set()):
+            if child in seen:
+                continue
+            seen.add(child)
+            descendants.append(child)
+            stack.append(child)
+    return descendants
+
+
+def _reap_run_descendants(reason: str, *, grace_seconds: float = 2.0) -> None:
+    """Best-effort cleanup of leaked descendant processes owned by this run."""
+    descendants = _collect_descendant_pids(os.getpid())
+    if not descendants:
+        return
+
+    for pid in descendants:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    remaining = descendants
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = [pid for pid in remaining if Path(f"/proc/{pid}").exists()]
+
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    if LOGGER_AVAILABLE and descendants:
+        logger.warning(
+            "  Reaped %d leaked descendant process(es) after %s",
+            len(descendants),
+            reason,
+        )
+
+
 def profile_python_benchmark_ncu(
     benchmark: Any,  # Benchmark instance
     benchmark_path: Path,
@@ -4351,6 +4430,7 @@ def _test_chapter_impl(
                         )
                     
                     logger.info(f" ({', '.join(profiler_results)})")
+                    _reap_run_descendants(f"{chapter_name}:{example_name}:baseline_profiling")
                     
                     # Display extracted metrics
                     if baseline_metrics:
@@ -5172,6 +5252,7 @@ def _test_chapter_impl(
                             )
                         
                         logger.info(f" ({', '.join(profiler_results)})")
+                        _reap_run_descendants(f"{chapter_name}:{example_name}:{technique}:optimized_profiling")
                         
                         # Display extracted metrics
                         if optimized_metrics:
@@ -6181,6 +6262,7 @@ def _test_chapter_impl(
                     )
 
                 logger.info(f" ({', '.join(profiler_results)})")
+                _reap_run_descendants(f"{chapter_name}:{example_name}:cuda_baseline_profiling")
 
                 # Display extracted metrics
                 if baseline_metrics:
@@ -6635,24 +6717,25 @@ def _test_chapter_impl(
                             metrics=None,
                         )
 
-                    logger.info(f" ({', '.join(profiler_results)})")
+                        logger.info(f" ({', '.join(profiler_results)})")
+                        _reap_run_descendants(f"{chapter_name}:{example_name}:{best_key}:cuda_optimized_profiling")
 
-                    # Display extracted metrics
-                    if optimized_metrics:
-                        logger.info("        📈 Profiler Metrics:")
-                        log_profiler_metrics_table(logger, optimized_metrics, indent="          ")
-                        opt_result['optimized_profiler_metrics'] = optimized_metrics
-                        emit_event(
-                            event_logger,
-                            logger,
-                            "profiler_summary",
-                            chapter=chapter_name,
-                            example=example_name,
-                            example_type="cuda",
-                            variant="optimized",
-                            technique=technique,
-                            metrics=optimized_metrics,
-                        )
+                        # Display extracted metrics
+                        if optimized_metrics:
+                            logger.info("        📈 Profiler Metrics:")
+                            log_profiler_metrics_table(logger, optimized_metrics, indent="          ")
+                            opt_result['optimized_profiler_metrics'] = optimized_metrics
+                            emit_event(
+                                event_logger,
+                                logger,
+                                "profiler_summary",
+                                chapter=chapter_name,
+                                example=example_name,
+                                example_type="cuda",
+                                variant="optimized",
+                                technique=technique,
+                                metrics=optimized_metrics,
+                            )
 
                 result_entry['optimizations'].append(opt_result)
                 emit_event(
@@ -9737,6 +9820,8 @@ def main():
     logger.info(f"Target override: {args.targets}")
     logger.info(f"Bench root: {active_bench_root}")
     event_run_id = build_run_id("bench-main", base_dir=default_artifacts_root(active_bench_root))
+    os.environ["AISP_BENCHMARK_OWNER_RUN_ID"] = event_run_id
+    atexit.register(_reap_run_descendants, "run_exit")
     event_log_path = args.output.parent / "benchmark_events.jsonl"
     event_logger = BenchmarkEventLogger(event_log_path, event_run_id, logger)
     defaults = get_defaults() or BenchmarkDefaults()
@@ -9771,6 +9856,7 @@ def main():
         chapter_dirs, chapter_filters = resolve_target_chapters(args.targets, bench_root=active_bench_root)
     except (ValueError, FileNotFoundError) as exc:
         logger.error(f"ERROR: {exc}")
+        _reap_run_descendants("target_resolution_failure")
         event_logger.close()
         sys.exit(1)
     preflight_issues = _preflight_target_coverage_and_assets(
@@ -9790,6 +9876,7 @@ def main():
             preflight_failed=True,
             issues=preflight_issues,
         )
+        _reap_run_descendants("preflight_failure")
         event_logger.close()
         return 1
 
@@ -10002,7 +10089,8 @@ def main():
         logger.info(f"  Average: {sum(all_speedups)/len(all_speedups):.2f}x")
         logger.info(f"  Best: {max(all_speedups):.2f}x")
         logger.info(f"  Worst: {min(all_speedups):.2f}x")
-    
+
+    _reap_run_descendants("run_end")
     return 0 if total_failed == 0 else 1
 
 

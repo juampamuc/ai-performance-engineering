@@ -21,6 +21,7 @@ def compare_suite_summaries(
     *,
     speedup_regression_threshold_pct: float = 5.0,
     memory_regression_threshold_points: float = 5.0,
+    min_optimized_time_delta_ms: float = 0.05,
 ) -> Dict[str, Any]:
     if baseline is None:
         return {
@@ -68,16 +69,29 @@ def compare_suite_summaries(
         previous_speedup = float(previous.get("best_speedup", 0.0) or 0.0)
         if current_speedup > 0 and previous_speedup > 0:
             delta_pct = ((current_speedup - previous_speedup) / previous_speedup) * 100.0
+            current_optimized_ms = float(current_target.get("best_optimized_time_ms", 0.0) or 0.0)
+            previous_optimized_ms = float(previous.get("best_optimized_time_ms", 0.0) or 0.0)
+            optimized_time_delta_ms = current_optimized_ms - previous_optimized_ms
             payload = {
                 "target": target_name,
                 "reason": "speedup",
                 "before": previous_speedup,
                 "after": current_speedup,
                 "delta_pct": delta_pct,
+                "optimized_time_before_ms": previous_optimized_ms or None,
+                "optimized_time_after_ms": current_optimized_ms or None,
+                "optimized_time_delta_ms": optimized_time_delta_ms
+                if previous_optimized_ms > 0 and current_optimized_ms > 0
+                else None,
             }
-            if delta_pct <= -speedup_regression_threshold_pct:
+            significant_optimized_time_change = (
+                previous_optimized_ms <= 0.0
+                or current_optimized_ms <= 0.0
+                or abs(optimized_time_delta_ms) >= min_optimized_time_delta_ms
+            )
+            if delta_pct <= -speedup_regression_threshold_pct and significant_optimized_time_change:
                 regressions.append(payload)
-            elif delta_pct >= speedup_regression_threshold_pct:
+            elif delta_pct >= speedup_regression_threshold_pct and significant_optimized_time_change:
                 improvements.append(payload)
 
         current_memory = float(current_target.get("best_memory_savings_pct", 0.0) or 0.0)
@@ -130,6 +144,7 @@ def render_regression_summary(
         "",
         f"- Regressions: {len(comparison.get('regressions', []))}",
         f"- Improvements: {len(comparison.get('improvements', []))}",
+        f"- Suppressed regressions after recheck: {len(comparison.get('suppressed_regressions', []))}",
         f"- New targets: {len(comparison.get('new_targets', []))}",
         f"- Missing targets: {len(comparison.get('missing_targets', []))}",
         "",
@@ -155,6 +170,27 @@ def render_regression_summary(
         _render_rows("Regressions", comparison["regressions"])
     if comparison.get("improvements"):
         _render_rows("Improvements", comparison["improvements"])
+
+    if comparison.get("suppressed_regressions"):
+        lines.extend(
+            [
+                "## Suppressed Regressions After Recheck",
+                "",
+                "| Target | Initial delta (%) | Recheck speedup | Recheck optimized ms | Recheck run |",
+                "| --- | ---: | ---: | ---: | --- |",
+            ]
+        )
+        for row in comparison["suppressed_regressions"]:
+            delta_text = f"{float(row.get('delta_pct', 0.0)):+.2f}"
+            recheck_speedup = row.get("recheck_speedup")
+            recheck_speedup_text = "" if recheck_speedup is None else f"{float(recheck_speedup):.3f}"
+            recheck_time = row.get("recheck_optimized_time_ms")
+            recheck_time_text = "" if recheck_time is None else f"{float(recheck_time):.3f}"
+            recheck_run = row.get("recheck_run_id", "")
+            lines.append(
+                f"| `{row.get('target')}` | {delta_text} | {recheck_speedup_text} | {recheck_time_text} | `{recheck_run}` |"
+            )
+        lines.append("")
 
     if comparison.get("new_targets"):
         lines.extend(["## New Targets", ""])
