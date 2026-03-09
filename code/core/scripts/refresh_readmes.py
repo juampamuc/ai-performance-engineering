@@ -5289,16 +5289,97 @@ ENTRIES["labs/moe_parallelism"] = lab_entry(
     ],
     contents=[
         ("`run_lab.py`, `scenarios.py`, `plan.py`", "Tool entry point + canonical scenario definitions and sizing model."),
-        ("`benchmarking.py`", "Optional harness wrapper for ad-hoc validation and integration."),
+        ("`benchmarking.py`", "Optional harness-compatible wrapper for ad-hoc integration; not currently a public baseline/optimized benchmark pair."),
     ],
+    run=RunSection(
+        commands=[
+            "python -m cli.aisp tools moe-parallelism -- --scenario memory_budget",
+            "python -m cli.aisp tools moe-parallelism -- --scenario gpt_gb200",
+            "python labs/moe_parallelism/run_lab.py --scenario deepseek_gb200",
+        ],
+        notes=[
+            "`python -m cli.aisp bench list-targets --chapter labs/moe_parallelism` intentionally returns no benchmark pairs today.",
+            "If this lab is later promoted into harness targets, add explicit `baseline_*.py` and `optimized_*.py` entrypoints instead of implying them in the README.",
+        ],
+    ),
     validation=[
         "`python -m cli.aisp tools moe-parallelism -- --scenario memory_budget` runs a single scenario via the tool registry.",
         "`python -m cli.aisp tools moe-parallelism -- --scenario gpt_gb200` runs a larger cluster scenario.",
         "`python labs/moe_parallelism/run_lab.py --scenario deepseek_gb200` runs the planner directly (without aisp).",
     ],
+    run_heading="Running the Tool",
+    run_intro=(
+        "Use the tool entrypoint or the direct script when you want reproducible "
+        "scenario comparisons. This lab does not currently expose public "
+        "baseline/optimized harness targets."
+    ),
     notes=[
         "Baseline vs optimized here are *planning* scenarios (different designs), not comparable performance benchmarks.",
         "`plan.py` centralizes scenario definitions so you only update one file when adding a new topology.",
+    ],
+)
+
+ENTRIES["labs/uma_memory"] = lab_entry(
+    slug="labs/uma_memory",
+    title="Lab - UMA Memory Diagnostics",
+    summary=dedent(
+        """\
+        Diagnostics for UMA / unified-memory systems: capture device-visible free memory, host reclaimable memory, and JSON snapshots before you make claims about allocator behavior or memory-fit limits."""
+    ),
+    lead_sections=[
+        MarkdownSection(
+            "Problem",
+            dedent(
+                """\
+                On UMA-capable systems, a "GPU memory" question is often really a host-memory and reclaimability question. This lab exists to make that boundary explicit instead of inferring it from a single `nvidia-smi` or `cudaMemGetInfo()` number."""
+            ),
+        ),
+        MarkdownSection(
+            "What This Lab Is",
+            dedent(
+                """\
+                - a diagnostics/tool lab
+                - human-readable reporting plus JSON snapshots
+                - useful before larger UMA, memory-fit, or allocation experiments
+
+                It is **not** currently a baseline/optimized benchmark pair, and discovery intentionally reports zero harness targets here."""
+            ),
+        ),
+    ],
+    goals=[
+        "Measure device-free memory and host-available memory together.",
+        "Estimate UMA allocatable capacity with an explicit reclaim assumption.",
+        "Capture reproducible snapshots before and after runtime, allocator, or workload changes.",
+    ],
+    contents=[
+        ("`uma_memory_reporting.py`", "Main reporting tool that prints a human-readable report and can emit JSON snapshots."),
+        ("`uma_memory_utils.py`", "Helpers for parsing `/proc/meminfo`, formatting byte counts, and detecting integrated GPUs."),
+        ("`__init__.py`", "Package marker for the lab/tool module."),
+    ],
+    run=RunSection(
+        commands=[
+            "python -m cli.aisp tools uma-memory -- --device-index 0",
+            "python -m cli.aisp tools uma-memory -- --device-index 0 --snapshot --snapshot-dir artifacts/uma_memory_snapshots",
+            "python labs/uma_memory/uma_memory_reporting.py --json --device-index 0",
+        ],
+        notes=[
+            "This lab is tool-driven, not benchmark-pair driven.",
+            "Snapshot JSON is the artifact to compare across allocator, driver, or system-configuration changes.",
+        ],
+    ),
+    validation=[
+        "`python -m cli.aisp tools uma-memory -- --device-index 0` prints a readable summary without requiring manual parsing.",
+        "`python -m cli.aisp tools uma-memory -- --device-index 0 --snapshot` writes a structured JSON artifact under `artifacts/uma_memory_snapshots/`.",
+        "Direct-script output and tool-registry output should agree for the same `--device-index` and reclaim settings.",
+    ],
+    run_heading="Running the Tool",
+    run_intro=(
+        "Use the tool entrypoint for standard reporting or call the script "
+        "directly when iterating locally."
+    ),
+    notes=[
+        "The tool combines `torch.cuda.mem_get_info()` with `/proc/meminfo` so the report stays explicit about what is device memory vs host-side reclaimability.",
+        "Use this as environment evidence for chapters/labs that discuss UMA or memory fit; it is not a substitute for workload benchmarks.",
     ],
 )
 

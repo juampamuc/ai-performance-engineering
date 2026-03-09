@@ -1,16 +1,15 @@
-"""Python harness wrapper for baseline_tma_copy.cu."""
+"""Python harness wrapper for the non-TMA baseline in the tma_copy benchmark."""
 
 from __future__ import annotations
 from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
 class BaselineTMACopyBenchmark(CudaBinaryBenchmark):
-    """Wraps the baseline TMA descriptor copy kernel."""
+    """Wraps the non-TMA baseline for the tma_copy benchmark pair."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -21,7 +20,7 @@ class BaselineTMACopyBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_tma_copy",
-            friendly_name="Baseline Tma Copy",
+            friendly_name="Baseline Tma Copy (Non-TMA)",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

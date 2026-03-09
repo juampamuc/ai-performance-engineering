@@ -13,18 +13,17 @@ Scenario planning tool for mixture-of-experts clusters: memory budgeting, networ
 | Path | Description |
 | --- | --- |
 | `run_lab.py`, `scenarios.py`, `plan.py` | Tool entry point + canonical scenario definitions and sizing model. |
-| `benchmarking.py` | Optional harness wrapper for ad-hoc validation and integration. |
+| `benchmarking.py` | Optional harness-compatible wrapper for ad-hoc integration; not currently a public baseline/optimized benchmark pair. |
 
-## Running the Benchmarks
-Use the benchmark harness for quick comparisons or drive the Typer CLI when you need repeatable artifact capture.
+## Running the Tool
+Use the tool entrypoint or the direct script when you want reproducible scenario comparisons. This lab does not currently expose public baseline/optimized harness targets.
 ```bash
-python -m cli.aisp bench list-targets --chapter labs/moe_parallelism
-python -m cli.aisp bench run --targets labs/moe_parallelism --profile minimal
+python -m cli.aisp tools moe-parallelism -- --scenario memory_budget
+python -m cli.aisp tools moe-parallelism -- --scenario gpt_gb200
+python labs/moe_parallelism/run_lab.py --scenario deepseek_gb200
 ```
-- Targets follow the `labs/moe_parallelism:<workload>` naming convention listed by `list-targets`.
-- Use `--target-extra-arg labs/moe_parallelism:<workload>="--flag value"` to sweep schedule knobs.
-- Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.
-- Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
+- `python -m cli.aisp bench list-targets --chapter labs/moe_parallelism` intentionally returns no benchmark pairs today.
+- If this lab is later promoted into harness targets, add explicit `baseline_*.py` and `optimized_*.py` entrypoints instead of implying them in the README.
 
 ## Validation Checklist
 - `python -m cli.aisp tools moe-parallelism -- --scenario memory_budget` runs a single scenario via the tool registry.
