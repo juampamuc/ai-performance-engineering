@@ -5,13 +5,12 @@ from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 from core.benchmark.verification import simple_signature
 
 
 class OptimizedCooperativePersistentBenchmark(CudaBinaryBenchmark):
-    """Wraps the optimized cooperative persistent kernel."""
+    """Wraps the two-stage cooperative persistent optimized kernel."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -30,7 +29,7 @@ class OptimizedCooperativePersistentBenchmark(CudaBinaryBenchmark):
                 "iterations": 40,
             },
         )
-        self.register_workload_metadata(bytes_per_iteration=1024 * 1024)
+        self.register_workload_metadata(bytes_per_iteration=float((1 << 24) * 2 * 4))
 
 
     def get_custom_metrics(self) -> Optional[dict]:
@@ -42,7 +41,7 @@ class OptimizedCooperativePersistentBenchmark(CudaBinaryBenchmark):
         )
 
     def get_input_signature(self) -> dict:
-        """Explicit signature for cooperative persistent optimized pipeline."""
+        """Explicit signature for the cooperative persistent optimized kernel."""
         return simple_signature(
             batch_size=1 << 24,
             dtype="float32",

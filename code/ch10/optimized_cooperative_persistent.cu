@@ -1,5 +1,5 @@
 // optimized_cooperative_persistent.cu
-// Cooperative persistent kernel that double-buffers tiles in shared memory using cuda::pipeline.
+// Single-launch cooperative persistent kernel with two-stage shared-memory ping-pong.
 
 #include <cooperative_groups.h>
 #include <cuda/pipeline>
@@ -18,6 +18,7 @@ namespace cg = cooperative_groups;
 
 constexpr int ELEMENTS = 1 << 24;
 constexpr int ITERATIONS = 40;
+constexpr int WARMUP_ITERATIONS = 2;
 constexpr int PIPELINE_STAGES = 2;
 constexpr int THREADS_PER_BLOCK = 256;
 constexpr int ITEMS_PER_THREAD = 4;
@@ -36,7 +37,11 @@ __device__ __forceinline__ int tile_remaining(int elements, int base) {
   return remaining > 0 ? remaining : 0;
 }
 
-__global__ void persistent_pipeline(float* data, int elements, float scale, float bias) {
+__global__ void persistent_pipeline(float* data,
+                                    int elements,
+                                    float scale,
+                                    float bias,
+                                    int iterations) {
   cg::thread_block block = cg::this_thread_block();
   extern __shared__ float shared[];
 
@@ -85,25 +90,29 @@ __global__ void persistent_pipeline(float* data, int elements, float scale, floa
     }
   };
 
-  int next_tile = blockIdx.x;
-  for (int stage = 0; stage < PIPELINE_STAGES; ++stage) {
-    if (next_tile < total_tiles) {
-      prefetch_tile(next_tile, stage);
-      next_tile += gridDim.x;
+  for (int iter = 0; iter < iterations; ++iter) {
+    int next_tile = blockIdx.x;
+    for (int stage = 0; stage < PIPELINE_STAGES; ++stage) {
+      if (next_tile < total_tiles) {
+        prefetch_tile(next_tile, stage);
+        next_tile += gridDim.x;
+      }
     }
-  }
 
-  for (int tile = blockIdx.x; tile < total_tiles; tile += gridDim.x) {
-    const int stage = tile % PIPELINE_STAGES;
-    pipe.consumer_wait();
+    for (int tile = blockIdx.x, tile_iter = 0; tile < total_tiles; tile += gridDim.x, ++tile_iter) {
+      const int stage = tile_iter % PIPELINE_STAGES;
+      pipe.consumer_wait();
+      block.sync();
+      process_tile(tile, stage);
+      block.sync();
+      pipe.consumer_release();
+
+      if (next_tile < total_tiles) {
+        prefetch_tile(next_tile, stage);
+        next_tile += gridDim.x;
+      }
+    }
     block.sync();
-    process_tile(tile, stage);
-    pipe.consumer_release();
-
-    if (next_tile < total_tiles) {
-      prefetch_tile(next_tile, stage);
-      next_tile += gridDim.x;
-    }
   }
 }
 
@@ -148,7 +157,7 @@ int main() {
 
   // Warmup one launch.
   persistent_pipeline<<<grid, block, shared_bytes>>>(
-      d_data, ELEMENTS, 1.001f, 0.05f);
+      d_data, ELEMENTS, 1.001f, 0.05f, WARMUP_ITERATIONS);
   CUDA_CHECK_LAST_ERROR();
   CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -157,11 +166,9 @@ int main() {
   CUDA_CHECK(cudaEventCreate(&stop));
 
   CUDA_CHECK(cudaEventRecord(start));
-  for (int iter = 0; iter < ITERATIONS; ++iter) {
-      NVTX_RANGE("compute_kernel:persistent_pipeline:smem");
-    persistent_pipeline<<<grid, block, shared_bytes>>>(
-        d_data, ELEMENTS, 1.001f, 0.05f);
-  }
+  NVTX_RANGE("compute_kernel:persistent_pipeline:smem");
+  persistent_pipeline<<<grid, block, shared_bytes>>>(
+      d_data, ELEMENTS, 1.001f, 0.05f, ITERATIONS);
   CUDA_CHECK_LAST_ERROR();
   CUDA_CHECK(cudaEventRecord(stop));
   CUDA_CHECK(cudaEventSynchronize(stop));
@@ -173,7 +180,9 @@ int main() {
   CUDA_CHECK(cudaMemcpy(h_data.data(), d_data, bytes, cudaMemcpyDeviceToHost));
   const double chk = checksum(h_data);
 
-  std::printf("Optimized cooperative pipeline: %.3f ms (%d iterations)\n", avg_ms, ITERATIONS);
+  std::printf("Optimized cooperative persistent pipeline: %.3f ms (%d iterations)\n",
+              avg_ms,
+              ITERATIONS);
   std::printf("TIME_MS: %.6f\n", avg_ms);
   std::printf("Checksum: %.6f\n", chk);
   VERIFY_PRINT_CHECKSUM(static_cast<float>(chk));
