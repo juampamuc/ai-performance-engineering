@@ -19,7 +19,15 @@ Recommendation inference is often dominated by sparse embedding lookups, pooling
 - identical synthetic workload, weights, and verification inputs as the baseline
 
 ## Measured Delta
-This lab is scaffolded but not yet published with a validated artifact package. No measured delta is claimed until it is run on target GPU hardware and an expectations file is generated.
+Current validated strict result from `artifacts/runs/20260310_001644__bench__profile_none_targets_labs_recsys_sequence_ranking_sequence_ranking/`:
+
+| Target | Baseline | Optimized | Measured delta |
+| --- | ---: | ---: | ---: |
+| `sequence_ranking` | `5.071 ms` | `1.008 ms` | `5.03x` |
+
+Verification stayed clean on the same synthetic batch with `max_abs_diff=2.384185791015625e-07`, and the run now has a repo-native expectation entry in `expectations_b200.json`.
+
+This local strict result was collected under virtualization, so it is useful for repo health and regression tracking, but absolute publish-grade numbers should still be re-collected on bare metal.
 
 ## Profiler Evidence
 ```bash
@@ -48,6 +56,7 @@ python -m cli.aisp bench run --targets labs/recsys_sequence_ranking:sequence_ran
 | `optimized_sequence_ranking.py` | Vectorized/compiled path with Triton candidate scoring. |
 | `compare_sequence_ranking.py` | Direct local runner for parity and rough speedup checks outside the full harness. |
 | `recsys_sequence_ranking_common.py` | Shared synthetic workload generation, deterministic model init, and Triton kernel helpers. |
+| `expectations_b200.json` | Strict harness expectation entry generated from the current B200 validation run. |
 | `__init__.py` | Lab package marker. |
 
 ## Running the Benchmarks
@@ -67,7 +76,8 @@ python -m labs.recsys_sequence_ranking.compare_sequence_ranking --iterations 10 
 - `python -m cli.aisp bench list-targets --chapter labs/recsys_sequence_ranking` discovers `sequence_ranking`.
 - `python -m cli.aisp bench run --targets labs/recsys_sequence_ranking --profile minimal` keeps baseline and optimized outputs verification-clean on the same synthetic batch.
 - `python -m labs.recsys_sequence_ranking.compare_sequence_ranking --iterations 10` reports a small max-abs-diff between the two paths before any speedup claim is trusted.
-- The optimized path only becomes a publishable claim after a measured artifact package and expectations file exist for target hardware.
+- `expectations_b200.json` stays aligned with the latest strict B200 run when the workload shape or implementation changes.
+- Treat the current virtualized strict run as regression evidence; re-run on bare metal before publishing absolute latency numbers externally.
 
 ## Notes
 - The workload is intentionally synthetic and weight-light. The point is to benchmark sparse ranking mechanics, not offline recommendation quality.

@@ -49,8 +49,6 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def setup(self) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("labs.recsys_sequence_ranking requires CUDA for fair comparison")
-        torch.manual_seed(self.workload.seed)
-        torch.cuda.manual_seed_all(self.workload.seed)
         self.inputs = build_inputs(self.workload, self.device)
         self.state = build_model_state(self.workload, self.device)
         self.output = None
