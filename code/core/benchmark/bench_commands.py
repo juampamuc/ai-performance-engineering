@@ -1754,6 +1754,7 @@ if TYPER_AVAILABLE:
         bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
     ):
         """List available benchmark targets in chapter:example format."""
+        repo_root = Path(__file__).resolve().parents[2]
         active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
         if chapter:
             chapter_dirs, _ = resolve_target_chapters([chapter], bench_root=active_bench_root)
@@ -1782,6 +1783,7 @@ if TYPER_AVAILABLE:
         bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
     ):
         """List all discoverable chapters and labs."""
+        repo_root = Path(__file__).resolve().parents[2]
         active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
         chapter_dirs = discover_all_chapters(active_bench_root, bench_roots=[active_bench_root])
         for chapter_dir in chapter_dirs:
