@@ -1,23 +1,22 @@
 // optimized_warp_spec_pingpong.cu - Warp-role ping-pong pipeline (Ch10)
 //
 // WHAT:
-//   Three dedicated warps keep fixed roles:
-//   - Warp 0 is the producer and fills the next shared-memory stage
-//   - Warp 1 is the compute warp and works on the current stage
-//   - Warp 2 is the consumer and stores the finished tile
+//   Three dedicated warps cooperate on a two-stage ring buffer:
+//   - Warp 0 is the producer and keeps the next tile prefetched
+//   - Warp 1 and Warp 2 alternate between compute and store duties
 //
 // WHY THIS IS FASTER:
-//   Two shared-memory stages let the producer warp prefetch tile N+1 while the
-//   compute and consumer warps are still draining tile N. That "ping-pong"
-//   scheduling removes the loader bubble that exists in the baseline.
+//   The two consumer warps "ping-pong" their roles across iterations. While one
+//   consumer warp computes tile N, the other stores tile N-1, and the producer
+//   warp refills the freed stage for tile N+1. That overlap is the actual
+//   chapter pattern described in the book.
 //
 // COMPARE WITH:
 //   baseline_warp_spec_pingpong.cu
-//   - Same warp roles and math
-//   - Only one shared-memory stage, so producer/consumer phases serialize
+//   - Same math and the same three-warp footprint
+//   - Only one shared-memory stage, so load/compute/store serialize
 
 #include <cooperative_groups.h>
-#include <cuda/pipeline>
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -41,8 +40,14 @@ constexpr int TOTAL_TILES = 4096;
 constexpr int ITERATIONS = 10;
 
 constexpr int PRODUCER_WARP = 0;
-constexpr int COMPUTE_WARP = 1;
-constexpr int CONSUMER_WARP = 2;
+constexpr int CONSUMER_A_WARP = 1;
+constexpr int CONSUMER_B_WARP = 2;
+
+enum StageState : int {
+    STAGE_EMPTY = 0,
+    STAGE_LOADED = 1,
+    STAGE_COMPUTED = 2,
+};
 
 #define CUDA_CHECK(call)                                                       \
     do {                                                                       \
@@ -65,101 +70,155 @@ __device__ void compute_tile(const float* __restrict__ a_tile,
     }
 }
 
+__device__ __forceinline__ void load_tile(const float* __restrict__ A,
+                                          const float* __restrict__ B,
+                                          float* __restrict__ stage_a,
+                                          float* __restrict__ stage_b,
+                                          size_t offset,
+                                          int lane_id) {
+    for (int idx = lane_id; idx < TILE_ELEMS / 4; idx += warpSize) {
+        float4 a4 = *reinterpret_cast<const float4*>(&A[offset + idx * 4]);
+        float4 b4 = *reinterpret_cast<const float4*>(&B[offset + idx * 4]);
+        *reinterpret_cast<float4*>(&stage_a[idx * 4]) = a4;
+        *reinterpret_cast<float4*>(&stage_b[idx * 4]) = b4;
+    }
+}
+
+__device__ __forceinline__ void store_tile(const float* __restrict__ stage_c,
+                                           float* __restrict__ C,
+                                           size_t offset,
+                                           int lane_id) {
+    for (int idx = lane_id; idx < TILE_ELEMS / 4; idx += warpSize) {
+        float4 c4 = *reinterpret_cast<const float4*>(&stage_c[idx * 4]);
+        *reinterpret_cast<float4*>(&C[offset + idx * 4]) = c4;
+    }
+}
+
+__device__ __forceinline__ void wait_for_stage(volatile int* stage_state,
+                                               volatile int* stage_tile,
+                                               int stage,
+                                               int tile,
+                                               int target_state) {
+    while (stage_state[stage] != target_state || stage_tile[stage] != tile) {
+        __nanosleep(64);
+    }
+}
+
+__device__ __forceinline__ void publish_stage(volatile int* stage_state,
+                                              volatile int* stage_tile,
+                                              int stage,
+                                              int tile,
+                                              int state,
+                                              int lane_id) {
+    __syncwarp();
+    if (lane_id == 0) {
+        stage_tile[stage] = tile;
+        __threadfence_block();
+        stage_state[stage] = state;
+    }
+    __syncwarp();
+}
+
 __global__ void warp_specialized_pingpong(const float* __restrict__ A,
                                           const float* __restrict__ B,
                                           float* __restrict__ C,
                                           int total_tiles) {
-    cg::thread_block block = cg::this_thread_block();
-
     extern __shared__ float shared_mem[];
     float* a_stages = shared_mem;
     float* b_stages = a_stages + PIPELINE_STAGES * TILE_ELEMS;
     float* c_stages = b_stages + PIPELINE_STAGES * TILE_ELEMS;
-
-    using pipeline_state_t =
-        cuda::pipeline_shared_state<cuda::thread_scope_block, PIPELINE_STAGES>;
-    __shared__ alignas(pipeline_state_t) unsigned char state_bytes[sizeof(pipeline_state_t)];
-    auto* state = reinterpret_cast<pipeline_state_t*>(state_bytes);
-    if (threadIdx.x == 0) {
-        new (state) pipeline_state_t();
-    }
-    block.sync();
-    auto pipe = cuda::make_pipeline(block, state);
+    __shared__ volatile int stage_state[PIPELINE_STAGES];
+    __shared__ volatile int stage_tile[PIPELINE_STAGES];
 
     const int warp_id = threadIdx.x / warpSize;
     const int lane_id = threadIdx.x % warpSize;
 
     const bool is_producer = warp_id == PRODUCER_WARP;
-    const bool is_compute = warp_id == COMPUTE_WARP;
-    const bool is_consumer = warp_id == CONSUMER_WARP;
+    const bool is_consumer_a = warp_id == CONSUMER_A_WARP;
+    const bool is_consumer_b = warp_id == CONSUMER_B_WARP;
 
-    for (int stage = 0; stage < PIPELINE_STAGES; ++stage) {
-        int tile = blockIdx.x + stage * gridDim.x;
-        if (tile >= total_tiles) {
-            break;
-        }
-        const size_t offset = static_cast<size_t>(tile) * TILE_ELEMS;
-
-        pipe.producer_acquire();
-        if (is_producer) {
-            float* stage_a = a_stages + stage * TILE_ELEMS;
-            float* stage_b = b_stages + stage * TILE_ELEMS;
-            for (int idx = lane_id; idx < TILE_ELEMS / 4; idx += warpSize) {
-                float4 a4 = *reinterpret_cast<const float4*>(&A[offset + idx * 4]);
-                float4 b4 = *reinterpret_cast<const float4*>(&B[offset + idx * 4]);
-                *reinterpret_cast<float4*>(&stage_a[idx * 4]) = a4;
-                *reinterpret_cast<float4*>(&stage_b[idx * 4]) = b4;
-            }
-        }
-        pipe.producer_commit();
+    if (threadIdx.x < PIPELINE_STAGES) {
+        stage_state[threadIdx.x] = STAGE_EMPTY;
+        stage_tile[threadIdx.x] = -1;
     }
-    block.sync();
+    cg::this_thread_block().sync();
 
-    for (int tile = blockIdx.x, tile_iter = 0; tile < total_tiles; tile += gridDim.x, ++tile_iter) {
+    if (is_producer) {
+        for (int preload = 0; preload < PIPELINE_STAGES; ++preload) {
+            const int tile = blockIdx.x + preload * gridDim.x;
+            if (tile >= total_tiles) {
+                break;
+            }
+            const size_t offset = static_cast<size_t>(tile) * TILE_ELEMS;
+            float* stage_a = a_stages + preload * TILE_ELEMS;
+            float* stage_b = b_stages + preload * TILE_ELEMS;
+            load_tile(A, B, stage_a, stage_b, offset, lane_id);
+            publish_stage(stage_state, stage_tile, preload, tile, STAGE_LOADED, lane_id);
+        }
+    }
+
+    int tiles_for_block = 0;
+    if (blockIdx.x < total_tiles) {
+        tiles_for_block = 1 + (total_tiles - 1 - blockIdx.x) / gridDim.x;
+    }
+
+    for (int tile_iter = 0; tile_iter < tiles_for_block; ++tile_iter) {
+        const int tile = blockIdx.x + tile_iter * gridDim.x;
         const int stage = tile_iter % PIPELINE_STAGES;
+        const int prev_stage = stage ^ 1;
         const size_t offset = static_cast<size_t>(tile) * TILE_ELEMS;
         float* stage_a = a_stages + stage * TILE_ELEMS;
         float* stage_b = b_stages + stage * TILE_ELEMS;
         float* stage_c = c_stages + stage * TILE_ELEMS;
 
-        pipe.consumer_wait();
-        block.sync();
+        const bool consumer_a_computes = (tile_iter % PIPELINE_STAGES) == 0;
+        const bool is_compute_warp =
+            consumer_a_computes ? is_consumer_a : is_consumer_b;
+        const bool is_store_warp =
+            tile_iter > 0 && (consumer_a_computes ? is_consumer_b : is_consumer_a);
 
-        if (is_compute) {
+        if (is_compute_warp) {
+            wait_for_stage(stage_state, stage_tile, stage, tile, STAGE_LOADED);
             compute_tile(stage_a, stage_b, stage_c, lane_id);
+            publish_stage(stage_state, stage_tile, stage, tile, STAGE_COMPUTED, lane_id);
         }
-        block.sync();
 
-        if (is_consumer) {
-            for (int idx = lane_id; idx < TILE_ELEMS / 4; idx += warpSize) {
-                float4 c4 = *reinterpret_cast<const float4*>(&stage_c[idx * 4]);
-                *reinterpret_cast<float4*>(&C[offset + idx * 4]) = c4;
+        if (is_store_warp) {
+            const int prev_tile = blockIdx.x + (tile_iter - 1) * gridDim.x;
+            const size_t prev_offset = static_cast<size_t>(prev_tile) * TILE_ELEMS;
+            float* prev_c = c_stages + prev_stage * TILE_ELEMS;
+            wait_for_stage(stage_state, stage_tile, prev_stage, prev_tile, STAGE_COMPUTED);
+            store_tile(prev_c, C, prev_offset, lane_id);
+            publish_stage(stage_state, stage_tile, prev_stage, -1, STAGE_EMPTY, lane_id);
+        }
+
+        if (is_producer) {
+            const int next_tile = blockIdx.x + (tile_iter + 1) * gridDim.x;
+            if (tile_iter > 0 && next_tile < total_tiles) {
+                wait_for_stage(stage_state, stage_tile, prev_stage, -1, STAGE_EMPTY);
+                const size_t next_offset = static_cast<size_t>(next_tile) * TILE_ELEMS;
+                float* next_a = a_stages + prev_stage * TILE_ELEMS;
+                float* next_b = b_stages + prev_stage * TILE_ELEMS;
+                load_tile(A, B, next_a, next_b, next_offset, lane_id);
+                publish_stage(stage_state, stage_tile, prev_stage, next_tile, STAGE_LOADED, lane_id);
             }
         }
-        block.sync();
+    }
 
-        pipe.consumer_release();
-        block.sync();
-
-        const int next_tile = tile + PIPELINE_STAGES * gridDim.x;
-        if (next_tile < total_tiles) {
-            const int next_stage = (tile_iter + PIPELINE_STAGES) % PIPELINE_STAGES;
-            const size_t next_offset = static_cast<size_t>(next_tile) * TILE_ELEMS;
-
-            pipe.producer_acquire();
-            if (is_producer) {
-                float* next_a = a_stages + next_stage * TILE_ELEMS;
-                float* next_b = b_stages + next_stage * TILE_ELEMS;
-                for (int idx = lane_id; idx < TILE_ELEMS / 4; idx += warpSize) {
-                    float4 a4 = *reinterpret_cast<const float4*>(&A[next_offset + idx * 4]);
-                    float4 b4 = *reinterpret_cast<const float4*>(&B[next_offset + idx * 4]);
-                    *reinterpret_cast<float4*>(&next_a[idx * 4]) = a4;
-                    *reinterpret_cast<float4*>(&next_b[idx * 4]) = b4;
-                }
-            }
-            pipe.producer_commit();
+    if (tiles_for_block > 0) {
+        const int final_iter = tiles_for_block - 1;
+        const int final_tile = blockIdx.x + final_iter * gridDim.x;
+        const int final_stage = final_iter % PIPELINE_STAGES;
+        const size_t final_offset = static_cast<size_t>(final_tile) * TILE_ELEMS;
+        float* final_c = c_stages + final_stage * TILE_ELEMS;
+        const bool consumer_a_finishes = (final_iter % PIPELINE_STAGES) == 0;
+        const bool is_final_store_warp =
+            consumer_a_finishes ? is_consumer_a : is_consumer_b;
+        if (is_final_store_warp) {
+            wait_for_stage(stage_state, stage_tile, final_stage, final_tile, STAGE_COMPUTED);
+            store_tile(final_c, C, final_offset, lane_id);
+            publish_stage(stage_state, stage_tile, final_stage, -1, STAGE_EMPTY, lane_id);
         }
-        block.sync();
     }
 }
 

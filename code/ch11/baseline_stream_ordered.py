@@ -28,10 +28,14 @@ class BaselineStreamOrderedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Increased from 200 to 500 to better demonstrate the speedup from
         # avoiding global synchronization in cudaMalloc/cudaFree.
         self.inner_iterations = 500
+        self.profile_inner_iterations = 8
         self.num_streams = 8
         self.output: Optional[torch.Tensor] = None
         self._payload_inputs: Optional[dict] = None
         self._module: Optional[ModuleType] = None
+        # Application replay is not stable for this allocator-heavy profile on NCU.
+        self.preferred_ncu_replay_mode = "kernel"
+        self.preferred_ncu_metric_set = "minimal"
 
         bytes_per_buffer = float(self.elements * 4)
         # Each inner-iteration: one H2D + D2H per stream.
@@ -39,6 +43,12 @@ class BaselineStreamOrderedBenchmark(VerificationPayloadMixin, BaseBenchmark):
             bytes_per_iteration=float(self.num_streams) * float(self.inner_iterations) * bytes_per_buffer * 2.0,
             requests_per_iteration=float(self.inner_iterations),
         )
+
+    def _active_inner_iterations(self) -> int:
+        config = getattr(self, "_config", None)
+        if config is not None and bool(getattr(config, "enable_profiling", False)):
+            return self.profile_inner_iterations
+        return self.inner_iterations
 
     def setup(self) -> None:
         torch.manual_seed(42)
@@ -51,13 +61,14 @@ class BaselineStreamOrderedBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         if self._module is None:
             raise RuntimeError("Stream-ordered allocator module not initialized")
+        inner_iterations = self._active_inner_iterations()
         with self._nvtx_range("stream_ordered_baseline"):
-            self.output = self._module.run_standard_allocator_capture(self.elements, self.inner_iterations)
+            self.output = self._module.run_standard_allocator_capture(self.elements, inner_iterations)
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
         self._payload_inputs = {
             "elements": torch.tensor([self.elements], dtype=torch.int64),
-            "inner_iterations": torch.tensor([self.inner_iterations], dtype=torch.int64),
+            "inner_iterations": torch.tensor([inner_iterations], dtype=torch.int64),
         }
 
     def capture_verification_payload(self) -> None:

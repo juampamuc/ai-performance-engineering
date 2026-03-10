@@ -819,10 +819,7 @@ def log_expectation_evaluation(
         return
     rel_path = None
     if evaluation.expectation_path:
-        try:
-            rel_path = evaluation.expectation_path.relative_to(repo_root)
-        except ValueError:
-            rel_path = evaluation.expectation_path
+        rel_path = _repo_relative_path(evaluation.expectation_path, repo_root)
     header = f"    Expectations [{evaluation.hardware_key}]"
     if rel_path:
         header += f": {rel_path}"
@@ -2006,6 +2003,22 @@ def _profile_pair_dir(
     return _profile_example_dir(profile_root, chapter_id, example_name) / f"pair__{safe_pair}"
 
 
+def _repo_relative_path(path: Path | str, repo_root: Path) -> str:
+    candidate = Path(path)
+    root = repo_root.resolve()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    candidate = candidate.resolve()
+    try:
+        return str(candidate.relative_to(root))
+    except ValueError:
+        return str(candidate)
+
+
+def _resolve_profile_output_dir(output_dir: Path | str) -> Path:
+    return Path(output_dir).resolve()
+
+
 def profile_python_benchmark(
     benchmark: Any,  # Benchmark instance
     benchmark_path: Path,
@@ -2029,9 +2042,10 @@ def profile_python_benchmark(
     """
     if not check_nsys_available():
         return None
-    
+
+    output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     benchmark_name = output_stem or benchmark_path.stem
     
     bench_config = config
@@ -2198,9 +2212,10 @@ def profile_cuda_executable(
     """
     if not check_nsys_available():
         return None
-    
+
+    output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     exec_name = output_stem or executable.stem
     
     try:
@@ -2362,22 +2377,17 @@ def profile_python_benchmark_ncu(
     """
     if not check_ncu_available():
         return None
-    
+
+    output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create output filename based on benchmark name
     benchmark_name = output_stem or benchmark_path.stem
     ncu_output = output_dir / f"{benchmark_name}__{variant}.ncu-rep"
     
     if config is None:
         config = BenchmarkConfig()
-    preferred_replay = getattr(benchmark, "preferred_ncu_replay_mode", None)
-    if preferred_replay:
-        config = replace(
-            config,
-            ncu_replay_mode=str(preferred_replay),
-            ncu_replay_mode_override=True,
-        )
+    config = _apply_preferred_ncu_profile_overrides(config, benchmark)
 
     profiler_config = build_profiler_config_from_benchmark(config)
     configured_nvtx_includes = profiler_config.nvtx_includes
@@ -2598,6 +2608,24 @@ if __name__ == "__main__":
         Path(wrapper_script.name).unlink(missing_ok=True)
 
 
+def _apply_preferred_ncu_profile_overrides(config: BenchmarkConfig, benchmark: Any) -> BenchmarkConfig:
+    """Apply benchmark-local Nsight Compute overrides for harness-managed profiles."""
+    replacements: Dict[str, Any] = {}
+
+    preferred_replay = getattr(benchmark, "preferred_ncu_replay_mode", None)
+    if preferred_replay:
+        replacements["ncu_replay_mode"] = str(preferred_replay)
+        replacements["ncu_replay_mode_override"] = True
+
+    preferred_metric_set = getattr(benchmark, "preferred_ncu_metric_set", None)
+    if preferred_metric_set:
+        replacements["ncu_metric_set"] = str(preferred_metric_set)
+
+    if not replacements:
+        return config
+    return replace(config, **replacements)
+
+
 def profile_cuda_executable_ncu(
     executable: Path,
     chapter_dir: Path,
@@ -2620,9 +2648,10 @@ def profile_cuda_executable_ncu(
     """
     if not check_ncu_available():
         return None
-    
+
+    output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create output filename based on executable name
     exec_name = output_stem or executable.stem
     ncu_output = output_dir / f"{exec_name}__{variant}.ncu-rep"
@@ -2726,6 +2755,7 @@ def profile_python_benchmark_torch(
     if not TORCH_PROFILER_AVAILABLE:
         return None
 
+    output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create output filename based on benchmark name
@@ -3352,10 +3382,7 @@ def _test_chapter_impl(
         accept_regressions=accept_regressions or update_expectations,
         allow_mixed_provenance=allow_mixed_provenance or update_expectations,
     )
-    try:
-        expectation_path = expectations_store.path.relative_to(repo_root)
-    except ValueError:
-        expectation_path = expectations_store.path
+    expectation_path = _repo_relative_path(expectations_store.path, repo_root)
     logger.info(f"  Expectations key: {expectation_hardware_key} (file: {expectation_path})")
     emit_event(
         event_logger,
@@ -4239,7 +4266,7 @@ def _test_chapter_impl(
                             output_stem=example_profile_stem,
                         )
                         if nsys_path:
-                            result_entry['baseline_nsys_rep'] = str(nsys_path.relative_to(repo_root))
+                            result_entry['baseline_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                             profiler_results.append("nsys✓")
                             baseline_profile_paths["nsys"] = nsys_path
                             # Extract metrics
@@ -4319,7 +4346,7 @@ def _test_chapter_impl(
                             output_stem=example_profile_stem,
                         )
                         if ncu_path:
-                            result_entry['baseline_ncu_rep'] = str(ncu_path.relative_to(repo_root))
+                            result_entry['baseline_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                             profiler_results.append("ncu✓")
                             baseline_profile_paths["ncu"] = ncu_path
                             # Extract metrics
@@ -4398,7 +4425,7 @@ def _test_chapter_impl(
                             output_stem=example_profile_stem,
                         )
                         if torch_path:
-                            result_entry['baseline_torch_trace'] = str(torch_path.relative_to(repo_root))
+                            result_entry['baseline_torch_trace'] = _repo_relative_path(torch_path, repo_root)
                             profiler_results.append("torch✓")
                             baseline_profile_paths["torch"] = torch_path
                             # Extract metrics
@@ -5053,7 +5080,7 @@ def _test_chapter_impl(
                                 output_stem=example_profile_stem,
                             )
                             if nsys_path:
-                                opt_result['optimized_nsys_rep'] = str(nsys_path.relative_to(repo_root))
+                                opt_result['optimized_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                                 profiler_results.append("nsys✓")
                                 # Extract metrics
                                 nsys_metrics = extract_from_nsys_report(nsys_path)
@@ -5136,7 +5163,7 @@ def _test_chapter_impl(
                                 output_stem=example_profile_stem,
                             )
                             if ncu_path:
-                                opt_result['optimized_ncu_rep'] = str(ncu_path.relative_to(repo_root))
+                                opt_result['optimized_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                                 profiler_results.append("ncu✓")
                                 # Extract metrics
                                 ncu_metrics = extract_from_ncu_report(ncu_path)
@@ -5218,7 +5245,7 @@ def _test_chapter_impl(
                                 output_stem=example_profile_stem,
                             )
                             if torch_path:
-                                opt_result['optimized_torch_trace'] = str(torch_path.relative_to(repo_root))
+                                opt_result['optimized_torch_trace'] = _repo_relative_path(torch_path, repo_root)
                                 profiler_results.append("torch✓")
                                 # Extract metrics
                                 torch_metrics = extract_from_pytorch_trace(torch_path)
@@ -5493,7 +5520,7 @@ def _test_chapter_impl(
                                     output_stem=example_profile_stem,
                                 )
                                 if nsys_path:
-                                    best_opt["optimized_nsys_rep"] = str(nsys_path.relative_to(repo_root))
+                                    best_opt["optimized_nsys_rep"] = _repo_relative_path(nsys_path, repo_root)
                                     profiler_results.append("nsys✓")
                                     nsys_metrics = extract_from_nsys_report(nsys_path)
                                     if nsys_metrics:
@@ -5575,7 +5602,7 @@ def _test_chapter_impl(
                                     output_stem=example_profile_stem,
                                 )
                                 if ncu_path:
-                                    best_opt["optimized_ncu_rep"] = str(ncu_path.relative_to(repo_root))
+                                    best_opt["optimized_ncu_rep"] = _repo_relative_path(ncu_path, repo_root)
                                     profiler_results.append("ncu✓")
                                     ncu_metrics = extract_from_ncu_report(ncu_path)
                                     if ncu_metrics:
@@ -5656,7 +5683,7 @@ def _test_chapter_impl(
                                     output_stem=example_profile_stem,
                                 )
                                 if torch_path:
-                                    best_opt["optimized_torch_trace"] = str(torch_path.relative_to(repo_root))
+                                    best_opt["optimized_torch_trace"] = _repo_relative_path(torch_path, repo_root)
                                     profiler_results.append("torch✓")
                                     torch_metrics = extract_from_pytorch_trace(torch_path)
                                     if torch_metrics:
@@ -6151,7 +6178,7 @@ def _test_chapter_impl(
                         timeout_seconds=base_config.get_effective_timeout("nsys"),
                     )
                     if nsys_path:
-                        result_entry['baseline_nsys_rep'] = str(nsys_path.relative_to(repo_root))
+                        result_entry['baseline_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                         profiler_results.append("nsys✓")
                         baseline_profile_paths["nsys"] = nsys_path
                         # Extract metrics
@@ -6230,7 +6257,7 @@ def _test_chapter_impl(
                         output_stem=example_profile_stem,
                     )
                     if ncu_path:
-                        result_entry['baseline_ncu_rep'] = str(ncu_path.relative_to(repo_root))
+                        result_entry['baseline_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                         profiler_results.append("ncu✓")
                         baseline_profile_paths["ncu"] = ncu_path
                         # Extract metrics
@@ -6602,7 +6629,7 @@ def _test_chapter_impl(
                             timeout_seconds=base_config.get_effective_timeout("nsys"),
                         )
                         if nsys_path:
-                            opt_result['optimized_nsys_rep'] = str(nsys_path.relative_to(repo_root))
+                            opt_result['optimized_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                             profiler_results.append("nsys✓")
                             # Extract metrics
                             nsys_metrics = extract_from_nsys_report(nsys_path)
@@ -6684,7 +6711,7 @@ def _test_chapter_impl(
                             output_stem=example_profile_stem,
                         )
                         if ncu_path:
-                            opt_result['optimized_ncu_rep'] = str(ncu_path.relative_to(repo_root))
+                            opt_result['optimized_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                             profiler_results.append("ncu✓")
                             # Extract metrics
                             ncu_metrics = extract_from_ncu_report(ncu_path)
@@ -6848,7 +6875,7 @@ def _test_chapter_impl(
                                     timeout_seconds=optimized_config.get_effective_timeout("nsys") if optimized_config else None,
                                 )
                                 if nsys_path:
-                                    best_opt["optimized_nsys_rep"] = str(nsys_path.relative_to(repo_root))
+                                    best_opt["optimized_nsys_rep"] = _repo_relative_path(nsys_path, repo_root)
                                     profiler_results.append("nsys✓")
                                     nsys_metrics = extract_from_nsys_report(nsys_path)
                                     if nsys_metrics:
@@ -6928,7 +6955,7 @@ def _test_chapter_impl(
                                     output_stem=example_profile_stem,
                                 )
                                 if ncu_path:
-                                    best_opt["optimized_ncu_rep"] = str(ncu_path.relative_to(repo_root))
+                                    best_opt["optimized_ncu_rep"] = _repo_relative_path(ncu_path, repo_root)
                                     profiler_results.append("ncu✓")
                                     ncu_metrics = extract_from_ncu_report(ncu_path)
                                     if ncu_metrics:

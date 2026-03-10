@@ -30,14 +30,15 @@ class OptimizedWarpSpecPingPongBenchmark(CudaBinaryBenchmark):
             },
         )
         self.register_workload_metadata(bytes_per_iteration=float(4096 * 64 * 64 * 3 * 4))
+        self.num_stages = 2
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 4),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
-        )
+        """Return honest pipeline metadata for the ping-pong kernel."""
+        return {
+            "pipeline.num_stages": float(self.num_stages),
+            "pipeline.consumer_warps": 2.0,
+            "pipeline.pingpong_enabled": 1.0,
+        }
 
     def get_input_signature(self) -> dict:
         """Signature for the ping-pong warp-role pipeline."""
@@ -51,6 +52,8 @@ class OptimizedWarpSpecPingPongBenchmark(CudaBinaryBenchmark):
 
     def get_output_tolerance(self) -> tuple[float, float]:
         return (0.0, 0.0)
+
+
 def get_benchmark() -> OptimizedWarpSpecPingPongBenchmark:
     """Factory for discover_benchmarks()."""
     return OptimizedWarpSpecPingPongBenchmark()

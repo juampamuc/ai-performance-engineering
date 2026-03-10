@@ -11,6 +11,7 @@ from core.benchmark.defaults import BenchmarkDefaults
 from core.harness.benchmark_harness import BenchmarkConfig, LaunchVia
 from core.harness import run_benchmarks as run_benchmarks_mod
 from core.harness.run_benchmarks import (
+    _apply_preferred_ncu_profile_overrides,
     _compute_locked_fields,
     _merge_benchmark_config,
     _resolve_expectation_validation_policy,
@@ -224,6 +225,20 @@ def test_run_benchmarks_entrypoints_leave_ncu_replay_mode_unset_by_default() -> 
     assert public_param.default is None
 
 
+def test_apply_preferred_ncu_profile_overrides_honors_benchmark_locals() -> None:
+    config = BenchmarkConfig(ncu_metric_set="deep_dive", ncu_replay_mode="application")
+
+    class _Benchmark:
+        preferred_ncu_replay_mode = "kernel"
+        preferred_ncu_metric_set = "minimal"
+
+    updated = _apply_preferred_ncu_profile_overrides(config, _Benchmark())
+
+    assert updated.ncu_replay_mode == "kernel"
+    assert updated.ncu_replay_mode_override is True
+    assert updated.ncu_metric_set == "minimal"
+
+
 def test_harden_profile_env_prepends_startup_stub() -> None:
     env = run_benchmarks_mod._harden_profile_env({}, repo_root=Path.cwd(), chapter_dir=Path.cwd() / "labs")
     pythonpath_entries = [entry for entry in env["PYTHONPATH"].split(os.pathsep) if entry]
@@ -232,6 +247,32 @@ def test_harden_profile_env_prepends_startup_stub() -> None:
     assert pythonpath_entries[0].endswith("aisp_profile_python_startup")
     assert (Path(pythonpath_entries[0]) / "sitecustomize.py").exists()
     assert (Path(pythonpath_entries[0]) / "usercustomize.py").exists()
+
+
+def test_repo_relative_path_handles_relative_artifact_paths() -> None:
+    repo_root = Path.cwd()
+    artifact_path = Path("artifacts/runs/example/profiles/test.nsys-rep")
+
+    relative_path = run_benchmarks_mod._repo_relative_path(artifact_path, repo_root)
+
+    assert relative_path == artifact_path.as_posix()
+
+
+def test_repo_relative_path_handles_absolute_artifact_paths() -> None:
+    repo_root = Path.cwd()
+    artifact_path = repo_root / "artifacts/runs/example/profiles/test.nsys-rep"
+
+    relative_path = run_benchmarks_mod._repo_relative_path(artifact_path, repo_root)
+
+    assert relative_path == "artifacts/runs/example/profiles/test.nsys-rep"
+
+
+def test_resolve_profile_output_dir_absolutizes_relative_paths() -> None:
+    relative_output_dir = Path("artifacts/runs/example/profiles")
+
+    resolved = run_benchmarks_mod._resolve_profile_output_dir(relative_output_dir)
+
+    assert resolved == (Path.cwd() / relative_output_dir).resolve()
 
 
 def test_expectation_policy_strict_without_write_flags_is_preview_only() -> None:
