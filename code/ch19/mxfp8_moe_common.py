@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 
@@ -92,12 +92,11 @@ def restore_bucketed_reduce(
     out.zero_()
     weight_out.zero_()
     weights = weights.to(out.dtype)
-
-    expanded_weights = weights.unsqueeze(-1)
-    out.scatter_add_(0, bucket_token_ids.unsqueeze(-1).expand_as(output), output * expanded_weights)
+    weighted_output = output.to(out.dtype) * weights.unsqueeze(-1)
+    out.scatter_add_(0, bucket_token_ids.unsqueeze(-1).expand_as(output), weighted_output)
     weight_out.scatter_add_(0, bucket_token_ids, weights)
-    weight_out = torch.clamp(weight_out, min=torch.finfo(out.dtype).eps)
-    out = out / weight_out.unsqueeze(-1)
+    weight_out.clamp_(min=torch.finfo(out.dtype).eps)
+    out.div_(weight_out.unsqueeze(-1))
     return out
 
 

@@ -97,17 +97,20 @@ class OptimizedAutogradCompiledBenchmark(VerificationPayloadMixin, BaseBenchmark
         """Function to benchmark - compiled autograd."""
         if self.graph is None or self.static_input is None or self.static_target is None:
             raise RuntimeError("CUDA graph not initialized")
+        if self.capture_stream is None:
+            raise RuntimeError("Capture stream not initialized")
+        if self.inputs is None or self.targets is None:
+            raise RuntimeError("Benchmark inputs not initialized")
+        if self.output_buffer is None:
+            raise RuntimeError("Output buffer not initialized")
 
         with self._nvtx_range("autograd_standard"):
-            if self.capture_stream is None:
-                raise RuntimeError("Capture stream not initialized")
             with torch.cuda.stream(self.capture_stream):
                 self.static_input.copy_(self.inputs)
                 self.static_target.copy_(self.targets)
                 self.graph.replay()
-                if self.output_buffer is None:
-                    raise RuntimeError("Output buffer not initialized")
-                self.output = self.output_buffer.detach().clone()
+            self.capture_stream.synchronize()
+            self.output = self.output_buffer.detach().clone()
         if self.inputs is None or self.targets is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 
@@ -159,7 +162,15 @@ class OptimizedAutogradCompiledBenchmark(VerificationPayloadMixin, BaseBenchmark
             enable_memory_tracking=False,
             enable_profiling=False,
             setup_timeout_seconds=180,
+            timing_method="wall_clock",
+            full_device_sync=True,
         )
+
+    def get_custom_streams(self) -> list["torch.cuda.Stream"]:
+        if self.capture_stream is None:
+            return []
+        return [self.capture_stream]
+
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
     
