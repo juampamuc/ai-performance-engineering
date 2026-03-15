@@ -8,11 +8,11 @@ Demonstrates optimized coherent memory patterns:
 - NUMA-aware allocation on Grace CPUs
 """
 
-from pathlib import Path
 import ctypes
-from typing import Any, Dict, List, Optional
 import os
 import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -27,6 +27,72 @@ from core.harness.benchmark_harness import (
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _normalize_pci_bus_id(bus_id: str) -> str:
+    value = str(bus_id).strip().lower()
+    if value.startswith("00000000:"):
+        return value[4:]
+    return value
+
+
+def _query_gpu_pci_bus_id(gpu_id: int) -> Optional[str]:
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "-i",
+                str(gpu_id),
+                "--query-gpu=pci.bus_id",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    bus_id = result.stdout.strip()
+    return _normalize_pci_bus_id(bus_id) if bus_id else None
+
+
+def _gpu_numa_node_from_sysfs(gpu_id: int) -> Optional[int]:
+    bus_id = _query_gpu_pci_bus_id(gpu_id)
+    if not bus_id:
+        return None
+    numa_path = Path(f"/sys/bus/pci/devices/{bus_id}/numa_node")
+    try:
+        raw = numa_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def _cpus_for_numa_node(numa_node: int) -> List[int]:
+    cpulist_path = Path(f"/sys/devices/system/node/node{numa_node}/cpulist")
+    if not cpulist_path.exists():
+        return []
+    ranges = cpulist_path.read_text(encoding="utf-8").strip().split(",")
+    cpus: List[int] = []
+    for cpu_range in ranges:
+        if not cpu_range:
+            continue
+        if "-" in cpu_range:
+            start, end = cpu_range.split("-", 1)
+            cpus.extend(range(int(start), int(end) + 1))
+        else:
+            cpus.append(int(cpu_range))
+    return cpus
 
 
 class OptimizedGraceCoherentMemory:
@@ -82,23 +148,17 @@ class OptimizedGraceCoherentMemory:
             return
         
         gpu_id = torch.cuda.current_device()
-        numa_node = gpu_id  # Grace-Blackwell typically maps GPU i -> NUMA node i
+        numa_node = _gpu_numa_node_from_sysfs(gpu_id)
+        if numa_node is None:
+            logger.info("GPU NUMA node unavailable for GPU %s; leaving process affinity unchanged", gpu_id)
+            return
 
         # Try to pin this process' CPU affinity to the NUMA node's CPUs
         try:
-            cpulist_path = Path(f"/sys/devices/system/node/node{numa_node}/cpulist")
-            if cpulist_path.exists():
-                ranges = cpulist_path.read_text().strip().split(",")
-                cpus = []
-                for r in ranges:
-                    if "-" in r:
-                        start, end = r.split("-")
-                        cpus.extend(range(int(start), int(end) + 1))
-                    else:
-                        cpus.append(int(r))
-                if cpus:
-                    os.sched_setaffinity(0, cpus)
-                    logger.info(f"Bound CPU affinity to NUMA node {numa_node}: {cpus}")
+            cpus = _cpus_for_numa_node(numa_node)
+            if cpus:
+                os.sched_setaffinity(0, cpus)
+                logger.info(f"Bound CPU affinity to NUMA node {numa_node}: {cpus}")
         except Exception as e:  # pragma: no cover - best effort
             logger.debug(f"NUMA CPU affinity binding failed: {e}")
 

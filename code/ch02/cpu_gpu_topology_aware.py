@@ -34,8 +34,10 @@ Requirements:
 - PyTorch 2.10+
 - CUDA-capable GPU (graceful fallback on CPU-only systems)
 """
+import re
 import platform
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import psutil
@@ -65,6 +67,50 @@ GPU_ARCH_INFO = {
     # Volta
     (7, 0): {"name": "Volta", "family": "Volta", "sm": "sm_70"},
 }
+
+
+def _normalize_pci_bus_id(bus_id: str) -> str:
+    value = str(bus_id).strip().lower()
+    if value.startswith("00000000:"):
+        return value[4:]
+    return value
+
+
+def _read_int(path: Path) -> Optional[int]:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def _query_gpu_pci_bus_id(gpu_index: int) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "-i", str(gpu_index), "--query-gpu=pci.bus_id", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return _normalize_pci_bus_id(value) if value else None
+
+
+def _get_gpu_numa_node(gpu_index: int) -> Optional[int]:
+    bus_id = _query_gpu_pci_bus_id(gpu_index)
+    if not bus_id:
+        return None
+    return _read_int(Path(f"/sys/bus/pci/devices/{bus_id}/numa_node"))
 
 
 def detect_cpu_info() -> Dict[str, Any]:
@@ -148,11 +194,11 @@ def detect_interconnect_type(cpu_info: Dict[str, Any], gpu_info: Dict[str, Any])
     # Try to detect PCIe generation
     try:
         result = subprocess.run(['lspci', '-vv'], capture_output=True, text=True)
-        if 'PCIe Gen5' in result.stdout or 'LnkCap:.*Speed 32GT/s' in result.stdout:
+        if re.search(r"PCIe Gen5|LnkCap:.*Speed 32GT/s", result.stdout):
             return "PCIe Gen5 (~128 GB/s)"
-        elif 'PCIe Gen4' in result.stdout or 'LnkCap:.*Speed 16GT/s' in result.stdout:
+        elif re.search(r"PCIe Gen4|LnkCap:.*Speed 16GT/s", result.stdout):
             return "PCIe Gen4 (~64 GB/s)"
-        elif 'PCIe Gen3' in result.stdout or 'LnkCap:.*Speed 8GT/s' in result.stdout:
+        elif re.search(r"PCIe Gen3|LnkCap:.*Speed 8GT/s", result.stdout):
             return "PCIe Gen3 (~32 GB/s)"
     except FileNotFoundError:
         pass  # lspci not installed
@@ -236,13 +282,10 @@ def detect_system_topology() -> Dict[str, Any]:
     
     # Detect NUMA-GPU affinity
     if cpu_info["numa_nodes"] > 0:
-        # Distribute GPUs across NUMA nodes
-        gpus_per_numa = topology["num_gpus"] // cpu_info["numa_nodes"]
         for i in range(topology["num_gpus"]):
-            numa_node = i // gpus_per_numa if gpus_per_numa > 0 else 0
-            # Ensure we don't exceed available NUMA nodes
-            numa_node = min(numa_node, cpu_info["numa_nodes"] - 1)
-            topology["numa_gpu_mapping"][i] = numa_node
+            numa_node = _get_gpu_numa_node(i)
+            if numa_node is not None:
+                topology["numa_gpu_mapping"][i] = numa_node
     
     return topology
 
@@ -280,8 +323,16 @@ def print_topology_info(topology: Dict[str, Any]) -> None:
         
         if topology["numa_gpu_mapping"]:
             print(f"\nNUMA-GPU Mapping:")
-            for gpu_id, numa_node in topology["numa_gpu_mapping"].items():
-                print(f"  GPU {gpu_id} → NUMA Node {numa_node}")
+            for gpu in topology["gpus"]:
+                gpu_id = gpu["id"]
+                numa_node = topology["numa_gpu_mapping"].get(gpu_id)
+                if numa_node is None:
+                    print(f"  GPU {gpu_id} → NUMA Node unavailable")
+                else:
+                    print(f"  GPU {gpu_id} → NUMA Node {numa_node}")
+        elif cpu["numa_nodes"] > 1:
+            print("\nNUMA-GPU Mapping:")
+            print("  GPU NUMA locality unavailable from platform APIs")
     
     # System-specific recommendations
     print(f"\nSystem-Specific Optimizations:")
@@ -319,7 +370,10 @@ def set_cpu_affinity_for_gpu(gpu_id: int, topology: Dict[str, Any]) -> bool:
         print(f"⚠ Single NUMA node system, skipping CPU affinity")
         return False
     
-    numa_node = topology["numa_gpu_mapping"].get(gpu_id, 0)
+    numa_node = topology["numa_gpu_mapping"].get(gpu_id)
+    if numa_node is None:
+        print(f"⚠ GPU {gpu_id} NUMA locality unavailable, skipping CPU affinity")
+        return False
     
     try:
         # Get CPUs in this NUMA node
@@ -504,12 +558,17 @@ def demonstrate_multi_gpu_placement(topology: Dict[str, Any]) -> None:
         print()
         
         for gpu_id in range(min(topology["num_gpus"], 8)):
-            numa_node = topology["numa_gpu_mapping"].get(gpu_id, 0)
+            numa_node = topology["numa_gpu_mapping"].get(gpu_id)
             print(f"Process {gpu_id} (GPU {gpu_id}):")
-            print(f"  → Bind to NUMA node {numa_node}")
-            print(f"  → Allocate CPU tensors from NUMA node {numa_node}")
-            print(f"  → DataLoader workers use NUMA node {numa_node} CPUs")
-            print(f"  → Benefit: Reduced memory access latency")
+            if numa_node is None:
+                print("  → GPU NUMA locality unavailable from platform APIs")
+                print("  → Leave CPU binding unchanged until locality is known")
+                print("  → Benefit: avoids binding to the wrong NUMA node")
+            else:
+                print(f"  → Bind to NUMA node {numa_node}")
+                print(f"  → Allocate CPU tensors from NUMA node {numa_node}")
+                print(f"  → DataLoader workers use NUMA node {numa_node} CPUs")
+                print("  → Benefit: Reduced memory access latency")
             print()
     else:
         print("Single NUMA node system:")
