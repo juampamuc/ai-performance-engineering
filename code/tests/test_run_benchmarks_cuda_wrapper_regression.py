@@ -70,3 +70,35 @@ def test_benchmark_cuda_executable_treats_skip_exit_code_as_skip(tmp_path):
 
     assert result is not None
     assert result.skip_reason == "SKIPPED: cuBLASLt NVFP4 algorithm unavailable on this driver/toolchain."
+
+
+def test_is_distributed_benchmark_ignores_local_gpu_reduction_named_distributed(tmp_path):
+    benchmark_path = tmp_path / "optimized_distributed.py"
+    benchmark_path.write_text(
+        "import torch\n"
+        "\n"
+        "class DemoBenchmark:\n"
+        "    def benchmark_fn(self):\n"
+        "        data = torch.randn(1024, device='cuda')\n"
+        "        return data.sum()\n",
+        encoding="utf-8",
+    )
+
+    assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
+
+
+def test_append_profile_warning_persists_message_to_stderr_log(tmp_path, monkeypatch):
+    log_path = tmp_path / "profile.stderr.log"
+    logger_messages: list[str] = []
+
+    monkeypatch.setattr(run_benchmarks, "LOGGER_AVAILABLE", True)
+    monkeypatch.setattr(
+        run_benchmarks.logger,
+        "warning",
+        lambda message, *args, **_kwargs: logger_messages.append(message % args if args else message),
+    )
+
+    run_benchmarks._append_profile_warning(log_path, "profiler cleanup detail")
+
+    assert "profiler cleanup detail" in log_path.read_text(encoding="utf-8")
+    assert any("profiler cleanup detail" in message for message in logger_messages)

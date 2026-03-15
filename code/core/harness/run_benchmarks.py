@@ -560,6 +560,18 @@ def _safe_read_text_with_warning(
         return None
 
 
+def _append_profile_warning(log_path: Path, message: str) -> None:
+    """Persist profiler warnings to logs and surface them through the logger."""
+    if LOGGER_AVAILABLE:
+        logger.warning("  %s", message)
+    try:
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(message.rstrip() + "\n")
+    except Exception as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning("  Failed to append profiler warning to %s: %s", log_path, exc)
+
+
 def _truncate_text(text: str, max_lines: int = 80, max_chars: int = 4000) -> str:
     lines = text.splitlines()
     if len(lines) > max_lines:
@@ -2272,6 +2284,7 @@ from core.harness.benchmark_harness import (
 from core.profiling.nvtx_helper import nvtx_range
 
 def _run_profile() -> None:
+    import sys
     benchmark = get_benchmark()
     _profiling_config = BenchmarkConfig(
         enable_profiling=True,
@@ -2296,8 +2309,8 @@ def _run_profile() -> None:
         # Best-effort clock ramp before capture.
         try:
             ramp_gpu_clocks(device=0)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[profile_warning] Failed to ramp GPU clocks before nsys capture: {{exc}}", file=sys.stderr)
         benchmark.setup()
 
         # Warmup (keep short; profiling is not a timing run)
@@ -2319,8 +2332,8 @@ def _run_profile() -> None:
         if getattr(benchmark, "profile_require_teardown", False):
             try:
                 benchmark.teardown()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[profile_warning] Benchmark teardown failed after nsys capture: {{exc}}", file=sys.stderr)
             raise SystemExit(0)
         import os as _os
         _os._exit(0)
@@ -2366,7 +2379,15 @@ if __name__ == "__main__":
         if nsys_report and Path(nsys_report).exists():
             return Path(nsys_report)
         return None
-    except Exception:
+    except Exception as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning(
+                "  Nsight Systems profiling failed for %s (%s): %s",
+                benchmark_name,
+                variant,
+                exc,
+                exc_info=True,
+            )
         return None
     finally:
         Path(wrapper_script.name).unlink(missing_ok=True)
@@ -2446,6 +2467,7 @@ def profile_cuda_executable(
 
 def _terminate_process_group(process: subprocess.Popen, reason: str, timeout_seconds: Optional[float] = None) -> None:
     """Best-effort kill of a process group (and children) started with start_new_session."""
+    cleanup_errors: List[str] = []
     try:
         pgid = os.getpgid(process.pid)
         os.killpg(pgid, signal.SIGTERM)
@@ -2454,20 +2476,24 @@ def _terminate_process_group(process: subprocess.Popen, reason: str, timeout_sec
         except subprocess.TimeoutExpired:
             os.killpg(pgid, signal.SIGKILL)
             process.wait(timeout=2)
-    except (ProcessLookupError, OSError, AttributeError):
+    except (ProcessLookupError, OSError, AttributeError) as exc:
+        cleanup_errors.append(f"process-group cleanup unavailable: {exc}")
         try:
             process.terminate()
             process.wait(timeout=2)
-        except Exception:
+        except Exception as terminate_exc:
+            cleanup_errors.append(f"process.terminate() fallback failed: {terminate_exc}")
             try:
                 process.kill()
-            except Exception:
-                pass
+            except Exception as kill_exc:
+                cleanup_errors.append(f"process.kill() fallback failed: {kill_exc}")
     if LOGGER_AVAILABLE:
         if timeout_seconds is not None:
             logger.warning("  NCU profiling timed out after %.1fs (%s); killed process group", timeout_seconds, reason)
         else:
             logger.warning("  NCU profiling cleanup triggered (%s); killed process group", reason)
+        for detail in cleanup_errors:
+            logger.warning("  Profiler cleanup detail (%s): %s", reason, detail)
 
 
 def _collect_descendant_pids(root_pid: int) -> List[int]:
@@ -2579,6 +2605,7 @@ def profile_python_benchmark_ncu(
     # Create output filename based on benchmark name
     benchmark_name = output_stem or benchmark_path.stem
     ncu_output = output_dir / f"{benchmark_name}__{variant}.ncu-rep"
+    log_base = output_dir / f"{benchmark_name}__{variant}__ncu"
     
     if config is None:
         config = BenchmarkConfig()
@@ -2658,6 +2685,7 @@ from core.harness.benchmark_harness import (
 from core.profiling.nvtx_helper import nvtx_range
 
 def _run_profile() -> None:
+    import sys
     benchmark = get_benchmark()
     _profiling_config = BenchmarkConfig(
         enable_profiling=True,
@@ -2687,8 +2715,8 @@ def _run_profile() -> None:
     with lock_ctx:
         try:
             ramp_gpu_clocks(device=0)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[profile_warning] Failed to ramp GPU clocks before ncu capture: {{exc}}", file=sys.stderr)
         benchmark.setup()
 
         # Warmup (keep short; profiling is not a timing run)
@@ -2710,8 +2738,8 @@ def _run_profile() -> None:
         if getattr(benchmark, "profile_require_teardown", False):
             try:
                 benchmark.teardown()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[profile_warning] Benchmark teardown failed after ncu capture: {{exc}}", file=sys.stderr)
             raise SystemExit(0)
         import os as _os
         _os._exit(0)
@@ -2765,6 +2793,7 @@ if __name__ == "__main__":
         )
         stdout_text = ""
         stderr_text = ""
+        failure_warning: Optional[str] = None
         try:
             stdout_text, stderr_text = process.communicate(timeout=ncu_timeout_seconds)
         except subprocess.TimeoutExpired:
@@ -2772,18 +2801,21 @@ if __name__ == "__main__":
             _terminate_process_group(process, f"{benchmark_name}_{variant}", timeout_seconds=ncu_timeout_seconds)
             try:
                 stdout_text, stderr_text = process.communicate(timeout=2)
-            except Exception:
-                pass
-        except Exception:
+            except Exception as exc:
+                failure_warning = (
+                    f"Timed-out NCU profiling for {benchmark_name} ({variant}) could not collect trailing stdout/stderr: {exc}"
+                )
+        except Exception as exc:
+            failure_warning = f"NCU profiling communicate failed for {benchmark_name} ({variant}): {exc}"
             _terminate_process_group(process, f"{benchmark_name}_{variant}")
-            return None
-
-        log_base = output_dir / f"{benchmark_name}__{variant}__ncu"
         if stdout_text:
             log_base.with_suffix(".stdout.log").write_text(stdout_text)
         if stderr_text:
             log_base.with_suffix(".stderr.log").write_text(stderr_text)
         log_base.with_suffix(".command.json").write_text(json.dumps({"command": ncu_command}, indent=2))
+        if failure_warning:
+            _append_profile_warning(log_base.with_suffix(".stderr.log"), failure_warning)
+            return None
         
         # Check if file exists (ncu may create file even with non-zero exit code)
         if not timed_out:
@@ -2796,8 +2828,26 @@ if __name__ == "__main__":
             # Check for any .ncu-rep file matching the pattern
             for ncu_file in output_dir.glob(f"{benchmark_name}__{variant}*.ncu-rep"):
                 return ncu_file
+            if process.returncode not in (0, None):
+                _append_profile_warning(
+                    log_base.with_suffix(".stderr.log"),
+                    f"NCU profiling exited with code {process.returncode} for {benchmark_name} ({variant}) without producing a report.",
+                )
+        else:
+            _append_profile_warning(
+                log_base.with_suffix(".stderr.log"),
+                f"NCU profiling timed out after {ncu_timeout_seconds}s for {benchmark_name} ({variant}).",
+            )
         return None
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError) as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning(
+                "  Failed to launch NCU profiling for %s (%s): %s",
+                benchmark_name,
+                variant,
+                exc,
+                exc_info=True,
+            )
         return None
     finally:
         # Clean up wrapper script
@@ -2852,6 +2902,7 @@ def profile_cuda_executable_ncu(
     # Create output filename based on executable name
     exec_name = output_stem or executable.stem
     ncu_output = output_dir / f"{exec_name}__{variant}.ncu-rep"
+    log_base = output_dir / f"{exec_name}__{variant}__ncu"
     
     profiler_config = build_profiler_config_from_benchmark(config)
     chapter_num = None
@@ -2902,6 +2953,7 @@ def profile_cuda_executable_ncu(
         )
         stdout_text = ""
         stderr_text = ""
+        failure_warning: Optional[str] = None
         try:
             stdout_text, stderr_text = process.communicate(timeout=ncu_timeout_seconds)
         except subprocess.TimeoutExpired:
@@ -2909,18 +2961,21 @@ def profile_cuda_executable_ncu(
             _terminate_process_group(process, f"{exec_name}__{variant}", timeout_seconds=ncu_timeout_seconds)
             try:
                 stdout_text, stderr_text = process.communicate(timeout=2)
-            except Exception:
-                pass
-        except Exception:
+            except Exception as exc:
+                failure_warning = (
+                    f"Timed-out NCU profiling for executable {exec_name} ({variant}) could not collect trailing stdout/stderr: {exc}"
+                )
+        except Exception as exc:
+            failure_warning = f"NCU profiling communicate failed for executable {exec_name} ({variant}): {exc}"
             _terminate_process_group(process, f"{exec_name}__{variant}")
-            return None
-
-        log_base = output_dir / f"{exec_name}__{variant}__ncu"
         if stdout_text:
             log_base.with_suffix(".stdout.log").write_text(stdout_text)
         if stderr_text:
             log_base.with_suffix(".stderr.log").write_text(stderr_text)
         log_base.with_suffix(".command.json").write_text(json.dumps({"command": ncu_command}, indent=2))
+        if failure_warning:
+            _append_profile_warning(log_base.with_suffix(".stderr.log"), failure_warning)
+            return None
         
         # Check if file exists (ncu may create file even with non-zero exit code)
         if not timed_out:
@@ -2933,8 +2988,26 @@ def profile_cuda_executable_ncu(
             # Check for any .ncu-rep file matching the pattern
             for ncu_file in output_dir.glob(f"{exec_name}__{variant}*.ncu-rep"):
                 return ncu_file
+            if process.returncode not in (0, None):
+                _append_profile_warning(
+                    log_base.with_suffix(".stderr.log"),
+                    f"NCU profiling exited with code {process.returncode} for executable {exec_name} ({variant}) without producing a report.",
+                )
+        else:
+            _append_profile_warning(
+                log_base.with_suffix(".stderr.log"),
+                f"NCU profiling timed out after {ncu_timeout_seconds}s for executable {exec_name} ({variant}).",
+            )
         return None
-    except (subprocess.TimeoutExpired, Exception):
+    except (subprocess.TimeoutExpired, Exception) as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning(
+                "  Failed to launch NCU profiling for executable %s (%s): %s",
+                exec_name,
+                variant,
+                exc,
+                exc_info=True,
+            )
         return None
 
 
@@ -2981,8 +3054,15 @@ def profile_python_benchmark_torch(
             maybe_timeout = existing_cfg.get_effective_timeout("torch")
             if maybe_timeout:
                 profile_timeout_seconds = int(maybe_timeout)
-        except Exception:
-            pass
+        except Exception as exc:
+            if LOGGER_AVAILABLE:
+                logger.warning(
+                    "  Failed to resolve torch profiler timeout override for %s (%s): %s",
+                    benchmark_name,
+                    variant,
+                    exc,
+                    exc_info=True,
+                )
 
     # Run torch profiling in an isolated subprocess so a profiler-side hang
     # cannot wedge the parent benchmark sweep.
@@ -3086,6 +3166,7 @@ if __name__ == "__main__":
         )
 
     timed_out = False
+    failure_warning: Optional[str] = None
     try:
         process.wait(timeout=profile_timeout_seconds)
     except subprocess.TimeoutExpired:
@@ -3097,9 +3178,12 @@ if __name__ == "__main__":
         )
         try:
             process.wait(timeout=2)
-        except Exception:
-            pass
-    except Exception:
+        except Exception as exc:
+            failure_warning = (
+                f"Timed-out torch profiler for {benchmark_name} ({variant}) could not confirm process exit: {exc}"
+            )
+    except Exception as exc:
+        failure_warning = f"Torch profiler wait failed for {benchmark_name} ({variant}): {exc}"
         _terminate_process_group(process, f"{benchmark_name}__{variant}__torch")
     finally:
         wrapper_path.unlink(missing_ok=True)
@@ -3112,9 +3196,22 @@ if __name__ == "__main__":
         with stderr_log.open("a") as handle:
             handle.write(f"\ntorch profiler timed out after {profile_timeout_seconds}s\n")
         return None
-    if process.returncode != 0:
+    if failure_warning:
+        _append_profile_warning(stderr_log, failure_warning)
         return None
-    return torch_output if torch_output.exists() else None
+    if process.returncode != 0:
+        _append_profile_warning(
+            stderr_log,
+            f"Torch profiler exited with code {process.returncode} for {benchmark_name} ({variant}). See {stderr_log} for details.",
+        )
+        return None
+    if not torch_output.exists():
+        _append_profile_warning(
+            stderr_log,
+            f"Torch profiler completed without producing expected trace {torch_output} for {benchmark_name} ({variant}).",
+        )
+        return None
+    return torch_output
 
 
 def ensure_cuda_executables_built(chapter_dir: Path) -> Tuple[bool, Optional[str]]:
@@ -3587,7 +3684,9 @@ def _test_chapter_impl(
     git_commit = None
     try:
         git_commit = get_git_info().get("commit")
-    except Exception:
+    except Exception as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning("  Failed to collect git commit provenance for %s: %s", chapter_name, exc, exc_info=True)
         git_commit = None
     execution_environment = detect_execution_environment()
 
@@ -3639,9 +3738,14 @@ def _test_chapter_impl(
             inductor_cache_path.mkdir(parents=True, exist_ok=True)
             (inductor_cache_path / "od").mkdir(parents=True, exist_ok=True)
             (inductor_cache_path / "tk").mkdir(parents=True, exist_ok=True)
-        except (OSError, PermissionError):
-            # If we can't create the directory, that's okay - env_defaults.py should have handled it
-            pass
+        except (OSError, PermissionError) as exc:
+            if LOGGER_AVAILABLE:
+                logger.warning(
+                    "  Failed to create TORCHINDUCTOR_CACHE_DIR at %s: %s. Continuing with existing environment defaults.",
+                    inductor_cache_path,
+                    exc,
+                    exc_info=True,
+                )
     
     # Discover benchmark pairs using the same filters as the outer run planner.
     logger.info(f"  Discovering Python benchmarks...")
@@ -3730,7 +3834,9 @@ def _test_chapter_impl(
     try:
         from core.benchmark.defaults import get_defaults as _get_defaults  # type: ignore
         _defaults_obj = _get_defaults()
-    except Exception:
+    except Exception as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning("  Failed to load benchmark defaults object: %s", exc, exc_info=True)
         _defaults_obj = None
 
     measurement_timeout_default = getattr(_defaults_obj, "measurement_timeout_seconds", 1200) if _defaults_obj else 1200
@@ -10393,8 +10499,12 @@ def main():
             try:
                 from core.utils.build_utils import ensure_clean_build_directory
                 ensure_clean_build_directory(build_dir)
-            except ImportError:
-                pass  # build_utils not available
+            except ImportError as exc:
+                logger.warning(
+                    "  build_utils unavailable during final chapter cleanup for %s: %s",
+                    chapter_dir.name,
+                    exc,
+                )
             except Exception as e:
                 logger.warning(f"  Failed to clean build directory: {e}")
 

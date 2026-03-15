@@ -40,6 +40,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 
+def _emit_runner_warning(message: str, **details: Any) -> None:
+    payload: Dict[str, Any] = {"event": "isolated_runner_warning", "message": message}
+    payload.update(details)
+    try:
+        print(json.dumps(payload, default=str), file=sys.stderr)
+    except Exception:
+        try:
+            print(f"[isolated_runner_warning] {message}", file=sys.stderr)
+        except Exception:
+            pass
+
+
 def reset_cuda_state() -> None:
     """Reset CUDA state before benchmark to ensure clean environment."""
     try:
@@ -52,8 +64,8 @@ def reset_cuda_state() -> None:
             if hasattr(torch.cuda, 'graph_pool_trim'):
                 try:
                     torch.cuda.graph_pool_trim()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _emit_runner_warning("Failed to reset CUDA graph pool", error=str(exc))
             
             # Reset CUDA RNG state
             try:
@@ -61,21 +73,24 @@ def reset_cuda_state() -> None:
                 gen = torch.cuda.default_generators[device_idx]
                 gen.set_offset(0)
                 gen.manual_seed(0)
-            except Exception:
-                pass
+            except Exception as exc:
+                _emit_runner_warning("Failed to reset CUDA RNG state", error=str(exc))
             
             # Reset dynamo/inductor state
             try:
                 torch._dynamo.reset()
-            except Exception:
-                pass
+            except Exception as exc:
+                _emit_runner_warning("Failed to reset torch._dynamo state", error=str(exc))
             
             try:
                 torch._inductor.cudagraph_trees.reset_cudagraph_trees()
-            except Exception:
-                pass
-    except ImportError:
-        pass
+            except Exception as exc:
+                _emit_runner_warning("Failed to reset torch._inductor cudagraph trees", error=str(exc))
+    except ImportError as exc:
+        _emit_runner_warning(
+            "PyTorch import unavailable during isolated runner CUDA reset",
+            error=str(exc),
+        )
     
     gc.collect()
 
@@ -164,18 +179,6 @@ def _reap_descendant_processes(grace_seconds: float = 5.0) -> None:
     if remaining:
         _signal_pids(sorted(remaining), signal.SIGKILL)
         _wait_for_exit(sorted(remaining), timeout_seconds=2.0)
-
-
-def _emit_runner_warning(message: str, **details: Any) -> None:
-    payload: Dict[str, Any] = {"event": "isolated_runner_warning", "message": message}
-    payload.update(details)
-    try:
-        print(json.dumps(payload, default=str), file=sys.stderr)
-    except Exception:
-        try:
-            print(f"[isolated_runner_warning] {message}", file=sys.stderr)
-        except Exception:
-            pass
 
 
 def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
