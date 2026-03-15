@@ -28,6 +28,26 @@ def test_progress_recorder_writes_payload(tmp_path: Path) -> None:
     assert data["current"]["run_id"] == "run_001"
 
 
+def test_progress_recorder_surfaces_existing_history_load_failures(tmp_path: Path) -> None:
+    progress_path = tmp_path / "progress" / "run_progress.json"
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    progress_path.write_text("{not-json", encoding="utf-8")
+
+    recorder = ProgressRecorder(run_id="run_bad", progress_path=progress_path)
+    recorder.emit(
+        ProgressEvent(
+            phase="run",
+            phase_index=1,
+            total_phases=2,
+            step="resume",
+        )
+    )
+
+    data = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert "load_warning" in data
+    assert "Failed to load existing progress history" in data["load_warning"]
+
+
 def test_job_status_includes_progress(tmp_path: Path) -> None:
     run_dir = tmp_path / "artifacts" / "20250101_000000"
     progress_path = run_dir / "progress" / "run_progress.json"

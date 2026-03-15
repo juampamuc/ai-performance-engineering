@@ -3136,9 +3136,9 @@ def ensure_cuda_executables_built(chapter_dir: Path) -> Tuple[bool, Optional[str
                 from core.utils.build_utils import ensure_clean_build_directory
                 ensure_clean_build_directory(build_dir)
             except ImportError:
-                pass  # build_utils not available
-            except Exception:
-                pass  # Ignore cleanup errors
+                logger.warning("  WARNING: build_utils unavailable; skipping stale build directory cleanup")
+            except Exception as exc:
+                logger.warning(f"  WARNING: Failed to clean build directory {build_dir}: {exc}")
         
         logger.info(f"  Building CUDA executables ({make_desc})...")
         # Explicitly set ARCH so Makefiles consistently target the active GPU

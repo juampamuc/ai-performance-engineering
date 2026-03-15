@@ -102,15 +102,17 @@ def get_git_info() -> GitStatusDict:
         if result.returncode == 0:
             git_info["branch"] = result.stdout.strip()
         
-        # Check if working directory is dirty
+        # Check if working directory is dirty. Porcelain status catches
+        # staged changes and untracked files, not just unstaged diffs.
         result = subprocess.run(
-            ["git", "diff", "--quiet"],
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
             capture_output=True,
             text=True,
             timeout=5,
             cwd=PROJECT_ROOT,
         )
-        git_info["dirty"] = result.returncode != 0
+        if result.returncode == 0:
+            git_info["dirty"] = bool(result.stdout.strip())
         
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
         # Git not available or not a git repo
@@ -505,6 +507,12 @@ class RunManifest(BaseModel):
     
     # Verification results (if verify mode was run)
     verify: Optional[VerifyManifestEntry] = Field(None, description="Verification results for this run")
+
+    # Non-fatal provenance / collection warnings
+    collection_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal collection issues that degraded provenance or artifact completeness",
+    )
     
     # Timestamps
     start_time: datetime = Field(..., description="Run start timestamp")
@@ -530,6 +538,8 @@ class RunManifest(BaseModel):
         if start_time is None:
             start_time = datetime.now()
         
+        collection_warnings: list[str] = []
+
         # Get hardware info
         cuda_info = get_cuda_info()
         gpu_info = get_gpu_info()
@@ -595,6 +605,16 @@ class RunManifest(BaseModel):
             dirty=bool(git_info_dict.get("dirty", False)),
             schemaVersion=SCHEMA_VERSION,
         )
+        missing_git_fields = [
+            field_name
+            for field_name in ("commit", "branch")
+            if not git_info_dict.get(field_name)
+        ]
+        if missing_git_fields:
+            collection_warnings.append(
+                "Git metadata unavailable for fields: "
+                f"{', '.join(missing_git_fields)}; manifest provenance is incomplete."
+            )
         
         # Extract seed info from config if present
         seeds = None
@@ -617,6 +637,7 @@ class RunManifest(BaseModel):
             environment=environment,
             git=git,
             seeds=seeds,
+            collection_warnings=collection_warnings,
             start_time=start_time,
             end_time=None,
             duration_seconds=None,
@@ -666,6 +687,7 @@ class RunManifest(BaseModel):
                     "dirty": False,
                     "schemaVersion": "1.0"
                 },
+                "collection_warnings": [],
                 "start_time": "2024-01-01T12:00:00",
                 "schemaVersion": "1.0"
             }

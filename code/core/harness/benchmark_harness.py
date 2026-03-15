@@ -1635,8 +1635,9 @@ def _maybe_write_subprocess_stderr(stderr: str, benchmark_name: str, config: Ben
         slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", benchmark_name).strip("_")
         path = Path(output_dir) / f"{slug}_subprocess.stderr.log"
         path.write_text(stderr)
-    except Exception:
-        pass
+    except Exception as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning("Failed to persist subprocess stderr for %s: %s", benchmark_name, exc)
 
 
 class BenchmarkHarness:
@@ -2543,6 +2544,12 @@ class BenchmarkHarness:
 
         config_dict = {k: _serialize_manifest_value(v) for k, v in self.config.__dict__.items()}
         manifest = RunManifest.create(config=config_dict, start_time=start_time)
+
+        def _append_manifest_warning(message: str) -> None:
+            if message not in manifest.collection_warnings:
+                manifest.collection_warnings.append(message)
+            if LOGGER_AVAILABLE:
+                logger.warning(message)
         
         # Add seed information to manifest
         from core.benchmark.run_manifest import SeedInfo
@@ -2596,9 +2603,8 @@ class BenchmarkHarness:
                 hw.utilization_memory_pct = (
                     _maybe_float(locked.get("utilization_memory_pct")) or hw.utilization_memory_pct
                 )
-        except Exception:
-            # Manifest patching is best-effort and should never fail the benchmark run.
-            pass
+        except Exception as exc:
+            _append_manifest_warning(f"Failed to patch locked GPU telemetry into manifest: {exc}")
         
         # Finalize manifest
         end_time = datetime.now()

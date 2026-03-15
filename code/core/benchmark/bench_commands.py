@@ -557,6 +557,15 @@ def _execute_benchmarks(
         run_id=artifact_manager.run_id,
         progress_path=artifact_manager.progress_dir / "run_progress.json",
     )
+    if progress_recorder.load_warning:
+        logger.warning(progress_recorder.load_warning)
+        emit_event(
+            event_logger,
+            logger,
+            "progress_history_unavailable",
+            warning=progress_recorder.load_warning,
+            progress_path=str(progress_recorder.progress_path),
+        )
     progress_recorder.emit(
         ProgressEvent(
             phase="run",

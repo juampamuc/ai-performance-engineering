@@ -44,6 +44,7 @@ class ProgressRecorder:
         self.history_limit = max(1, history_limit)
         self._start_time = time.time()
         self._history: List[Dict[str, Any]] = []
+        self.load_warning: Optional[str] = None
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
         if self.progress_path.exists():
             try:
@@ -56,8 +57,11 @@ class ProgressRecorder:
                     elapsed = current.get("elapsed_seconds")
                     if isinstance(elapsed, (int, float)) and elapsed >= 0:
                         self._start_time = time.time() - float(elapsed)
-            except Exception:
+            except Exception as exc:
                 self._history = []
+                self.load_warning = (
+                    f"Failed to load existing progress history from {self.progress_path}: {exc}"
+                )
 
     def emit(self, event: ProgressEvent) -> None:
         if not event.run_id:
@@ -80,6 +84,8 @@ class ProgressRecorder:
             "current": event_dict,
             "history": self._history[-self.history_limit:],
         }
+        if self.load_warning:
+            payload["load_warning"] = self.load_warning
         self._write_payload(payload)
 
     def _write_payload(self, payload: Dict[str, Any]) -> None:
