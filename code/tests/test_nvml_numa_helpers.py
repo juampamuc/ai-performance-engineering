@@ -8,7 +8,9 @@ import pytest
 import ch03.bind_numa_affinity as bind_numa_affinity
 import ch04.gb200_grace_numa_optimization as grace_numa
 import core.optimization.parallelism_planner.topology_detector as planner_topology_detector
+import core.optimization.parallelism_planner.advisor as planner_advisor
 import labs.dynamic_router.topology as dynamic_router_topology
+import labs.dynamic_router.driver as dynamic_router_driver
 
 
 def _configure_bind_nvml(monkeypatch: pytest.MonkeyPatch, fake_nvml: object) -> None:
@@ -154,6 +156,26 @@ def test_planner_topology_detector_ignores_negative_sysfs_numa_node(
     assert detector._get_gpu_numa_node(0) is None
 
 
+def test_planner_topology_detector_reports_unknown_gpu_numa_status_when_no_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detector = planner_topology_detector.TopologyDetector()
+    monkeypatch.setattr(detector, "_get_gpu_numa_node", lambda gpu_index: None)
+
+    numa_nodes, gpu_numa_mapping, numa_distance, gpu_numa_status = detector._detect_numa(2)
+
+    assert numa_nodes == 0
+    assert gpu_numa_mapping == {}
+    assert numa_distance == []
+    assert gpu_numa_status == "unknown"
+
+
+def test_planner_mock_topology_marks_gpu_numa_as_synthetic() -> None:
+    topology = planner_advisor.create_mock_topology_b200_multigpu(num_gpus=4)
+
+    assert topology.gpu_numa_status == "synthetic"
+
+
 def test_setup_grace_affinity_does_not_guess_numa_node_when_mapping_is_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -177,3 +199,16 @@ def test_setup_grace_affinity_does_not_guess_numa_node_when_mapping_is_unknown(
     assert cpu_list == [4, 5, 6, 7]
     assert numa_node is None
     assert sched_calls == []
+
+
+def test_dynamic_router_virtual_gpu_defaults_numa_to_unknown() -> None:
+    gpu = dynamic_router_driver.VirtualGPU(
+        "gpu0",
+        is_prefill=True,
+        is_decode=False,
+        prefill_rate=1000.0,
+        decode_rate=500.0,
+        hourly_cost=1.0,
+    )
+
+    assert gpu.numa_node is None

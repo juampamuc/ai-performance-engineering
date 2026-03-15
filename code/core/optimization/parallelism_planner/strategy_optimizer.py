@@ -617,6 +617,7 @@ if __name__ == "__main__":
         numa_nodes=1,
         gpu_numa_mapping={i: 0 for i in range(4)},
         numa_distance_matrix=[[10]],
+        gpu_numa_status="synthetic",
         cpu_type="aarch64",
         is_grace_cpu=True,
         has_nvlink_c2c=True,

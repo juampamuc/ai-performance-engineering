@@ -352,6 +352,7 @@ def create_mock_topology_b200_multigpu(num_gpus: int = 4) -> TopologyInfo:
         numa_nodes=1,
         gpu_numa_mapping={i: 0 for i in range(num_gpus)},
         numa_distance_matrix=[[10]],
+        gpu_numa_status="synthetic",
         cpu_type="aarch64",
         is_grace_cpu=True,
         has_nvlink_c2c=True,
@@ -396,6 +397,7 @@ def create_mock_topology_h100_multigpu(num_gpus: int = 4) -> TopologyInfo:
         numa_nodes=numa_nodes,
         gpu_numa_mapping=gpu_numa_mapping,
         numa_distance_matrix=numa_distance_matrix,
+        gpu_numa_status="synthetic",
         cpu_type="x86_64",
         is_grace_cpu=False,
         has_nvlink_c2c=False,
@@ -492,4 +494,3 @@ Examples:
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
-

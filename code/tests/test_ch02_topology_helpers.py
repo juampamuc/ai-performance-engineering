@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,6 +45,27 @@ def test_cpu_gpu_topology_does_not_guess_numa_mapping_when_platform_does_not_exp
     topology = cpu_gpu_topology_aware.detect_system_topology()
 
     assert topology["numa_gpu_mapping"] == {}
+
+
+def test_cpu_gpu_topology_leaves_cpu_numa_unknown_when_numactl_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cpu_gpu_topology_aware.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cpu_gpu_topology_aware.psutil, "cpu_count", lambda logical=True: 16 if logical else 8)
+    monkeypatch.setattr(
+        cpu_gpu_topology_aware.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=512 * 1024**3),
+    )
+    monkeypatch.setattr(
+        cpu_gpu_topology_aware.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    with mock.patch("builtins.open", lambda *args, **kwargs: io.StringIO("Intel")):
+        info = cpu_gpu_topology_aware.detect_cpu_info()
+
+    assert info["numa_nodes"] is None
 
 
 def test_optimized_grace_coherent_memory_skips_binding_when_gpu_numa_is_unknown(

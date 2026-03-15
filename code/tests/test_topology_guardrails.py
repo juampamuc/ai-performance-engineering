@@ -15,6 +15,7 @@ RUNTIME_TOPOLOGY_FILES = [
     Path("ch03/kubernetes_topology_pod.yaml"),
     Path("ch04/gb200_grace_numa_optimization.py"),
     Path("core/optimization/parallelism_planner/topology_detector.py"),
+    Path("labs/dynamic_router/driver.py"),
     Path("labs/dynamic_router/topology.py"),
 ]
 
@@ -27,6 +28,8 @@ BANNED_HEURISTIC_SNIPPETS = {
     "numa_node = gpu_id": "Do not infer GPU locality from matching indices.",
     "gpu_id % len(topology)": "Do not infer NUMA locality from topology length modulo.",
     "i // gpus_per_numa": "Do not synthesize GPU->NUMA mappings from GPU counts.",
+    "numa_nodes\"] = 1  # numactl not installed": "Do not turn unavailable CPU NUMA topology into a fake single-node result.",
+    "numa_node: int = 0": "Do not default runtime GPU locality to NUMA node 0.",
 }
 
 

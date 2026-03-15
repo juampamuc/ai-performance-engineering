@@ -62,7 +62,7 @@ class VirtualGPU:
     hourly_cost: float  # dollars per GPU-hour
     kv_transfer_ms: float = 0.0
     tier: str | None = None
-    numa_node: int = 0
+    numa_node: Optional[int] = None
     host_kv_local_gb: float = 24.0
     host_kv_remote_gb: float = 4.0
     prefill_q: List[PrefillTask] = field(default_factory=list)

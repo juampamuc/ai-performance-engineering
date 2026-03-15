@@ -79,6 +79,9 @@ class TopologyInfo:
     cpu_type: str  # x86_64, aarch64 (Grace)
     is_grace_cpu: bool
     has_nvlink_c2c: bool  # NVLink Chip-to-Chip (Grace-Blackwell)
+
+    # Locality detection status
+    gpu_numa_status: str = "unknown"  # unknown, partial, complete, synthetic
     
     # Network (for multi-node)
     network_interfaces: List[Dict[str, Any]] = field(default_factory=list)
@@ -206,6 +209,7 @@ class TopologyInfo:
             "bandwidth_matrix": self.bandwidth_matrix,
             "numa_nodes": self.numa_nodes,
             "gpu_numa_mapping": self.gpu_numa_mapping,
+            "gpu_numa_status": self.gpu_numa_status,
             "cpu_type": self.cpu_type,
             "is_grace_cpu": self.is_grace_cpu,
             "has_nvlink_c2c": self.has_nvlink_c2c,
@@ -261,7 +265,7 @@ class TopologyDetector:
         )
         
         # Detect NUMA topology
-        numa_nodes, gpu_numa_mapping, numa_distance = self._detect_numa(num_gpus)
+        numa_nodes, gpu_numa_mapping, numa_distance, gpu_numa_status = self._detect_numa(num_gpus)
         
         # Detect CPU type
         cpu_type, is_grace, has_c2c = self._detect_cpu()
@@ -283,6 +287,7 @@ class TopologyDetector:
             numa_nodes=numa_nodes,
             gpu_numa_mapping=gpu_numa_mapping,
             numa_distance_matrix=numa_distance,
+            gpu_numa_status=gpu_numa_status,
             cpu_type=cpu_type,
             is_grace_cpu=is_grace,
             has_nvlink_c2c=has_c2c,
@@ -426,25 +431,28 @@ class TopologyDetector:
     
     def _detect_numa(
         self, num_gpus: int
-    ) -> Tuple[int, Dict[int, int], List[List[int]]]:
+    ) -> Tuple[int, Dict[int, int], List[List[int]], str]:
         """Detect NUMA topology."""
         gpu_numa_mapping = {}
-        numa_nodes = 1
-        
-        try:
-            # Try to read NUMA info from sysfs
-            for i in range(num_gpus):
-                numa_node = self._get_gpu_numa_node(i)
-                if numa_node is not None:
-                    gpu_numa_mapping[i] = numa_node
-                    numa_nodes = max(numa_nodes, numa_node + 1)
-        except Exception:
-            pass
+        numa_nodes = 0
+
+        for i in range(num_gpus):
+            numa_node = self._get_gpu_numa_node(i)
+            if numa_node is not None:
+                gpu_numa_mapping[i] = numa_node
+                numa_nodes = max(numa_nodes, numa_node + 1)
+
+        if num_gpus > 0 and len(gpu_numa_mapping) == num_gpus:
+            gpu_numa_status = "complete"
+        elif gpu_numa_mapping:
+            gpu_numa_status = "partial"
+        else:
+            gpu_numa_status = "unknown"
         
         # Read NUMA distance matrix
         numa_distance = self._read_numa_distances(numa_nodes)
         
-        return numa_nodes, gpu_numa_mapping, numa_distance
+        return numa_nodes, gpu_numa_mapping, numa_distance, gpu_numa_status
     
     def _get_gpu_numa_node(self, gpu_index: int) -> Optional[int]:
         """Get NUMA node for a GPU from sysfs."""
@@ -454,25 +462,28 @@ class TopologyDetector:
                 ["nvidia-smi", "-i", str(gpu_index), "--query-gpu=pci.bus_id", "--format=csv,noheader"],
                 capture_output=True, text=True, timeout=5
             )
-            if result.returncode != 0:
-                return None
-            
-            pci_id = result.stdout.strip().lower()
-            # Convert to sysfs path format (e.g., 0000:3b:00.0)
-            if pci_id.startswith("00000000:"):
-                pci_id = pci_id[4:]  # Remove leading zeros
-            
-            # Read NUMA node from sysfs
-            numa_path = Path(f"/sys/bus/pci/devices/{pci_id}/numa_node")
-            if numa_path.exists():
-                value = int(numa_path.read_text().strip())
-                return value if value >= 0 else None
-        except Exception:
-            pass
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+
+        pci_id = result.stdout.strip().lower()
+        if pci_id.startswith("00000000:"):
+            pci_id = pci_id[4:]
+        numa_path = Path(f"/sys/bus/pci/devices/{pci_id}/numa_node")
+        if not numa_path.exists():
+            return None
+        try:
+            value = int(numa_path.read_text().strip())
+        except (OSError, ValueError):
+            return None
+        return value if value >= 0 else None
         return None
     
     def _read_numa_distances(self, numa_nodes: int) -> List[List[int]]:
         """Read NUMA distance matrix."""
+        if numa_nodes <= 0:
+            return []
         distances = [[10] * numa_nodes for _ in range(numa_nodes)]  # Default: local
         
         try:
@@ -482,7 +493,7 @@ class TopologyDetector:
                     values = distance_path.read_text().strip().split()
                     for j, val in enumerate(values[:numa_nodes]):
                         distances[i][j] = int(val)
-        except Exception:
+        except (OSError, ValueError):
             pass
         
         return distances
@@ -633,7 +644,8 @@ class TopologyDetector:
             f"  Type: {topo.cpu_type}",
             f"  Grace CPU: {'Yes' if topo.is_grace_cpu else 'No'}",
             f"  NVLink-C2C: {'Yes' if topo.has_nvlink_c2c else 'No'}",
-            f"  NUMA Nodes: {topo.numa_nodes}",
+            f"  NUMA Nodes: {topo.numa_nodes if topo.gpu_numa_status != 'unknown' else 'unknown'}",
+            f"  GPU NUMA Status: {topo.gpu_numa_status}",
         ])
         
         if topo.gpu_numa_mapping:

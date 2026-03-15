@@ -113,6 +113,11 @@ def _get_gpu_numa_node(gpu_index: int) -> Optional[int]:
     return _read_int(Path(f"/sys/bus/pci/devices/{bus_id}/numa_node"))
 
 
+def _has_known_numa_nodes(cpu_info: Dict[str, Any]) -> bool:
+    numa_nodes = cpu_info.get("numa_nodes")
+    return isinstance(numa_nodes, int) and numa_nodes > 0
+
+
 def detect_cpu_info() -> Dict[str, Any]:
     """
     Detect CPU architecture and topology.
@@ -127,7 +132,7 @@ def detect_cpu_info() -> Dict[str, Any]:
         "processor": platform.processor(),
         "num_cores": psutil.cpu_count(logical=False),
         "num_threads": psutil.cpu_count(logical=True),
-        "numa_nodes": 0,
+        "numa_nodes": None,
         "cpu_memory_gb": psutil.virtual_memory().total / (1024**3),
         "cpu_type": "generic",
         "is_grace": False,
@@ -161,7 +166,7 @@ def detect_cpu_info() -> Dict[str, Any]:
                 if 'available:' in line:
                     info["numa_nodes"] = int(line.split(':')[1].split()[0])
     except FileNotFoundError:
-        info["numa_nodes"] = 1  # numactl not installed
+        pass  # NUMA topology unavailable without numactl
     
     return info
 
@@ -281,7 +286,7 @@ def detect_system_topology() -> Dict[str, Any]:
         topology["interconnect"] = detect_interconnect_type(cpu_info, topology["gpus"][0])
     
     # Detect NUMA-GPU affinity
-    if cpu_info["numa_nodes"] > 0:
+    if _has_known_numa_nodes(cpu_info):
         for i in range(topology["num_gpus"]):
             numa_node = _get_gpu_numa_node(i)
             if numa_node is not None:
@@ -302,7 +307,8 @@ def print_topology_info(topology: Dict[str, Any]) -> None:
     print(f"  CPU Type: {cpu['cpu_type']}")
     print(f"  Physical Cores: {cpu['num_cores']}")
     print(f"  Logical Threads: {cpu['num_threads']}")
-    print(f"  NUMA Nodes: {cpu['numa_nodes']}")
+    numa_nodes = cpu["numa_nodes"]
+    print(f"  NUMA Nodes: {numa_nodes if numa_nodes is not None else 'unknown'}")
     print(f"  CPU Memory: {cpu['cpu_memory_gb']:.1f} GB")
     
     print(f"\nGPU Configuration:")
@@ -330,9 +336,12 @@ def print_topology_info(topology: Dict[str, Any]) -> None:
                     print(f"  GPU {gpu_id} → NUMA Node unavailable")
                 else:
                     print(f"  GPU {gpu_id} → NUMA Node {numa_node}")
-        elif cpu["numa_nodes"] > 1:
+        elif _has_known_numa_nodes(cpu) and cpu["numa_nodes"] > 1:
             print("\nNUMA-GPU Mapping:")
             print("  GPU NUMA locality unavailable from platform APIs")
+        elif cpu["numa_nodes"] is None:
+            print("\nNUMA-GPU Mapping:")
+            print("  CPU NUMA topology unavailable from platform tools")
     
     # System-specific recommendations
     print(f"\nSystem-Specific Optimizations:")
@@ -343,9 +352,12 @@ def print_topology_info(topology: Dict[str, Any]) -> None:
     elif "GH200" in topology['system_type']:
         print("  NVLink-C2C with Hopper architecture")
         print("  Excellent for unified memory workloads")
-    elif cpu['numa_nodes'] > 1:
+    elif _has_known_numa_nodes(cpu) and cpu['numa_nodes'] > 1:
         print("  NUMA-aware process binding recommended")
         print("  Bind each GPU process to nearest NUMA node")
+    elif cpu["numa_nodes"] is None:
+        print("  CPU NUMA topology unavailable; avoid binding assumptions")
+        print("  Use explicit locality only when sysfs or numactl exposes it")
     else:
         print("  Standard CPU-GPU data transfer optimizations")
         print("  Use pinned memory for faster transfers")
@@ -366,7 +378,11 @@ def set_cpu_affinity_for_gpu(gpu_id: int, topology: Dict[str, Any]) -> bool:
     Returns:
         True if affinity was set successfully
     """
-    if topology["cpu_info"]["numa_nodes"] <= 1:
+    numa_nodes = topology["cpu_info"]["numa_nodes"]
+    if numa_nodes is None:
+        print("⚠ CPU NUMA topology unavailable, skipping CPU affinity")
+        return False
+    if numa_nodes <= 1:
         print(f"⚠ Single NUMA node system, skipping CPU affinity")
         return False
     
@@ -553,7 +569,12 @@ def demonstrate_multi_gpu_placement(topology: Dict[str, Any]) -> None:
     
     print("\n=== NUMA-Aware Multi-GPU Placement ===\n")
     
-    if topology["cpu_info"]["numa_nodes"] > 1:
+    numa_nodes = topology["cpu_info"]["numa_nodes"]
+    if numa_nodes is None:
+        print("CPU NUMA topology unavailable:")
+        print("  → Do not infer socket-local placement")
+        print("  → Leave CPU binding unchanged until locality is known")
+    elif numa_nodes > 1:
         print("NUMA-aware configuration recommended:")
         print()
         
