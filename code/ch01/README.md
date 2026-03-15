@@ -12,7 +12,7 @@ Chapter 1 sets the measurement contract for the rest of the repo. The useful que
 - benchmark setups that make launch overhead and framework overhead visible
 
 ## Optimized Path
-- mixed-precision and fused microbatch execution for the training loop
+- FP16 and fused microbatch execution for the training loop
 - separate precision-only and fusion-only variants so the training-loop story is decomposable
 - batched or strided CUDA launches to amortize dispatch cost
 - memory-reduction variants where the main win is footprint, not raw speed
