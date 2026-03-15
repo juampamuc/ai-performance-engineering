@@ -7,10 +7,17 @@ from __future__ import annotations
 
 import torch
 
+from core.utils.warning_filters import warn_optional_component_unavailable
+
 try:
     import ch01.arch_config  # noqa: F401 - Apply chapter defaults
-except ImportError:
-    pass
+except ImportError as exc:
+    warn_optional_component_unavailable(
+        "ch01.arch_config",
+        exc,
+        impact="Chapter 1 architecture defaults were not applied; benchmark continues with stock runtime settings",
+        context="ch01.baseline_performance import",
+    )
 
 from typing import Optional
 

@@ -11,13 +11,16 @@ from importlib import metadata as importlib_metadata
 from contextlib import nullcontext
 
 from core.utils.compile_utils import enable_tf32
-from core.utils.warning_filters import suppress_known_cuda_capability_warnings
+from core.utils.warning_filters import (
+    suppress_known_cuda_capability_warnings,
+    warn_optional_component_unavailable,
+)
 from core.benchmark.triton_compat import (
     ENABLE_TRITON_PATCH as _TRITON_PATCH_ENABLED,
     ensure_triton_compat,
 )
 
-with suppress_known_cuda_capability_warnings():
+with suppress_known_cuda_capability_warnings(context="core.harness.arch_config torch import"):
     import torch
 
 try:
@@ -92,7 +95,7 @@ class ArchitectureConfig:
         self.cutlass_version = None
 
     def _detect_architecture(self) -> str:
-        with suppress_known_cuda_capability_warnings():
+        with suppress_known_cuda_capability_warnings(context="ArchitectureConfig._detect_architecture"):
             if not torch.cuda.is_available():
                 return "cpu"
             props = torch.cuda.get_device_properties(0)
@@ -263,7 +266,7 @@ class ArchitectureConfig:
             os.environ[key] = fallback
 
     def configure_pytorch_optimizations(self) -> None:
-        with suppress_known_cuda_capability_warnings():
+        with suppress_known_cuda_capability_warnings(context="ArchitectureConfig.configure_pytorch_optimizations"):
             if not torch.cuda.is_available():
                 return
 
@@ -434,8 +437,13 @@ def configure_optimizations() -> None:
         try:
             from core.utils.extension_prewarm import prewarm_extensions
             prewarm_extensions(background=True)
-        except ImportError:
-            pass  # Prewarm module not available
+        except ImportError as exc:
+            warn_optional_component_unavailable(
+                "core.utils.extension_prewarm",
+                exc,
+                impact="PREWARM_CUDA_EXTENSIONS=1 was requested but extension prewarm did not run",
+                context="core.harness.arch_config.configure_optimizations",
+            )
 
 
 arch_config = ArchitectureConfig()

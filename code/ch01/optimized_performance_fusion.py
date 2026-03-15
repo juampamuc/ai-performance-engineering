@@ -6,10 +6,17 @@ from typing import Optional
 
 import torch
 
+from core.utils.warning_filters import warn_optional_component_unavailable
+
 try:
     import ch01.arch_config  # noqa: F401 - Apply chapter defaults
-except ImportError:
-    pass
+except ImportError as exc:
+    warn_optional_component_unavailable(
+        "ch01.arch_config",
+        exc,
+        impact="Chapter 1 architecture defaults were not applied; benchmark continues with stock runtime settings",
+        context="ch01.optimized_performance_fusion import",
+    )
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig

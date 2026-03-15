@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,13 +31,21 @@ os.environ["NVCCFLAGS"] = f"-lineinfo {os.environ.get('NVCCFLAGS', '')}".strip()
 
 from core.analysis.performance_analyzer import PerformanceAnalyzer, load_benchmark_data as load_benchmark_results
 from core.plugins.loader import load_plugin_apps
-from core.utils.warning_filters import suppress_known_cuda_capability_warnings
+from core.utils.warning_filters import (
+    suppress_known_cuda_capability_warnings,
+    warn_optional_component_unavailable,
+)
 
 # Load plugins (if installed) to allow capability registration
 try:
     load_plugin_apps()
-except Exception:
-    pass
+except Exception as exc:
+    warn_optional_component_unavailable(
+        "plugin app loader",
+        exc,
+        impact="plugin-provided benchmark capabilities will not be registered",
+        context="benchmark CLI startup",
+    )
 
 # LLM features are always available - everything is in this single package
 LLM_CAPABLE = True
@@ -313,12 +322,18 @@ def _collect_expectations(
 # Import architecture optimizations early
 try:
     import arch_config  # noqa: F401
-except ImportError:
-    pass
+except ImportError as exc:
+    warn_optional_component_unavailable(
+        "arch_config",
+        exc,
+        impact="architecture-specific defaults were not applied",
+        context="benchmark CLI startup",
+    )
 
 # Import benchmark functionality
+BENCHMARK_IMPORT_ERROR: Optional[str] = None
 try:
-    with suppress_known_cuda_capability_warnings():
+    with suppress_known_cuda_capability_warnings(context="benchmark CLI torch import"):
         import torch  # noqa: F401
         from core.utils.chapter_compare_template import discover_benchmarks
         from core.harness.run_benchmarks import (
@@ -330,8 +345,15 @@ try:
         )
 
     BENCHMARK_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     BENCHMARK_AVAILABLE = False
+    BENCHMARK_IMPORT_ERROR = str(exc)
+    warn_optional_component_unavailable(
+        "benchmark runtime imports",
+        exc,
+        impact="benchmark execution commands will not be available until imports succeed",
+        context="benchmark CLI startup",
+    )
 
     # Test functions come from run_benchmarks; if that import failed above, this is False.
 TEST_FUNCTIONS_AVAILABLE = BENCHMARK_AVAILABLE
@@ -436,8 +458,18 @@ def _execute_benchmarks(
         from core.harness.cuda_capabilities import set_force_pipeline
 
         set_force_pipeline(force_pipeline)
-    except ImportError:
-        pass  # cuda_capabilities not available
+    except ImportError as exc:
+        if force_pipeline:
+            raise RuntimeError(
+                "Requested force_pipeline=True but core.harness.cuda_capabilities could not be imported. "
+                f"Install or fix the runtime so the override can be applied: {exc}"
+            ) from exc
+        warnings.warn(
+            "core.harness.cuda_capabilities is unavailable; force_pipeline overrides cannot be applied. "
+            f"Continuing without override: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     artifact_base = Path(artifacts_dir) if artifacts_dir else default_artifacts_root(active_bench_root)
     run_label = None
@@ -482,7 +514,11 @@ def _execute_benchmarks(
     )
 
     if not BENCHMARK_AVAILABLE or not TEST_FUNCTIONS_AVAILABLE:
-        logger.error("Benchmark dependencies missing (torch/benchmark_harness or test functions).")
+        detail = f" Import error: {BENCHMARK_IMPORT_ERROR}" if BENCHMARK_IMPORT_ERROR else ""
+        logger.error(
+            "Benchmark dependencies missing (torch/benchmark_harness or test functions).%s",
+            detail,
+        )
         if exit_on_failure:
             sys.exit(1)
         event_logger.close()
@@ -501,7 +537,11 @@ def _execute_benchmarks(
             "total_successful": 0,
             "total_skipped": 0,
             "results": [],
-            "error": "Benchmark dependencies missing",
+            "error": (
+                "Benchmark dependencies missing"
+                if not BENCHMARK_IMPORT_ERROR
+                else f"Benchmark dependencies missing: {BENCHMARK_IMPORT_ERROR}"
+            ),
         }
 
     try:

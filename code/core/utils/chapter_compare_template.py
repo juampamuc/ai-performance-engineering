@@ -25,7 +25,7 @@ from typing import Dict, Any, List, Tuple, Optional, Callable, cast
 
 from core.utils.warning_filters import suppress_known_cuda_capability_warnings
 
-with suppress_known_cuda_capability_warnings():
+with suppress_known_cuda_capability_warnings(context="chapter_compare_template torch import"):
     import torch
 
 from core.harness.benchmark_harness import (

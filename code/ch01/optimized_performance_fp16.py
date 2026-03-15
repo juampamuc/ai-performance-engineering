@@ -6,14 +6,22 @@ from typing import Optional
 
 import torch
 
+from core.utils.warning_filters import warn_optional_component_unavailable
+
 try:
     import ch01.arch_config  # noqa: F401 - Apply chapter defaults
-except ImportError:
-    pass
+except ImportError as exc:
+    warn_optional_component_unavailable(
+        "ch01.arch_config",
+        exc,
+        impact="Chapter 1 architecture defaults were not applied; benchmark continues with stock runtime settings",
+        context="ch01.optimized_performance_fp16 import",
+    )
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from ch01.performance_common import build_training_mlp, seed_chapter1
+from ch01.performance_fp16_common import PERFORMANCE_FP16_WORKLOAD
 from ch01.workload_config import WORKLOAD
 
 
@@ -26,10 +34,10 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
     def __init__(self):
         super().__init__()
         self.workload = WORKLOAD
-        self.batch_size = self.workload.microbatch_size
-        self.num_microbatches = self.workload.performance_microbatches
+        self.batch_size = PERFORMANCE_FP16_WORKLOAD.batch_size
+        self.num_microbatches = PERFORMANCE_FP16_WORKLOAD.num_microbatches
         self.fusion = 8
-        self.hidden_dim = self.workload.performance_hidden_dim
+        self.hidden_dim = PERFORMANCE_FP16_WORKLOAD.hidden_dim
 
         self.model = None
         self.microbatches = None
@@ -38,8 +46,9 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         self._verify_input = None
         self._verify_output = None
         self.parameter_count = 0
-        samples = float(self.batch_size * self.num_microbatches)
-        self.register_workload_metadata(samples_per_iteration=samples)
+        self.register_workload_metadata(
+            samples_per_iteration=PERFORMANCE_FP16_WORKLOAD.samples_per_iteration,
+        )
 
     def setup(self) -> None:
         seed_chapter1()

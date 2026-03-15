@@ -43,13 +43,13 @@ from core.utils.warning_filters import suppress_benchmark_import_warnings, suppr
 _SERVING_STACK_LIB_DIRS = configure_serving_stack_runtime_env()
 _SERVING_STACK_PRELOADED_LIBS = preload_serving_stack_shared_libs()
 
-with suppress_benchmark_import_warnings():
+with suppress_benchmark_import_warnings(context="benchmark_peak torch import"):
     import torch
 
 # Configure TF32 using new API (PyTorch 2.10+)
 # Enable TF32 for optimal performance on Ampere+ GPUs using the shared helper
-with suppress_benchmark_import_warnings():
-    with suppress_known_cuda_capability_warnings():
+with suppress_benchmark_import_warnings(context="benchmark_peak TF32 setup"):
+    with suppress_known_cuda_capability_warnings(context="benchmark_peak CUDA availability probe"):
         cuda_available = torch.cuda.is_available()
     if cuda_available:
         enable_tf32(matmul_precision="high", cudnn_precision="tf32", set_global_precision=True)
@@ -59,7 +59,7 @@ with suppress_benchmark_import_warnings():
 
 # FAIL FAST: Transformer Engine is REQUIRED
 try:
-    with suppress_benchmark_import_warnings():
+    with suppress_benchmark_import_warnings(context="benchmark_peak transformer_engine import"):
         import transformer_engine.pytorch as te
         import transformer_engine.pytorch.constants as te_constants
 except (ImportError, OSError) as e:
