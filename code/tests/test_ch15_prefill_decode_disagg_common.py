@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from core.benchmark.hot_path_checks import (
+from core.hot_path_checks import (
     check_benchmark_fn_antipatterns,
     check_benchmark_fn_sync_calls,
 )

@@ -13,7 +13,7 @@ import inspect
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from core.benchmark.hot_path_checks import (
+from core.hot_path_checks import (
     benchmark_fn_antipattern_warnings_for_class,
     benchmark_fn_sync_warnings_for_class,
 )

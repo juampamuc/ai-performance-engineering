@@ -12,7 +12,7 @@ import textwrap
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
-_HOT_PATH_REPO_ROOT = Path(__file__).resolve().parents[2]
+_HOT_PATH_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _RANDOM_INPUT_CALLS = {
     ("torch", "rand"),
