@@ -1,7 +1,11 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from core.analysis.refresh_expectations_from_run import refresh_expectations_from_run
+
+TEST_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -240,3 +244,147 @@ def test_refresh_expectations_from_run_infers_validity_profile_from_run_events(t
     updated = json.loads((chapter_dir / "expectations_b200.json").read_text(encoding="utf-8"))
     entry = updated["examples"]["gemm_cuda"]
     assert entry["provenance"]["validity_profile"] == "strict"
+
+
+def test_refresh_expectations_from_run_surfaces_event_log_parse_warnings(tmp_path: Path):
+    repo_root = tmp_path
+    chapter_dir = repo_root / "ch01"
+    chapter_dir.mkdir(parents=True)
+    _write_json(
+        chapter_dir / "expectations_b200.json",
+        {
+            "schema_version": 2,
+            "hardware_key": "b200",
+            "examples": {
+                "gemm": {
+                    "example": "gemm",
+                    "type": "python",
+                    "metrics": {
+                        "baseline_time_ms": 10.0,
+                        "best_optimized_time_ms": 5.0,
+                        "best_speedup": 2.0,
+                        "best_optimized_speedup": 2.0,
+                        "is_regression": False,
+                    },
+                    "provenance": {
+                        "git_commit": "oldsha",
+                        "hardware_key": "b200",
+                        "profile_name": "none",
+                        "timestamp": "2026-03-10T00:00:00Z",
+                        "iterations": 20,
+                        "warmup_iterations": 5,
+                    },
+                    "metadata": {
+                        "optimization_goal": "speed",
+                        "best_optimization_speedup": 2.0,
+                    },
+                }
+            },
+        },
+    )
+    run_dir = repo_root / "artifacts" / "runs" / "rerun"
+    results_json = run_dir / "results" / "benchmark_test_results.json"
+    _write_json(
+        results_json,
+        {
+            "results": [
+                {
+                    "chapter": "ch01",
+                    "benchmarks": [
+                        {
+                            "example": "gemm",
+                            "type": "python",
+                            "expectation": {
+                                "entry": {
+                                    "example": "gemm",
+                                    "type": "python",
+                                    "metrics": {
+                                        "baseline_time_ms": 10.0,
+                                        "best_optimized_time_ms": 4.0,
+                                        "best_speedup": 2.5,
+                                        "best_optimized_speedup": 2.5,
+                                        "is_regression": False,
+                                    },
+                                    "provenance": {
+                                        "git_commit": "newsha",
+                                        "hardware_key": "b200",
+                                        "profile_name": "minimal",
+                                        "timestamp": "2026-03-11T00:00:00Z",
+                                        "iterations": 20,
+                                        "warmup_iterations": 5,
+                                    },
+                                    "metadata": {
+                                        "optimization_goal": "speed",
+                                        "best_optimization_speedup": 2.5,
+                                    },
+                                }
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+    (run_dir / "logs" / "benchmark_events.jsonl").write_text("{not-json\n", encoding="utf-8")
+
+    summary = refresh_expectations_from_run(
+        results_json=results_json,
+        repo_root=repo_root,
+        targets={"ch01:gemm"},
+        dry_run=True,
+    )
+
+    assert summary["validity_profile"] is None
+    assert summary["warnings"]
+    assert "Failed to parse benchmark events log" in summary["warnings"][0]
+
+
+def test_refresh_expectations_from_run_rejects_malformed_results(tmp_path: Path):
+    repo_root = tmp_path
+    (repo_root / "ch01").mkdir(parents=True)
+    results_json = repo_root / "artifacts" / "runs" / "rerun" / "results" / "benchmark_test_results.json"
+    results_json.parent.mkdir(parents=True, exist_ok=True)
+    results_json.write_text("{not-json", encoding="utf-8")
+
+    try:
+        refresh_expectations_from_run(
+            results_json=results_json,
+            repo_root=repo_root,
+            dry_run=True,
+        )
+    except ValueError as exc:
+        assert "Failed to read benchmark results" in str(exc)
+        assert str(results_json) in str(exc)
+    else:
+        raise AssertionError("Expected malformed benchmark results to raise ValueError")
+
+
+def test_refresh_expectations_from_run_cli_rejects_unreadable_targets_file(tmp_path: Path):
+    repo_root = tmp_path
+    results_json = repo_root / "artifacts" / "runs" / "rerun" / "results" / "benchmark_test_results.json"
+    _write_json(results_json, {"results": []})
+    targets_file = repo_root / "missing_targets.txt"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "core.analysis.refresh_expectations_from_run",
+            "--repo-root",
+            str(repo_root),
+            "--results-json",
+            str(results_json),
+            "--targets-file",
+            str(targets_file),
+        ],
+        cwd=TEST_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "Failed to read targets file" in completed.stderr
+    assert str(targets_file) in completed.stderr
+    assert "Traceback" not in completed.stderr

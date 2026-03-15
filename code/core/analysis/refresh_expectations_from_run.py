@@ -26,29 +26,61 @@ class RefreshRecord:
     message: str
 
 
+def _load_json_object(path: Path, *, label: str) -> Dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Failed to read {label} {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object in {label} {path}, got {type(payload).__name__}")
+    return payload
+
+
 def _load_results(path: Path) -> Dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = _load_json_object(path, label="benchmark results")
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise ValueError(f"Expected 'results' list in benchmark results {path}, got {type(results).__name__}")
+    return payload
 
 
-def _infer_validity_profile(results_json: Path) -> Optional[str]:
+def _infer_validity_profile(results_json: Path) -> Tuple[Optional[str], List[str]]:
     events_path = results_json.parent.parent / "logs" / "benchmark_events.jsonl"
     if not events_path.exists():
-        return None
-    for line in events_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        return None, []
+    warnings: List[str] = []
+    try:
+        lines = events_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception as exc:
+        return None, [f"Failed to read benchmark events log {events_path}: {exc}"]
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
-        event = json.loads(line)
+        try:
+            event = json.loads(line)
+        except Exception as exc:
+            warnings.append(f"Failed to parse benchmark events log {events_path}:{line_number}: {exc}")
+            return None, warnings
+        if not isinstance(event, dict):
+            warnings.append(
+                f"Expected JSON object in benchmark events log {events_path}:{line_number}, got {type(event).__name__}"
+            )
+            return None, warnings
         if event.get("event_type") == "run_start":
             value = event.get("validity_profile")
             if value:
-                return str(value)
-    return None
+                return str(value), warnings
+    return None, warnings
 
 
 def _load_targets(targets: Sequence[str], targets_file: Optional[Path]) -> Optional[Set[str]]:
     loaded = set(targets)
     if targets_file:
-        loaded.update(line.strip() for line in targets_file.read_text(encoding="utf-8").splitlines() if line.strip())
+        try:
+            target_lines = targets_file.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:
+            raise ValueError(f"Failed to read targets file {targets_file}: {exc}") from exc
+        loaded.update(line.strip() for line in target_lines if line.strip())
     return loaded or None
 
 
@@ -95,7 +127,8 @@ def refresh_expectations_from_run(
     dry_run: bool = False,
 ) -> Dict[str, object]:
     results = _load_results(results_json)
-    effective_validity_profile = validity_profile or _infer_validity_profile(results_json)
+    inferred_validity_profile, warnings = _infer_validity_profile(results_json)
+    effective_validity_profile = validity_profile or inferred_validity_profile
     chapter_results = list(results.get("results") or [])
     stores: Dict[Tuple[Path, str], ExpectationsStore] = {}
     records: List[RefreshRecord] = []
@@ -157,6 +190,7 @@ def refresh_expectations_from_run(
         "validity_profile": effective_validity_profile,
         "updated_files": [str(store.path.relative_to(repo_root)) for store in stores.values()],
         "records": [asdict(record) for record in records],
+        "warnings": warnings,
         "counts": {
             "applied": sum(1 for r in records if r.status in {"updated", "improved", "regressed", "unchanged"}),
             "improved": sum(1 for r in records if r.status == "improved"),
@@ -186,14 +220,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    summary = refresh_expectations_from_run(
-        results_json=args.results_json,
-        repo_root=args.repo_root,
-        targets=_load_targets(args.target, args.targets_file),
-        validity_profile=args.validity_profile,
-        accept_regressions=not args.no_accept_regressions,
-        dry_run=args.dry_run,
-    )
+    try:
+        summary = refresh_expectations_from_run(
+            results_json=args.results_json,
+            repo_root=args.repo_root,
+            targets=_load_targets(args.target, args.targets_file),
+            validity_profile=args.validity_profile,
+            accept_regressions=not args.no_accept_regressions,
+            dry_run=args.dry_run,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.summary_out:
         args.summary_out.parent.mkdir(parents=True, exist_ok=True)
         args.summary_out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
