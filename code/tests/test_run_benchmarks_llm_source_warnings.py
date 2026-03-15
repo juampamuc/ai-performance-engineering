@@ -122,3 +122,80 @@ def test_run_llm_analysis_for_benchmark_cache_key_warning_forces_fresh_analysis(
     assert not result.get("cached", False)
     assert result["warnings"]
     assert str(cache_key_path) in result["warnings"][0]
+
+
+def test_apply_llm_patches_for_benchmark_surfaces_unreadable_markdown_warning(tmp_path: Path, monkeypatch) -> None:
+    chapter_dir = tmp_path / "ch_demo"
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    md_path = chapter_dir / "llm_analysis_demo.md"
+    md_path.write_text("analysis", encoding="utf-8")
+
+    llm_result = {"md_path": str(md_path)}
+    benchmark_result = {"example": "demo", "optimizations": []}
+
+    original_read_text = Path.read_text
+
+    def _patched_read_text(self: Path, *args, **kwargs):  # type: ignore[override]
+        if self == md_path:
+            raise OSError("markdown boom")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _patched_read_text)
+
+    result = run_benchmarks._apply_llm_patches_for_benchmark(
+        benchmark_result,
+        llm_result,
+        chapter_dir=chapter_dir,
+        profiling_output_dir=None,
+    )
+
+    assert result == []
+    assert llm_result["warnings"]
+    assert str(md_path) in llm_result["warnings"][0]
+
+
+def test_apply_llm_patches_for_benchmark_surfaces_unreadable_source_warning(tmp_path: Path, monkeypatch) -> None:
+    chapter_dir = tmp_path / "ch_demo"
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    md_path = chapter_dir / "llm_analysis_demo.md"
+    source_path = chapter_dir / "baseline_demo.py"
+    md_path.write_text("analysis", encoding="utf-8")
+    source_path.write_text("baseline", encoding="utf-8")
+
+    llm_result = {"md_path": str(md_path)}
+    benchmark_result = {"example": "demo", "optimizations": []}
+
+    class _FakeApplier:
+        def __init__(self, strategy=None, dry_run=None, validate_syntax=None):
+            self.strategy = strategy
+
+        def extract_patches(self, llm_response):
+            assert llm_response == "analysis"
+            return ["patch"]
+
+        def apply_patches(self, patches, source_file, output_dir):
+            assert patches == ["patch"]
+            assert source_file == source_path
+            assert output_dir.exists()
+            return []
+
+    original_read_text = Path.read_text
+
+    def _patched_read_text(self: Path, *args, **kwargs):  # type: ignore[override]
+        if self == source_path:
+            raise OSError("source boom")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _patched_read_text)
+    monkeypatch.setattr("core.analysis.llm_patch_applier.LLMPatchApplier", _FakeApplier)
+
+    result = run_benchmarks._apply_llm_patches_for_benchmark(
+        benchmark_result,
+        llm_result,
+        chapter_dir=chapter_dir,
+        profiling_output_dir=None,
+    )
+
+    assert result == []
+    assert llm_result["warnings"]
+    assert any(str(source_path) in warning for warning in llm_result["warnings"])

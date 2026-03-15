@@ -62,6 +62,7 @@ def test_report_includes_llm_analysis_and_patch_diff(tmp_path: Path) -> None:
                         "model": "unit-test",
                         "latency_seconds": 1.2,
                         "cached": False,
+                        "warnings": ["Failed to read optimized source code from /tmp/example.py: boom"],
                     },
                     "llm_patches": [
                         {
@@ -110,6 +111,8 @@ def test_report_includes_llm_analysis_and_patch_diff(tmp_path: Path) -> None:
     assert "LLM Transparency" in report_text
     assert "LLM Analysis & Patch Diffs" in report_text
     assert "Why Is It Faster?" in report_text
+    assert "Warnings:" in report_text
+    assert "Failed to read optimized source code" in report_text
     assert "Patch diff" in report_text
     assert "-    return 2" in report_text
     assert "+    return 3" in report_text

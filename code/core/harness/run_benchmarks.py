@@ -8074,8 +8074,15 @@ def _apply_llm_patches_for_benchmark(
     md_path = llm_result.get('md_path')
     if not md_path or not Path(md_path).exists():
         return []
-    
-    llm_response = Path(md_path).read_text()
+
+    warnings_list = llm_result.setdefault('warnings', [])
+    llm_response = _safe_read_text_with_warning(
+        Path(md_path),
+        label=f"LLM analysis markdown for {benchmark_result.get('example', 'unknown')}",
+        warnings_list=warnings_list,
+    )
+    if llm_response is None:
+        return []
     
     applier = LLMPatchApplier(strategy=patch_strategy, dry_run=False, validate_syntax=True)
     patches = applier.extract_patches(llm_response)
@@ -8109,8 +8116,12 @@ def _apply_llm_patches_for_benchmark(
         chapter_id = chapter_slug(chapter_dir, repo_root)
         output_dir = default_artifacts_root(repo_root) / "llm_patches" / chapter_id / example_name
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    original_code = source_file.read_text()
+
+    original_code = _safe_read_text_with_warning(
+        source_file,
+        label=f"source code for {example_name}",
+        warnings_list=warnings_list,
+    ) or ""
     results = applier.apply_patches(patches, source_file, output_dir)
     
     # Serialize results, with refinement for failures
@@ -9695,6 +9706,11 @@ def generate_markdown_report(
                         latency_str = f"{latency:.1f}s" if isinstance(latency, (int, float)) else "unknown"
                         f.write(f"- **LLM analysis:** [{llm_md.name}]({llm_link})\n")
                         f.write(f"  - Provider: {provider} | Model: {model} | Latency: {latency_str} | Cached: {cached}\n")
+                        llm_warnings = llm_result.get("warnings") or []
+                        if llm_warnings:
+                            f.write("  - Warnings:\n")
+                            for warning in llm_warnings:
+                                f.write(f"    - {warning}\n")
 
                         llm_text = _safe_read_text(llm_md)
                         if llm_text:
