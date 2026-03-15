@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from core.analysis.compose_deep_dive_failure_ledger import (
@@ -171,3 +173,87 @@ def test_write_failure_ledger_materializes_json_and_markdown(tmp_path: Path) -> 
     markdown = outputs["markdown"].read_text(encoding="utf-8")
     assert "Final Deep-Dive Failure Ledger" in markdown
     assert "`ch10:foo`" in markdown
+
+
+def test_compose_failure_ledger_raises_clear_error_for_malformed_results(tmp_path: Path) -> None:
+    original = tmp_path / "artifacts" / "runs" / "original" / "results" / "benchmark_test_results.json"
+    recheck = tmp_path / "artifacts" / "runs" / "recheck" / "results" / "benchmark_test_results.json"
+
+    _write_results(original, {"results": {}})
+    _write_results(
+        recheck,
+        {
+            "results": [
+                {
+                    "chapter": "ch10",
+                    "benchmarks": [
+                        {
+                            "example": "foo",
+                            "baseline_profiler_statuses": {"nsys": "succeeded"},
+                            "optimizations": [],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    try:
+        compose_failure_ledger(
+            original_results_json=original,
+            recheck_results_json=[recheck],
+        )
+    except ValueError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected malformed deep-dive results to raise ValueError")
+
+    assert str(original) in message
+    assert "results" in message
+
+
+def test_compose_deep_dive_failure_ledger_cli_reports_clean_error(tmp_path: Path) -> None:
+    original = tmp_path / "artifacts" / "runs" / "original" / "results" / "benchmark_test_results.json"
+    recheck = tmp_path / "artifacts" / "runs" / "recheck" / "results" / "benchmark_test_results.json"
+
+    _write_results(original, {"results": {}})
+    _write_results(
+        recheck,
+        {
+            "results": [
+                {
+                    "chapter": "ch10",
+                    "benchmarks": [
+                        {
+                            "example": "foo",
+                            "baseline_profiler_statuses": {"nsys": "succeeded"},
+                            "optimizations": [],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "core.analysis.compose_deep_dive_failure_ledger",
+            "--original-results-json",
+            str(original),
+            "--recheck-results-json",
+            str(recheck),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 1
+    assert str(original) in proc.stderr
+    assert "results" in proc.stderr
+    assert "Traceback" not in proc.stderr

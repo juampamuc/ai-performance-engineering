@@ -5,12 +5,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 
 def _load_results(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Failed to read deep-dive benchmark results {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object in deep-dive benchmark results {path}, got {type(payload).__name__}")
+    results = payload.get("results", [])
+    if not isinstance(results, list):
+        raise ValueError(f"Expected 'results' list in deep-dive benchmark results {path}, got {type(results).__name__}")
+    return payload
 
 
 def _run_id_from_results_path(path: Path) -> str:
@@ -67,8 +77,21 @@ def _extract_targets(results_path: Path) -> Dict[str, Dict[str, Any]]:
     run_id = _run_id_from_results_path(results_path)
     extracted: Dict[str, Dict[str, Any]] = {}
     for chapter in payload.get("results", []):
+        if not isinstance(chapter, dict):
+            raise ValueError(
+                f"Expected chapter object in deep-dive benchmark results {results_path}, got {type(chapter).__name__}"
+            )
         chapter_name = chapter.get("chapter") or "<unknown>"
-        for benchmark in chapter.get("benchmarks", []):
+        benchmarks = chapter.get("benchmarks", [])
+        if not isinstance(benchmarks, list):
+            raise ValueError(
+                f"Expected benchmarks list for chapter {chapter_name} in deep-dive benchmark results {results_path}, got {type(benchmarks).__name__}"
+            )
+        for benchmark in benchmarks:
+            if not isinstance(benchmark, dict):
+                raise ValueError(
+                    f"Expected benchmark object for chapter {chapter_name} in deep-dive benchmark results {results_path}, got {type(benchmark).__name__}"
+                )
             example = benchmark.get("example") or "<unknown>"
             target = f"{chapter_name}:{example}"
             summary = _classify_benchmark(benchmark)
@@ -184,11 +207,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    outputs = write_failure_ledger(
-        original_results_json=args.original_results_json,
-        recheck_results_json=args.recheck_results_json,
-        output_dir=args.output_dir,
-    )
+    try:
+        outputs = write_failure_ledger(
+            original_results_json=args.original_results_json,
+            recheck_results_json=args.recheck_results_json,
+            output_dir=args.output_dir,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     for name, path in outputs.items():
         print(f"{name}: {path}")
     return 0
