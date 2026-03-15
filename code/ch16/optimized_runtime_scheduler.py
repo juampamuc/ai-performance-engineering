@@ -6,7 +6,6 @@ Models vLLM-style async scheduling and stream interval buffering.
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple, Dict
 
 import torch
@@ -71,21 +70,19 @@ class OptimizedRuntimeSchedulerBenchmark(VerificationPayloadMixin, BaseBenchmark
             raise RuntimeError("Workload not initialized")
         total_tokens = scenario.concurrency * scenario.decode_steps * scenario.tokens_per_step
         start = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            prep_future = executor.submit(self.workload.cpu_prepare)
-            for _ in range(scenario.decode_steps):
-                # Wait for prep of current step.
-                _ = prep_future.result()
-                # Launch GPU compute (async).
-                self.output = self.workload.gpu_compute(scenario)
-                # Immediately schedule prep for next step.
-                prep_future = executor.submit(self.workload.cpu_prepare)
-                # Stream outputs while GPU is busy.
-                send_tokens = scenario.concurrency * scenario.tokens_per_step
-                interval = max(1, scenario.stream_interval)
-                for offset in range(0, send_tokens, interval):
-                    self.workload.stream_send(min(interval, send_tokens - offset))
-                torch.cuda.synchronize(self.device)
+        # The CPU prep result is not consumed by GPU compute, so a thread-pool only adds
+        # executor overhead. Launch compute first, then use the host thread for next-step prep
+        # while the kernel is in flight.
+        self.workload.cpu_prepare()
+        for step in range(scenario.decode_steps):
+            self.output = self.workload.gpu_compute(scenario)
+            if step + 1 < scenario.decode_steps:
+                self.workload.cpu_prepare()
+            send_tokens = scenario.concurrency * scenario.tokens_per_step
+            interval = max(1, scenario.stream_interval)
+            for offset in range(0, send_tokens, interval):
+                self.workload.stream_send(min(interval, send_tokens - offset))
+            torch.cuda.synchronize(self.device)
         end = time.perf_counter()
         elapsed = max(end - start, 1e-9)
         self._custom_metrics[f"{scenario.name}.tps_per_gpu"] = total_tokens / elapsed
