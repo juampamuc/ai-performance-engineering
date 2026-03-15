@@ -226,6 +226,22 @@ def _apply_suite_timeout(seconds: Optional[int]) -> None:
     signal.alarm(seconds)
 
 
+def _read_progress_payload_for_heartbeat(progress_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Best-effort progress read for heartbeat telemetry without hiding corruption."""
+    try:
+        if not progress_path.exists():
+            return None, None
+        payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, f"Failed to read progress payload from {progress_path}: {exc}"
+    if not isinstance(payload, dict):
+        return None, (
+            f"Failed to read progress payload from {progress_path}: "
+            f"expected JSON object, got {type(payload).__name__}"
+        )
+    return payload, None
+
+
 def _load_expectations_file(path: Path) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text())
@@ -753,17 +769,34 @@ def _execute_benchmarks(
         "last_logged_sec": 0.0,
         "abort_triggered": False,
     }
+    progress_read_state: Dict[str, Any] = {
+        "warning": None,
+        "last_logged_sec": 0.0,
+    }
 
     def _heartbeat_loop() -> None:
         while not heartbeat_stop.is_set():
-            payload: Any = None
-            try:
-                if progress_recorder.progress_path.exists():
-                    payload = json.loads(progress_recorder.progress_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                payload = {"error": str(exc)}
-            current = payload.get("current") if isinstance(payload, dict) else None
+            payload, progress_warning = _read_progress_payload_for_heartbeat(progress_recorder.progress_path)
             now = time.time()
+            if progress_warning:
+                if (
+                    progress_read_state["warning"] != progress_warning
+                    or now - float(progress_read_state["last_logged_sec"]) >= 30.0
+                ):
+                    progress_read_state["warning"] = progress_warning
+                    progress_read_state["last_logged_sec"] = now
+                    emit_event(
+                        event_logger,
+                        logger,
+                        "run_progress_unreadable",
+                        warning=progress_warning,
+                        progress_path=str(progress_recorder.progress_path),
+                        run_id=artifact_manager.run_id,
+                    )
+                    logger.warning(progress_warning)
+            else:
+                progress_read_state["warning"] = None
+            current = payload.get("current") if isinstance(payload, dict) else None
             if isinstance(current, dict):
                 phase = str(current.get("phase") or "")
                 fingerprint = json.dumps(
@@ -853,6 +886,7 @@ def _execute_benchmarks(
                 "run_heartbeat",
                 progress=current,
                 progress_path=str(progress_recorder.progress_path),
+                progress_warning=progress_warning,
             )
             heartbeat_stop.wait(60.0)
     heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
@@ -1087,15 +1121,14 @@ if TYPER_AVAILABLE:
         ),
         only_cuda: bool = Option(False, "--only-cuda", help="Run only CUDA binary benchmarks (Python wrappers)."),
         only_python: bool = Option(False, "--only-python", help="Run only Python benchmarks (skip CUDA binary wrappers)."),
-        accept_regressions: bool = Option(False, "--accept-regressions", help="Update expectation files when improvements are detected instead of flagging regressions.", is_flag=True),
-        update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware.", is_flag=True),
+        accept_regressions: bool = Option(False, "--accept-regressions", help="Update expectation files when improvements are detected instead of flagging regressions."),
+        update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware."),
         allow_portable_expectations_update: bool = Option(
             False,
             "--allow-portable-expectations-update",
             help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT,
-            is_flag=True,
         ),
-        allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations).", is_flag=True),
+        allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations)."),
         launch_via: str = Option("python", "--launch-via", help="Launcher to use for benchmarks: python or torchrun."),
         nproc_per_node: Optional[int] = Option(None, "--nproc-per-node", help="torchrun --nproc_per_node value."),
         nnodes: Optional[str] = Option(None, "--nnodes", help="torchrun --nnodes value."),
@@ -1104,19 +1137,19 @@ if TYPER_AVAILABLE:
         torchrun_env: Optional[List[str]] = Option(None, "--torchrun-env", help="Environment variables to forward into torchrun launches (repeatable)."),
         target_extra_args: Optional[List[str]] = Option(None, "--target-extra-arg", help='Per-target extra args, format: target="--flag value". Repeatable.'),
         # LLM analysis and patching options
-        llm_analysis: bool = Option(False, "--llm-analysis", help="Enable LLM-powered analysis for benchmarks with <1.1x speedup. Requires API keys in .env.local", is_flag=True),
-        force_llm: bool = Option(False, "--force-llm", help="Force LLM analysis on ALL benchmarks regardless of speedup. Use to try improving even good results.", is_flag=True),
+        llm_analysis: bool = Option(False, "--llm-analysis", help="Enable LLM-powered analysis for benchmarks with <1.1x speedup. Requires API keys in .env.local"),
+        force_llm: bool = Option(False, "--force-llm", help="Force LLM analysis on ALL benchmarks regardless of speedup. Use to try improving even good results."),
         llm_provider: Optional[str] = Option(None, "--llm-provider", help="LLM provider: 'anthropic' or 'openai'. Defaults to env LLM_PROVIDER."),
-        apply_llm_patches: bool = Option(False, "--apply-llm-patches", help="Apply LLM-suggested patches to create new optimized variants. Requires --llm-analysis.", is_flag=True),
-        rebenchmark_llm_patches: bool = Option(False, "--rebenchmark-llm-patches", help="Re-benchmark LLM-patched variants. Requires --apply-llm-patches.", is_flag=True),
+        apply_llm_patches: bool = Option(False, "--apply-llm-patches", help="Apply LLM-suggested patches to create new optimized variants. Requires --llm-analysis."),
+        rebenchmark_llm_patches: bool = Option(False, "--rebenchmark-llm-patches", help="Re-benchmark LLM-patched variants. Requires --apply-llm-patches."),
         patch_strategy: str = Option("ast", "--patch-strategy", help="Patch strategy: 'ast' (default, AST-based) or 'fuzzy' (text matching)."),
         llm_patch_retries: int = Option(2, "--llm-patch-retries", help="Max retry attempts when LLM patch fails (syntax/runtime errors). Default: 2"),
-        no_llm_cache: bool = Option(False, "--no-llm-cache", help="Disable LLM analysis caching (always re-run LLM even if cached results exist).", is_flag=True),
-        llm_explain: bool = Option(False, "--llm-explain", help="Generate educational explanations for best patches (why it works, optimization techniques used). Requires --rebenchmark-llm-patches.", is_flag=True),
+        no_llm_cache: bool = Option(False, "--no-llm-cache", help="Disable LLM analysis caching (always re-run LLM even if cached results exist)."),
+        llm_explain: bool = Option(False, "--llm-explain", help="Generate educational explanations for best patches (why it works, optimization techniques used). Requires --rebenchmark-llm-patches."),
         # Verification - BOTH enabled by default; without verification, benchmarks are meaningless
-        skip_input_verify: bool = Option(False, "--skip-input-verify", help="Skip input equivalence verification. WARNING: Without this check, benchmark comparisons may be invalid (different workloads).", is_flag=True),
-        skip_output_verify: bool = Option(False, "--skip-output-verify", help="Skip output correctness verification. WARNING: Without this check, optimizations may produce incorrect results.", is_flag=True),
-        skip_verify: bool = Option(False, "--skip-verify", help="Skip BOTH input and output verification. Equivalent to --skip-input-verify --skip-output-verify.", is_flag=True),
+        skip_input_verify: bool = Option(False, "--skip-input-verify", help="Skip input equivalence verification. WARNING: Without this check, benchmark comparisons may be invalid (different workloads)."),
+        skip_output_verify: bool = Option(False, "--skip-output-verify", help="Skip output correctness verification. WARNING: Without this check, optimizations may produce incorrect results."),
+        skip_verify: bool = Option(False, "--skip-verify", help="Skip BOTH input and output verification. Equivalent to --skip-input-verify --skip-output-verify."),
         verify_phase: str = Option("gate", "--verify-phase", help="Verification enforcement phase: 'detect' (report only), 'quarantine' (exclude non-compliant from reports), 'gate' (default, fail on verification failure)"),
         precheck_only: bool = Option(False, "--precheck-only", help="Validate targets and print planned command without running."),
         dry_run: bool = Option(False, "--dry-run", help="Describe planned execution without running benchmarks."),
@@ -1263,7 +1296,7 @@ if TYPER_AVAILABLE:
         ),
         nsys_timeout_seconds: Optional[int] = Option(None, "--nsys-timeout-seconds", help="Override Nsight Systems timeout in seconds."),
         ncu_timeout_seconds: Optional[int] = Option(None, "--ncu-timeout-seconds", help="Override Nsight Compute timeout in seconds."),
-        allow_portable_expectations_update: bool = Option(False, "--allow-portable-expectations-update", help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT, is_flag=True),
+        allow_portable_expectations_update: bool = Option(False, "--allow-portable-expectations-update", help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT),
     ):
         """Run the canonical tier-1 suite and write summary/history artifacts."""
         from core.benchmark.suites.tier1 import run_tier1_suite as _run_tier1_suite
@@ -1347,9 +1380,8 @@ if TYPER_AVAILABLE:
             False,
             "--allow-portable-expectations-update",
             help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT,
-            is_flag=True,
         ),
-        async_run: bool = Option(False, "--async", help="Run in background and return job_id; poll with job_status.", is_flag=True),
+        async_run: bool = Option(False, "--async", help="Run in background and return job_id; poll with job_status."),
     ):
         """Copy a baseline benchmark, run LLM variants with profiling, and compare utilization."""
         from mcp.mcp_server import tool_benchmark_explore
@@ -1384,12 +1416,12 @@ if TYPER_AVAILABLE:
         targets: Optional[List[str]] = Option(None, "--targets", "-t", help="Chapter(s) or chapter:example pairs to verify. Repeat the flag for multiple targets. Omit or use 'all' for every chapter."),
         bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
         verify_phase: str = Option("gate", "--verify-phase", "-p", help="Verification enforcement phase: 'detect' (report only), 'quarantine' (exclude non-compliant), 'gate' (default, strict enforcement)"),
-        skip_jitter: bool = Option(False, "--skip-jitter", help="Skip jitter check (output changes when inputs are perturbed)", is_flag=True),
-        skip_fresh_input: bool = Option(False, "--skip-fresh-input", help="Skip fresh-input check (different seeds produce different outputs)", is_flag=True),
-        skip_workload: bool = Option(False, "--skip-workload", help="Skip workload invariant check (bytes/tokens/ops per iteration)", is_flag=True),
-        json_output: bool = Option(False, "--json", help="Output results as JSON", is_flag=True),
-        verbose: bool = Option(False, "--verbose", "-v", help="Verbose output with detailed comparison info", is_flag=True),
-        clear_cache: bool = Option(False, "--clear-cache", help="Clear golden output cache before verification", is_flag=True),
+        skip_jitter: bool = Option(False, "--skip-jitter", help="Skip jitter check (output changes when inputs are perturbed)"),
+        skip_fresh_input: bool = Option(False, "--skip-fresh-input", help="Skip fresh-input check (different seeds produce different outputs)"),
+        skip_workload: bool = Option(False, "--skip-workload", help="Skip workload invariant check (bytes/tokens/ops per iteration)"),
+        json_output: bool = Option(False, "--json", help="Output results as JSON"),
+        verbose: bool = Option(False, "--verbose", "-v", help="Verbose output with detailed comparison info"),
+        clear_cache: bool = Option(False, "--clear-cache", help="Clear golden output cache before verification"),
     ):
         """Verify benchmark pairs for correctness without measuring performance.
         
@@ -2030,7 +2062,7 @@ if TYPER_AVAILABLE:
     def triage(
         data_file: Optional[Path] = Option(None, "--data-file", "-d", help="Path to benchmark_test_results.json"),
         baseline_file: Optional[Path] = Option(None, "--baseline", "-b", help="Optional baseline for regression detection"),
-        auto_deep_dive: bool = Option(False, "--auto-deep-dive", help="Automatically run deep_dive profiling for top regressions.", is_flag=True),
+        auto_deep_dive: bool = Option(False, "--auto-deep-dive", help="Automatically run deep_dive profiling for top regressions."),
         deep_dive_top_n: int = Option(3, "--deep-dive-top-n", help="Number of regressed benchmarks to deep-dive when --auto-deep-dive is set."),
         deep_dive_iterations: int = Option(1, "--deep-dive-iterations", help="Iterations for deep-dive reruns."),
         deep_dive_warmup: int = Option(5, "--deep-dive-warmup", help="Warmup iterations for deep-dive reruns."),
