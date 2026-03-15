@@ -1552,13 +1552,35 @@ _QUEUE_SCRIPT_PATH = _QUEUE_DIR / "bench_queue.sh"
 _QUEUE_LOG_PATH = _QUEUE_DIR / "queue.log"
 _QUEUE_LOCK = threading.Lock()
 _QUEUE_LOG_LOCK = threading.Lock()
+_QUEUE_WARN_LOCK = threading.Lock()
 _QUEUE_MAX_OVERLAP_RETRIES_ENV = "AISP_MCP_QUEUE_MAX_OVERLAP_RETRIES"
 _QUEUE_IDLE_TIMEOUT_ENV = "AISP_MCP_QUEUE_IDLE_TIMEOUT_SEC"
 _QUEUE_RUNNER_LOCK_TIMEOUT_ENV = "AISP_MCP_QUEUE_RUNNER_LOCK_TIMEOUT_SEC"
+_QUEUE_ARTIFACT_WARNED_KEYS: set[str] = set()
 
 
 def _queue_timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _emit_queue_warning_once(kind: str, path: Optional[Path], message: str) -> None:
+    path_text = str(path) if path is not None else ""
+    warning_key = f"{kind}:{path_text}"
+    with _QUEUE_WARN_LOCK:
+        if warning_key in _QUEUE_ARTIFACT_WARNED_KEYS:
+            return
+        _QUEUE_ARTIFACT_WARNED_KEYS.add(warning_key)
+    payload = {
+        "event": "queue_artifact_warning",
+        "kind": kind,
+        "message": message,
+    }
+    if path_text:
+        payload["path"] = path_text
+    try:
+        print(json.dumps(payload), file=sys.stderr)
+    except Exception:
+        pass
 
 
 def _queue_max_overlap_retries() -> int:
@@ -1589,9 +1611,15 @@ def _queue_runner_lock_timeout_seconds() -> int:
 
 
 def _ensure_queue_artifacts() -> bool:
+    lock_path = _QUEUE_DIR / "queue.runner.lock"
     try:
         _QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    except Exception:
+    except Exception as exc:
+        _emit_queue_warning_once(
+            "queue_dir_init",
+            _QUEUE_DIR,
+            f"Failed to initialize queue artifact directory {_QUEUE_DIR}: {exc}",
+        )
         return False
     if not _QUEUE_SCRIPT_PATH.exists():
         header = (
@@ -1600,12 +1628,22 @@ def _ensure_queue_artifacts() -> bool:
             "# Entries are recorded automatically by MCP to serialize bench/profiling runs.\n"
         )
         try:
-            _QUEUE_SCRIPT_PATH.write_text(header)
-        except Exception:
+            _QUEUE_SCRIPT_PATH.write_text(header, encoding="utf-8")
+        except Exception as exc:
+            _emit_queue_warning_once(
+                "queue_script_init",
+                _QUEUE_SCRIPT_PATH,
+                f"Failed to initialize queue script manifest {_QUEUE_SCRIPT_PATH}: {exc}",
+            )
             return False
     try:
-        _QUEUE_DIR.joinpath("queue.runner.lock").touch(exist_ok=True)
-    except Exception:
+        lock_path.touch(exist_ok=True)
+    except Exception as exc:
+        _emit_queue_warning_once(
+            "queue_lock_init",
+            lock_path,
+            f"Failed to initialize queue runner lock {lock_path}: {exc}",
+        )
         return False
     return True
 
@@ -1683,8 +1721,12 @@ def _append_queue_script(entry: Dict[str, Any]) -> None:
     try:
         with _QUEUE_SCRIPT_PATH.open("a", encoding="utf-8") as handle:
             handle.write(line)
-    except Exception:
-        pass
+    except Exception as exc:
+        _emit_queue_warning_once(
+            "queue_script_append",
+            _QUEUE_SCRIPT_PATH,
+            f"Failed to append queue manifest entry to {_QUEUE_SCRIPT_PATH}: {exc}",
+        )
 
 
 def _log_queue_event(message: str) -> None:
@@ -1695,8 +1737,12 @@ def _log_queue_event(message: str) -> None:
         with _QUEUE_LOG_LOCK:
             with _QUEUE_LOG_PATH.open("a", encoding="utf-8") as handle:
                 handle.write(line)
-    except Exception:
-        pass
+    except Exception as exc:
+        _emit_queue_warning_once(
+            "queue_log_append",
+            _QUEUE_LOG_PATH,
+            f"Failed to append queue log entry to {_QUEUE_LOG_PATH}: {exc}",
+        )
 
 
 def _snapshot_processes() -> List[Dict[str, Any]]:
@@ -3238,7 +3284,8 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
             run_id=str(run_id),
             progress_path=run_dir_path / "progress" / "run_progress.json",
         )
-        analysis_progress.emit(
+        _emit_progress_safe(
+            analysis_progress,
             ProgressEvent(
                 phase="analysis",
                 phase_index=1,
@@ -3402,7 +3449,8 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
             "benchmarks": benchmark_analyses,
         }
         analysis_path.write_text(json.dumps(analysis, indent=2, default=str))
-        analysis_progress.emit(
+        _emit_progress_safe(
+            analysis_progress,
             ProgressEvent(
                 phase="analysis",
                 phase_index=2,

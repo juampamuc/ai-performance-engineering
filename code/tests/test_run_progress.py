@@ -113,6 +113,83 @@ def test_job_status_surfaces_corrupt_progress_file(tmp_path: Path) -> None:
             store._store.pop(job_id, None)
 
 
+def test_emit_progress_safe_warns_once_on_emit_failure(capsys) -> None:
+    class BrokenRecorder:
+        progress_path = "/tmp/bad-progress.json"
+
+        def emit(self, event) -> None:
+            raise RuntimeError("emit boom")
+
+    original = set(mcp_server._PROGRESS_EMIT_WARNED_PATHS)
+    mcp_server._PROGRESS_EMIT_WARNED_PATHS.clear()
+    try:
+        event = ProgressEvent(phase="analysis", phase_index=1, total_phases=1, step="broken")
+        mcp_server._emit_progress_safe(BrokenRecorder(), event)
+        mcp_server._emit_progress_safe(BrokenRecorder(), event)
+        lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["event"] == "progress_emit_warning"
+        assert "emit boom" in payload["message"]
+    finally:
+        mcp_server._PROGRESS_EMIT_WARNED_PATHS.clear()
+        mcp_server._PROGRESS_EMIT_WARNED_PATHS.update(original)
+
+
+def test_ensure_queue_artifacts_warns_on_init_failure(monkeypatch, capsys, tmp_path: Path) -> None:
+    blocked_path = tmp_path / "blocked"
+    blocked_path.write_text("not a directory", encoding="utf-8")
+
+    original = set(mcp_server._QUEUE_ARTIFACT_WARNED_KEYS)
+    mcp_server._QUEUE_ARTIFACT_WARNED_KEYS.clear()
+    try:
+        monkeypatch.setattr(mcp_server, "_QUEUE_DIR", blocked_path)
+        monkeypatch.setattr(mcp_server, "_QUEUE_SCRIPT_PATH", blocked_path / "bench_queue.sh")
+        monkeypatch.setattr(mcp_server, "_QUEUE_LOG_PATH", blocked_path / "queue.log")
+
+        assert mcp_server._ensure_queue_artifacts() is False
+        lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["event"] == "queue_artifact_warning"
+        assert payload["kind"] == "queue_dir_init"
+        assert payload["path"] == str(blocked_path)
+    finally:
+        mcp_server._QUEUE_ARTIFACT_WARNED_KEYS.clear()
+        mcp_server._QUEUE_ARTIFACT_WARNED_KEYS.update(original)
+
+
+def test_queue_manifest_and_log_warnings_are_one_time(monkeypatch, capsys, tmp_path: Path) -> None:
+    queue_dir = tmp_path / "queue"
+    queue_dir.mkdir()
+    bad_manifest_path = queue_dir / "manifest_dir"
+    bad_manifest_path.mkdir()
+    bad_log_path = queue_dir / "log_dir"
+    bad_log_path.mkdir()
+
+    original = set(mcp_server._QUEUE_ARTIFACT_WARNED_KEYS)
+    mcp_server._QUEUE_ARTIFACT_WARNED_KEYS.clear()
+    try:
+        monkeypatch.setattr(mcp_server, "_ensure_queue_artifacts", lambda: True)
+        monkeypatch.setattr(mcp_server, "_QUEUE_SCRIPT_PATH", bad_manifest_path)
+        monkeypatch.setattr(mcp_server, "_QUEUE_LOG_PATH", bad_log_path)
+
+        mcp_server._append_queue_script({"tool": "run_benchmarks"})
+        mcp_server._append_queue_script({"tool": "run_benchmarks"})
+        mcp_server._log_queue_event("first")
+        mcp_server._log_queue_event("second")
+
+        lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+        assert len(lines) == 2
+        payloads = [json.loads(line) for line in lines]
+        assert {payload["kind"] for payload in payloads} == {"queue_script_append", "queue_log_append"}
+        for payload in payloads:
+            assert payload["event"] == "queue_artifact_warning"
+    finally:
+        mcp_server._QUEUE_ARTIFACT_WARNED_KEYS.clear()
+        mcp_server._QUEUE_ARTIFACT_WARNED_KEYS.update(original)
+
+
 def test_progress_phases_include_llm() -> None:
     phases = run_benchmarks.PROGRESS_PHASES
     for key in (
