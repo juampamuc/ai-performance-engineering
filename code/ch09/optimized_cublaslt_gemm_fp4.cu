@@ -99,9 +99,9 @@ int main() {
     std::cout << "Running on " << prop.name << " (SM" << prop.major << "." << prop.minor << ")" << std::endl;
     
     if (prop.major < 10) {
-        std::cerr << "ERROR: NVFP4 requires Blackwell (SM 10.0+), detected SM" 
-                  << prop.major << "." << prop.minor << std::endl;
-        return 1;
+        std::cerr << "SKIPPED: cuBLASLt NVFP4 requires Blackwell (SM 10.0+)." << std::endl;
+        std::cerr << "Detected SM" << prop.major << "." << prop.minor << "." << std::endl;
+        return 3;
     }
 
     // Matrix dimensions - must be aligned to 16 for FP4 block scaling
@@ -260,28 +260,12 @@ int main() {
         preference, 1, &heuristicResult, &returnedResults);
     
     if (heuristicStatus != CUBLAS_STATUS_SUCCESS || returnedResults == 0) {
-        std::cerr << "No suitable algorithm found for NVFP4 GEMM (status=" << heuristicStatus << ")" << std::endl;
-        std::cerr << "This may indicate:" << std::endl;
-        std::cerr << "  - CUDA driver version doesn't support FP4" << std::endl;
-        std::cerr << "  - Matrix dimensions not supported" << std::endl;
-        std::cerr << "  - cuBLASLt version doesn't have FP4 algorithms" << std::endl;
-        
-        // Try without scale modes as fallback diagnostic
-        std::cout << "\nAttempting FP4 without block scaling for diagnostics..." << std::endl;
-        cublasLtMatmulMatrixScale_t noScale = CUBLASLT_MATMUL_MATRIX_SCALE_SCALAR_32F;
-        cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_MODE, &noScale, sizeof(noScale));
-        cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_MODE, &noScale, sizeof(noScale));
-        
-        heuristicStatus = cublasLtMatmulAlgoGetHeuristic(
-            ltHandle, matmulDesc, layoutA, layoutB, layoutC, layoutC,
-            preference, 1, &heuristicResult, &returnedResults);
-        
-        if (heuristicStatus == CUBLAS_STATUS_SUCCESS && returnedResults > 0) {
-            std::cout << "FP4 works without block scaling - driver may not support VEC16_UE4M3" << std::endl;
-        } else {
-            std::cerr << "FP4 not supported at all on this system" << std::endl;
-            return 1;
-        }
+        std::cerr << "SKIPPED: cuBLASLt NVFP4 algorithm unavailable on this driver/toolchain." << std::endl;
+        std::cerr << "Block-scaled VEC16_UE4M3 requires a native cuBLASLt heuristic for this exact benchmark." << std::endl;
+        std::cerr << "Diagnostic heuristic status=" << heuristicStatus
+                  << ", returned_results=" << returnedResults << "." << std::endl;
+        std::cerr << "This benchmark intentionally does not fall back to non-block-scaled FP4." << std::endl;
+        return 3;
     }
 
     std::cout << "NVFP4 GEMM algorithm found, running benchmark..." << std::endl;

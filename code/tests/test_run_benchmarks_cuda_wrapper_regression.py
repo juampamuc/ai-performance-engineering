@@ -54,3 +54,19 @@ def test_test_chapter_impl_uses_cuda_wrapper_detector_without_nameerror(tmp_path
     assert result["status"] == "completed"
     assert result["summary"]["informational"] == 1
     assert result["benchmarks"] == []
+
+
+def test_benchmark_cuda_executable_treats_skip_exit_code_as_skip(tmp_path):
+    executable = tmp_path / "skip_cuda_binary.sh"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "echo 'SKIPPED: cuBLASLt NVFP4 algorithm unavailable on this driver/toolchain.' >&2\n"
+        "exit 3\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = run_benchmarks.benchmark_cuda_executable(executable, iterations=1, warmup=0, timeout=5)
+
+    assert result is not None
+    assert result.skip_reason == "SKIPPED: cuBLASLt NVFP4 algorithm unavailable on this driver/toolchain."
