@@ -3053,6 +3053,8 @@ class BenchmarkHarness:
                         sig_data = result_dict.get("input_signature")
                         if sig_data is not None:
                             benchmark._subprocess_input_signature = sig_data
+                        if stderr:
+                            _maybe_write_subprocess_stderr(stderr, benchmark_name, config)
                     else:
                         errors.extend(result_dict.get("errors", ["Subprocess execution failed"]))
                         times_ms = cast(List[float], [])

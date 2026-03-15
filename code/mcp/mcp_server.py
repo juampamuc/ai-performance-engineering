@@ -1366,16 +1366,23 @@ def _normalize_profile_command(command: Any) -> tuple[List[str], Optional[str]]:
     return normalized, None
 
 
+_PROGRESS_EMIT_WARNED_PATHS: set[str] = set()
+
+
 def _read_progress_payload(progress_path: Optional[Path]) -> Optional[Dict[str, Any]]:
     if not progress_path:
         return None
+    path = Path(progress_path)
     try:
-        path = Path(progress_path)
         if not path.exists():
             return None
         return json.loads(path.read_text())
-    except Exception:
-        return None
+    except Exception as exc:
+        return {
+            "current": None,
+            "history": [],
+            "load_warning": f"Failed to read progress payload from {path}: {exc}",
+        }
 
 
 def _emit_progress_safe(recorder: Optional[ProgressRecorder], event: ProgressEvent) -> None:
@@ -1383,8 +1390,27 @@ def _emit_progress_safe(recorder: Optional[ProgressRecorder], event: ProgressEve
         return
     try:
         recorder.emit(event)
-    except Exception:
-        pass
+    except Exception as exc:
+        try:
+            recorder_key = str(getattr(recorder, "progress_path", getattr(recorder, "run_id", "unknown")))
+        except Exception:
+            recorder_key = "unknown"
+        if recorder_key in _PROGRESS_EMIT_WARNED_PATHS:
+            return
+        _PROGRESS_EMIT_WARNED_PATHS.add(recorder_key)
+        try:
+            print(
+                json.dumps(
+                    {
+                        "event": "progress_emit_warning",
+                        "progress_path": recorder_key,
+                        "message": f"Failed to emit progress update: {exc}",
+                    }
+                ),
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
 
 
 def _trim_value(value: Any, max_length: int = _PREVIEW_MAX_LENGTH, max_items: int = _PREVIEW_MAX_ITEMS) -> Any:
@@ -8785,6 +8811,8 @@ def tool_job_status(params: Dict[str, Any]) -> Dict[str, Any]:
     if progress_payload:
         payload["progress"] = progress_payload.get("current")
         payload["progress_history"] = progress_payload.get("history", [])[-5:]
+        if progress_payload.get("load_warning"):
+            payload["progress_warning"] = progress_payload.get("load_warning")
         if progress_path:
             payload["progress_path"] = str(progress_path)
     reported_status = str(payload.get("status", "") or "")

@@ -5,6 +5,7 @@ and error propagation as specified in Part 2.10 of the unified improvement plan.
 """
 
 import pytest
+import sys
 import time
 import threading
 from typing import Optional
@@ -162,6 +163,14 @@ class StderrFailingBenchmark(FailingBenchmark):
         raise RuntimeError("Intentional benchmark failure")
 
 
+class StderrSuccessBenchmark(SimpleBenchmark):
+    """Benchmark that emits stderr and still succeeds."""
+
+    def benchmark_fn(self) -> None:
+        print("INTENTIONAL STDERR SUCCESS MARKER", file=sys.stderr, flush=True)
+        super().benchmark_fn()
+
+
 class TestSubprocessTimeoutKill:
     """Test subprocess timeout kill and error propagation."""
     
@@ -228,6 +237,27 @@ class TestSubprocessTimeoutKill:
         assert stderr_logs, "Expected subprocess stderr log to be captured"
         combined = "\n".join(path.read_text() for path in stderr_logs)
         assert "INTENTIONAL STDERR MARKER" in combined
+
+    def test_subprocess_stderr_capture_on_success(self, tmp_path):
+        """Ensure subprocess stderr is persisted even when the benchmark succeeds."""
+        benchmark = StderrSuccessBenchmark()
+        config = BenchmarkConfig(
+            iterations=2,
+            warmup=5,
+            enable_profiling=False,
+            enable_memory_tracking=False,
+            subprocess_stderr_dir=str(tmp_path),
+            use_subprocess=True,
+        )
+        harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
+
+        result = harness.benchmark(benchmark)
+
+        assert not result.errors
+        stderr_logs = list(tmp_path.glob("*_subprocess.stderr.log"))
+        assert stderr_logs, "Expected subprocess stderr log to be captured"
+        combined = "\n".join(path.read_text() for path in stderr_logs)
+        assert "INTENTIONAL STDERR SUCCESS MARKER" in combined
 
 
 class TestPyTorchTimerCorrectness:

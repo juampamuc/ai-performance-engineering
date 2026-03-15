@@ -166,6 +166,18 @@ def _reap_descendant_processes(grace_seconds: float = 5.0) -> None:
         _wait_for_exit(sorted(remaining), timeout_seconds=2.0)
 
 
+def _emit_runner_warning(message: str, **details: Any) -> None:
+    payload: Dict[str, Any] = {"event": "isolated_runner_warning", "message": message}
+    payload.update(details)
+    try:
+        print(json.dumps(payload, default=str), file=sys.stderr)
+    except Exception:
+        try:
+            print(f"[isolated_runner_warning] {message}", file=sys.stderr)
+        except Exception:
+            pass
+
+
 def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
     """Run benchmark and return results in harness-expected format."""
     import importlib.util
@@ -390,8 +402,8 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
             # into subsequent benchmark subprocesses.
             try:
                 _reap_descendant_processes()
-            except Exception:
-                pass
+            except Exception as exc:
+                _emit_runner_warning("Failed to reap descendant processes", error=str(exc))
     captured = stdout_buffer.getvalue().strip()
     if captured:
         try:

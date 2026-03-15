@@ -85,6 +85,34 @@ def test_job_status_includes_progress(tmp_path: Path) -> None:
             store._store.pop(job_id, None)
 
 
+def test_job_status_surfaces_corrupt_progress_file(tmp_path: Path) -> None:
+    run_dir = tmp_path / "artifacts" / "20250101_000099"
+    progress_path = run_dir / "progress" / "run_progress.json"
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    progress_path.write_text("{not-json", encoding="utf-8")
+
+    store = mcp_server.JOB_STORE
+    job_id = f"run_benchmarks-{uuid.uuid4().hex[:8]}"
+    with store._lock:
+        store._store[job_id] = {
+            "job_id": job_id,
+            "tool": "run_benchmarks",
+            "status": "running",
+            "submitted_at": time.time(),
+            "run_id": "run_099",
+            "run_dir": str(run_dir),
+            "progress_path": str(progress_path),
+        }
+    try:
+        payload = mcp_server.tool_job_status({"job_id": job_id})
+        assert payload["progress"] is None
+        assert "progress_warning" in payload
+        assert "Failed to read progress payload" in payload["progress_warning"]
+    finally:
+        with store._lock:
+            store._store.pop(job_id, None)
+
+
 def test_progress_phases_include_llm() -> None:
     phases = run_benchmarks.PROGRESS_PHASES
     for key in (

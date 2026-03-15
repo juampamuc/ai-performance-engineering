@@ -528,6 +528,7 @@ class EnvironmentProbe:
     root: Path = Path("/")
     env: Dict[str, str] = field(default_factory=lambda: dict(os.environ))
     cpu_affinity: Optional[Set[int]] = None
+    probe_errors: List[str] = field(default_factory=list)
 
     def resolve(self, path: str | Path) -> Path:
         rel = str(path)
@@ -540,12 +541,18 @@ class EnvironmentProbe:
     def read_text(self, path: str | Path) -> str:
         return self.resolve(path).read_text(encoding="utf-8").strip()
 
+    def record_probe_error(self, context: str, exc: Exception) -> None:
+        message = f"{context}: {exc}"
+        if message not in self.probe_errors:
+            self.probe_errors.append(message)
+
     def get_cpu_affinity(self) -> Optional[Set[int]]:
         if self.cpu_affinity is not None:
             return set(self.cpu_affinity)
         try:
             return set(os.sched_getaffinity(0))  # type: ignore[attr-defined]
-        except Exception:
+        except Exception as exc:
+            self.record_probe_error("os.sched_getaffinity(0)", exc)
             return None
 
 
@@ -586,7 +593,8 @@ def _read_optional(probe: EnvironmentProbe, path: str | Path) -> Optional[str]:
         return None
     try:
         return resolved.read_text(encoding="utf-8").strip()
-    except Exception:
+    except Exception as exc:
+        probe.record_probe_error(str(resolved), exc)
         return None
 
 
@@ -841,7 +849,6 @@ def validate_environment(
     details["execution_environment"] = execution_environment.kind
     details["dmi_product_name"] = product_name
     details["virtualized"] = is_virtualized
-
     # CUDA availability (required if running on CUDA device)
     if device.type == "cuda":
         if torch is None or not torch.cuda.is_available():
@@ -1084,6 +1091,15 @@ def validate_environment(
                 warnings_list.append("torch._dynamo.config.suppress_errors=True may hide compilation issues.")
     except Exception:
         warnings_list.append("Failed to inspect torch._dynamo config for suppress_errors.")
+
+    if probe.probe_errors:
+        details["probe_errors"] = list(probe.probe_errors)
+        summary = (
+            f"Environment probe encountered {len(probe.probe_errors)} read/access error(s); "
+            "see details['probe_errors']."
+        )
+        if summary not in warnings_list:
+            warnings_list.append(summary)
 
     is_valid = len(errors) == 0
     return EnvironmentValidationResult(is_valid, errors, warnings_list, details, notices_list)

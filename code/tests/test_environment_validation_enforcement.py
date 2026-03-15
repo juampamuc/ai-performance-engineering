@@ -176,6 +176,21 @@ def test_environment_warning_virtualization_strict_loud_message() -> None:
         assert any("STRICT VALIDITY NOTICE [VIRTUALIZATION]" in notice for notice in result.notices), result.notices
 
 
+def test_environment_probe_errors_are_reported_in_details() -> None:
+    with tempfile.TemporaryDirectory() as env_dir:
+        env_root = Path(env_dir)
+        _make_base_env(env_root)
+        swappiness_path = env_root / "proc" / "sys" / "vm" / "swappiness"
+        swappiness_path.unlink()
+        swappiness_path.mkdir(parents=True, exist_ok=True)
+
+        result = validate_environment(probe=EnvironmentProbe(root=env_root, env={}))
+
+        assert result.is_valid, result
+        assert any("Environment probe encountered" in warning for warning in result.warnings), result.warnings
+        assert any("swappiness" in error for error in result.details.get("probe_errors", [])), result.details
+
+
 def test_environment_enforcement_foreign_gpu_processes_fail_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     import core.harness.validity_checks as validity_checks
 
