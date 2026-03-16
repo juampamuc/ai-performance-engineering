@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import MethodType
+
+import torch
+
+from labs.moe_optimization_journey.moe_benchmark import MoEJourneyBenchmark
+from labs.moe_optimization_journey.level7_compiled import Level7Compiled
+from labs.moe_optimization_journey.moe_model import ConfigurableMoEModel, MoEExperts, MoEOptimizations
+from labs.moe_optimization_journey.optimized_moe import get_benchmark as get_main_optimized_benchmark
+
+
+def _make_experts(*, use_cuda_graphs: bool) -> MoEExperts:
+    opts = MoEOptimizations(use_bmm_fused=True, use_cuda_graphs=use_cuda_graphs)
+    return MoEExperts(num_experts=2, hidden_size=4, intermediate_size=8, opts=opts)
+
+
+def test_moe_forward_prefers_cuda_graph_path_when_enabled() -> None:
+    experts = _make_experts(use_cuda_graphs=True)
+    x = torch.randn(3, 4)
+    expert_indices = torch.zeros(3, 1, dtype=torch.long)
+    expert_weights = torch.ones(3, 1)
+
+    experts.forward_cuda_graphs = MethodType(lambda self, *_args: "graph", experts)
+    experts.forward_bmm_fused = MethodType(lambda self, *_args: "bmm", experts)
+
+    assert experts.forward(x, expert_indices, expert_weights, num_experts_per_tok=1) == "graph"
+
+
+def test_moe_forward_prefers_graphable_bmm_path_while_torch_compile_is_active() -> None:
+    experts = _make_experts(use_cuda_graphs=True)
+    experts.opts.use_compile = True
+    x = torch.randn(3, 4)
+    expert_indices = torch.zeros(3, 1, dtype=torch.long)
+    expert_weights = torch.ones(3, 1)
+
+    experts._is_torch_compiling = MethodType(lambda self: True, experts)
+    experts._forward_bmm_fused_graphable = MethodType(lambda self, *_args: "graphable", experts)
+    experts.forward_bmm_fused = MethodType(lambda self, *_args: "bmm", experts)
+
+    assert experts.forward(x, expert_indices, expert_weights, num_experts_per_tok=1) == "graphable"
+
+
+def test_moe_cuda_graphs_fallback_is_visible_on_cpu() -> None:
+    experts = _make_experts(use_cuda_graphs=True)
+    x = torch.randn(3, 4)
+    expert_indices = torch.tensor([[0], [1], [0]], dtype=torch.long)
+    expert_weights = torch.ones(3, 1)
+
+    output = experts.forward_cuda_graphs(x, expert_indices, expert_weights)
+    metrics = experts.get_cuda_graph_metrics()
+
+    assert output.shape == (3, 4)
+    assert metrics["cuda_graph_attempted"] == 0.0
+    assert metrics["cuda_graph_captured"] == 0.0
+    assert metrics["cuda_graph_fallback"] == 1.0
+
+
+def test_graphable_bmm_fused_path_matches_dynamic_bmm_path() -> None:
+    experts = _make_experts(use_cuda_graphs=True)
+    x = torch.randn(4, 4)
+    expert_indices = torch.tensor([[0], [1], [0], [1]], dtype=torch.long)
+    expert_weights = torch.ones(4, 1)
+
+    dynamic = experts.forward_bmm_fused(x, expert_indices, expert_weights)
+    graphable = experts._forward_bmm_fused_graphable(x, expert_indices, expert_weights)
+
+    torch.testing.assert_close(graphable, dynamic)
+
+
+def test_moe_benchmark_metrics_surface_model_cuda_graph_state() -> None:
+    bench = MoEJourneyBenchmark()
+    bench.opts = MoEOptimizations(use_bmm_fused=True, use_cuda_graphs=True)
+
+    model = ConfigurableMoEModel(
+        vocab_size=64,
+        hidden_size=8,
+        intermediate_size=16,
+        num_layers=1,
+        num_heads=2,
+        num_experts=2,
+        num_experts_per_tok=1,
+        opts=bench.opts,
+    )
+    experts = model.blocks[0].moe.experts
+    x = torch.randn(2, 8)
+    expert_indices = torch.tensor([[0], [1]], dtype=torch.long)
+    expert_weights = torch.ones(2, 1)
+    experts.forward_cuda_graphs(x, expert_indices, expert_weights)
+
+    bench.model = model
+    metrics = bench.get_custom_metrics()
+
+    assert metrics["use_cuda_graphs"] == 1.0
+    assert metrics["cuda_graph_fallback"] == 1.0
+    assert metrics["cuda_graph_captured"] == 0.0
+
+
+def test_main_optimized_moe_entrypoint_now_targets_level7_compile_stage() -> None:
+    benchmark = get_main_optimized_benchmark()
+    assert isinstance(benchmark, Level7Compiled)
+
+
+def test_graphable_moe_path_uses_fixed_capacity_dense_dispatch() -> None:
+    source = Path(__file__).resolve().parents[1] / "labs" / "moe_optimization_journey" / "moe_model.py"
+    text = source.read_text(encoding="utf-8")
+
+    graphable_section = text.split("def _forward_bmm_fused_graphable", maxsplit=1)[1].split(
+        "def forward_cuda_graphs", maxsplit=1
+    )[0]
+    implementation = graphable_section.split('"""', maxsplit=2)[-1]
+
+    assert "F.one_hot(" in graphable_section
+    assert "counts.max().item()" not in implementation
+    assert "torch.argsort" not in implementation
+
+
+def test_graphable_moe_path_matches_level5_bmm_fused_outputs() -> None:
+    experts = _make_experts(use_cuda_graphs=True)
+    x = torch.randn(3, 4)
+    expert_indices = torch.tensor([[0], [1], [0]], dtype=torch.long)
+    expert_weights = torch.ones(3, 1)
+
+    expected = experts.forward_bmm_fused(x, expert_indices, expert_weights)
+    actual = experts._forward_bmm_fused_graphable(x, expert_indices, expert_weights)
+
+    assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-5)

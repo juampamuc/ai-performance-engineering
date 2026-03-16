@@ -38,10 +38,12 @@ int main() {
     CUDA_CHECK(cudaEventCreate(&stop));
     
     const int iterations = 100;
+    const int threads = 256;
+    const int blocks = static_cast<int>((n_floats + threads - 1) / threads);
     CUDA_CHECK(cudaEventRecord(start));
     for (int i = 0; i < iterations; i++) {
         NVTX_RANGE("compute_kernel:scalar_copy_kernel");
-        scalar_copy_kernel<<<64, 64>>>(d_dst, d_src, n_floats);
+        scalar_copy_kernel<<<blocks, threads>>>(d_dst, d_src, n_floats);
         CUDA_CHECK_LAST_ERROR();
     }
     CUDA_CHECK(cudaEventRecord(stop));
@@ -74,7 +76,6 @@ int main() {
     
     return 0;
 }
-
 
 
 

@@ -78,6 +78,7 @@ if __package__ in {None, ""}:
     )
 
 from core.plugins.loader import load_plugin_apps
+from core.utils.dotenv import load_repo_dotenv
 
 try:
     import typer
@@ -90,19 +91,7 @@ except ImportError:  # pragma: no cover - Typer required for the CLI
 
 def load_env() -> None:
     """Load .env and .env.local files."""
-    for env_name in [".env", ".env.local"]:
-        env_file = REPO_ROOT / env_name
-        if env_file.exists():
-            with open(env_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, _, value = line.partition("=")
-                        key = key.strip()
-                        value = value.strip().strip('"').strip("'")
-                        if env_name == ".env.local" or key not in os.environ:
-                            if key and value:
-                                os.environ[key] = value
+    load_repo_dotenv(REPO_ROOT)
 
 load_env()
 

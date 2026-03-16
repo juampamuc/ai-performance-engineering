@@ -339,7 +339,8 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
     def benchmark_fn(self) -> None:
         elapsed = self._impl.run()
         self.elapsed_s = elapsed
-        self.bandwidth_gb_s = (self._impl.size_mb / 1024) * self._impl.iterations * 2 / elapsed
+        multiplier = 1 if self._impl.strategy == "zero_copy" else 2
+        self.bandwidth_gb_s = (self._impl.size_mb / 1024) * self._impl.iterations * multiplier / elapsed
         verify_output = self._impl.gpu_data[:1000].detach().clone()
         self.output = verify_output
 
@@ -386,10 +387,12 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
     def get_custom_metrics(self) -> Optional[dict]:
         """Return memory transfer metrics for grace_coherent_memory."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
+        multiplier = 1 if self._impl.strategy == "zero_copy" else 2
+        bytes_transferred = float(self.size_mb * 1024 * 1024 * self._impl.iterations * multiplier)
         return compute_memory_transfer_metrics(
-            bytes_transferred=self.size,
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
-            transfer_type="hbm",
+            bytes_transferred=bytes_transferred,
+            elapsed_ms=(self.elapsed_s or 0.001) * 1000.0,
+            transfer_type="nvlink" if self._impl.is_grace_blackwell else "pcie",
         )
 
     def validate_result(self) -> Optional[str]:

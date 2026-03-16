@@ -63,7 +63,7 @@ class OptimizedKVCache:
                 cache_entry.append((k, v))
             self.cache_pool.append(cache_entry)
         self.free_indices = list(range(pool_size))
-    
+
     def allocate(self, request_id: str) -> None:
         if request_id in self.allocated_caches:
             return
@@ -72,7 +72,7 @@ class OptimizedKVCache:
             self.allocated_caches[request_id] = cache_idx
         else:
             raise RuntimeError("OptimizedKVCache pool exhausted; increase pool_size in setup instead of allocating in benchmark_fn()")
-    
+
     def append(self, request_id: str, layer_idx: int, k: torch.Tensor, v: torch.Tensor, pos: int) -> None:
         if request_id not in self.allocated_caches:
             self.allocate(request_id)
@@ -80,12 +80,12 @@ class OptimizedKVCache:
         cache_k, cache_v = self.cache_pool[cache_idx][layer_idx]
         cache_k[:, :, pos, :].copy_(k)
         cache_v[:, :, pos, :].copy_(v)
-    
+
     def get(self, request_id: str, layer_idx: int, start: int, end: int) -> tuple[torch.Tensor, torch.Tensor]:
         cache_idx = self.allocated_caches[request_id]
         cache_k, cache_v = self.cache_pool[cache_idx][layer_idx]
         return cache_k[:, :, start:end, :], cache_v[:, :, start:end, :]
-    
+
     def free(self, request_id: str) -> None:
         if request_id in self.allocated_caches:
             cache_idx = self.allocated_caches[request_id]
@@ -197,13 +197,13 @@ class OptimizedKVCacheNaivePoolBenchmark(VerificationPayloadMixin, BaseBenchmark
                 request_id = f"req_{seq_idx}"
                 seq_len = x.size(1)
                 self.kv_cache.allocate(request_id)
-                
+
                 for pos in range(seq_len):
                     token = x[:, pos:pos+1, :]
                     hidden = token
                     for layer_idx, layer in enumerate(self.model):
                         hidden = layer(hidden, self.kv_cache, request_id, layer_idx, pos)
-                
+
                 self.kv_cache.free(request_id)
         # Capture output from the final forward for verification
         self.output = hidden.detach().clone()

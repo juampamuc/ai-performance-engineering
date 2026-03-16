@@ -9,8 +9,9 @@ Level 1: Batched      - Einsum parallelizes all tokens
 Level 2: Fused        - Triton kernel fuses SiLU * up
 Level 3: MemEfficient - Eliminate intermediate tensors
 Level 4: Grouped      - Sort tokens + per-expert GEMM
-Level 5: CUDAGraphs   - Capture kernel sequence
-Level 6: Compiled     - torch.compile does ALL of the above!
+Level 5: BMM Fused    - Vectorized scatter + single BMM
+Level 6: CUDAGraphs   - Capture and replay the fused expert path
+Level 7: Compiled     - torch.compile on top of the graph-friendly model
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, List, Callable
+from typing import Optional, Tuple, List, Callable, Dict
 from dataclasses import dataclass
 
 # Try to import Triton kernels
@@ -105,6 +106,104 @@ class MoEExperts(nn.Module):
         # Pre-allocated buffers for memory-efficient mode
         self._gate_buffer: Optional[torch.Tensor] = None
         self._up_buffer: Optional[torch.Tensor] = None
+        self._cuda_graph = None
+        self._cuda_graph_stream: Optional[torch.cuda.Stream] = None
+        self._cuda_graph_signature: Optional[Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...], str, str, str, int]] = None
+        self._cuda_graph_static_x: Optional[torch.Tensor] = None
+        self._cuda_graph_static_expert_indices: Optional[torch.Tensor] = None
+        self._cuda_graph_static_expert_weights: Optional[torch.Tensor] = None
+        self._cuda_graph_output: Optional[torch.Tensor] = None
+        self._cuda_graph_attempted = False
+        self._cuda_graph_captured = False
+        self._cuda_graph_replays = 0
+        self._cuda_graph_capture_failures = 0
+        self._cuda_graph_last_error: Optional[str] = None
+
+    @staticmethod
+    def _is_torch_compiling() -> bool:
+        compiler = getattr(torch, "compiler", None)
+        if compiler is not None and hasattr(compiler, "is_compiling"):
+            return bool(compiler.is_compiling())
+        dynamo = getattr(torch, "_dynamo", None)
+        if dynamo is not None and hasattr(dynamo, "is_compiling"):
+            return bool(dynamo.is_compiling())
+        return False
+
+    @staticmethod
+    def _graph_signature(
+        x: torch.Tensor,
+        expert_indices: torch.Tensor,
+        expert_weights: torch.Tensor,
+    ) -> Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...], str, str, str, int]:
+        device_index = x.device.index if x.device.index is not None else -1
+        return (
+            tuple(x.shape),
+            tuple(expert_indices.shape),
+            tuple(expert_weights.shape),
+            str(x.dtype),
+            str(expert_indices.dtype),
+            str(expert_weights.dtype),
+            device_index,
+        )
+
+    def _reset_cuda_graph_cache(self) -> None:
+        self._cuda_graph = None
+        self._cuda_graph_stream = None
+        self._cuda_graph_signature = None
+        self._cuda_graph_static_x = None
+        self._cuda_graph_static_expert_indices = None
+        self._cuda_graph_static_expert_weights = None
+        self._cuda_graph_output = None
+
+    def get_cuda_graph_metrics(self) -> Dict[str, float]:
+        return {
+            "cuda_graph_attempted": float(self._cuda_graph_attempted),
+            "cuda_graph_captured": float(self._cuda_graph_captured),
+            "cuda_graph_fallback": float(self._cuda_graph_last_error is not None),
+            "cuda_graph_capture_failures": float(self._cuda_graph_capture_failures),
+            "cuda_graph_replays": float(self._cuda_graph_replays),
+        }
+
+    def _capture_cuda_graph(
+        self,
+        x: torch.Tensor,
+        expert_indices: torch.Tensor,
+        expert_weights: torch.Tensor,
+        signature: Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...], str, str, str, int],
+    ) -> None:
+        self._reset_cuda_graph_cache()
+        self._cuda_graph_attempted = True
+        self._cuda_graph_last_error = None
+        self._cuda_graph_signature = signature
+        self._cuda_graph_static_x = x.detach().clone()
+        self._cuda_graph_static_expert_indices = expert_indices.detach().clone()
+        self._cuda_graph_static_expert_weights = expert_weights.detach().clone()
+
+        capture_stream = torch.cuda.Stream(device=x.device)
+        self._cuda_graph_stream = capture_stream
+        current_stream = torch.cuda.current_stream(device=x.device)
+        capture_stream.wait_stream(current_stream)
+
+        with torch.cuda.stream(capture_stream):
+            for _ in range(3):
+                self._forward_bmm_fused_graphable(
+                    self._cuda_graph_static_x,
+                    self._cuda_graph_static_expert_indices,
+                    self._cuda_graph_static_expert_weights,
+                )
+        capture_stream.synchronize()
+        current_stream.wait_stream(capture_stream)
+
+        self._cuda_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self._cuda_graph, stream=capture_stream):
+            self._cuda_graph_output = self._forward_bmm_fused_graphable(
+                self._cuda_graph_static_x,
+                self._cuda_graph_static_expert_indices,
+                self._cuda_graph_static_expert_weights,
+            )
+        capture_stream.synchronize()
+        current_stream.wait_stream(capture_stream)
+        self._cuda_graph_captured = True
     
     def forward_naive(
         self, x: torch.Tensor, expert_indices: torch.Tensor, 
@@ -354,6 +453,38 @@ class MoEExperts(nn.Module):
         unsort = torch.argsort(sorted_order)
         restored = valid_out[unsort].view(batch_seq, top_k, -1)
         return restored.sum(dim=1)
+
+    def _forward_bmm_fused_graphable(
+        self, x: torch.Tensor, expert_indices: torch.Tensor, expert_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Fixed-shape BMM path for CUDA graph capture.
+
+        The level-5 kernel path sizes the expert buckets with `counts.max().item()`
+        and rebuilds routing buffers from sorted indices. That host synchronization
+        invalidates CUDA graph capture. For level 6 we switch to a fixed-capacity
+        dense dispatch view: every expert sees a static `[batch_seq * top_k, hidden]`
+        slot tensor, with inactive slots masked to zero. The stacked-weight expert
+        compute stays vectorized, but all tensor shapes become capture-safe.
+        """
+        batch_seq, top_k = expert_indices.shape
+        flat_idx = expert_indices.reshape(-1)
+        flat_weights = expert_weights.reshape(1, -1, 1).to(dtype=x.dtype)
+        expanded_x = x.repeat_interleave(top_k, dim=0)
+
+        expert_mask = F.one_hot(flat_idx, num_classes=self.num_experts).transpose(0, 1)
+        expert_mask = expert_mask.to(dtype=x.dtype)
+        padded_tokens = expert_mask.unsqueeze(-1) * expanded_x.unsqueeze(0)
+
+        gate = torch.bmm(padded_tokens, self.w1_stacked)
+        gate = F.silu(gate)
+        up = torch.bmm(padded_tokens, self.w3_stacked)
+        hidden = gate * up
+        out = torch.bmm(hidden, self.w2_stacked)
+        out = out * expert_mask.unsqueeze(-1) * flat_weights
+
+        combined = out.sum(dim=0)
+        restored = combined.view(batch_seq, top_k, self.hidden_size)
+        return restored.sum(dim=1)
     
     def forward_cuda_graphs(
         self, x: torch.Tensor, expert_indices: torch.Tensor, expert_weights: torch.Tensor,
@@ -366,12 +497,58 @@ class MoEExperts(nn.Module):
         - CPU-GPU synchronization
         - Python overhead
         
-        Note: Requires static shapes. Uses BMM fusion as the base.
-        
+        Note: Graph capture itself happens inside this level on top of the
+        level-5 fused BMM path. Static shapes are required.
+
         Speedup: Additional ~1.1x on top of BMM fusion
         """
-        # For now, use bmm_fused as base (graph capture would be done at benchmark level)
-        return self.forward_bmm_fused(x, expert_indices, expert_weights)
+        if x.device.type != "cuda":
+            self._cuda_graph_captured = False
+            self._cuda_graph_last_error = "cuda_graphs_require_cuda_inputs"
+            return self.forward_bmm_fused(x, expert_indices, expert_weights)
+
+        if self._is_torch_compiling():
+            self._cuda_graph_captured = False
+            self._cuda_graph_last_error = "torch_compile_handles_graph_capture"
+            return self.forward_bmm_fused(x, expert_indices, expert_weights)
+
+        signature = self._graph_signature(x, expert_indices, expert_weights)
+        if self._cuda_graph is None or self._cuda_graph_signature != signature:
+            try:
+                self._capture_cuda_graph(x, expert_indices, expert_weights, signature)
+            except Exception as exc:
+                self._cuda_graph_capture_failures += 1
+                self._cuda_graph_captured = False
+                self._reset_cuda_graph_cache()
+                self._cuda_graph_last_error = f"{type(exc).__name__}: {exc}"
+                print(f"[moe_cuda_graphs] fallback to bmm_fused: {self._cuda_graph_last_error}")
+                return self.forward_bmm_fused(x, expert_indices, expert_weights)
+
+        if (
+            self._cuda_graph is None
+            or self._cuda_graph_static_x is None
+            or self._cuda_graph_static_expert_indices is None
+            or self._cuda_graph_static_expert_weights is None
+            or self._cuda_graph_output is None
+        ):
+            self._cuda_graph_captured = False
+            self._cuda_graph_last_error = "cuda_graph_cache_unavailable"
+            return self.forward_bmm_fused(x, expert_indices, expert_weights)
+
+        self._cuda_graph_static_x.copy_(x)
+        self._cuda_graph_static_expert_indices.copy_(expert_indices)
+        self._cuda_graph_static_expert_weights.copy_(expert_weights)
+        current_stream = torch.cuda.current_stream(device=x.device)
+        if self._cuda_graph_stream is not None:
+            self._cuda_graph_stream.wait_stream(current_stream)
+            with torch.cuda.stream(self._cuda_graph_stream):
+                self._cuda_graph.replay()
+            current_stream.wait_stream(self._cuda_graph_stream)
+        else:
+            self._cuda_graph.replay()
+        self._cuda_graph_replays += 1
+        self._cuda_graph_last_error = None
+        return self._cuda_graph_output
 
     def forward(
         self, x: torch.Tensor, expert_indices: torch.Tensor,
@@ -379,7 +556,11 @@ class MoEExperts(nn.Module):
     ) -> torch.Tensor:
         """Dispatch to appropriate implementation based on optimization level."""
         # Priority: highest optimization level that's enabled
-        if self.opts.use_bmm_fused or self.opts.use_cuda_graphs:
+        if self.opts.use_cuda_graphs and not self._is_torch_compiling():
+            return self.forward_cuda_graphs(x, expert_indices, expert_weights)
+        elif self.opts.use_compile and self._is_torch_compiling() and self.opts.use_bmm_fused:
+            return self._forward_bmm_fused_graphable(x, expert_indices, expert_weights)
+        elif self.opts.use_bmm_fused:
             return self.forward_bmm_fused(x, expert_indices, expert_weights)
         elif self.opts.use_grouped:
             return self.forward_grouped(x, expert_indices, expert_weights)
@@ -474,6 +655,27 @@ class ConfigurableMoEModel(nn.Module):
         x = self.ln_f(x)
         return self.lm_head(x)
 
+    def get_cuda_graph_metrics(self) -> Dict[str, float]:
+        attempted = 0.0
+        captured = 0.0
+        fallback = 0.0
+        failures = 0.0
+        replays = 0.0
+        for block in self.blocks:
+            metrics = block.moe.experts.get_cuda_graph_metrics()
+            attempted += metrics["cuda_graph_attempted"]
+            captured += metrics["cuda_graph_captured"]
+            fallback += metrics["cuda_graph_fallback"]
+            failures += metrics["cuda_graph_capture_failures"]
+            replays += metrics["cuda_graph_replays"]
+        return {
+            "cuda_graph_attempted": attempted,
+            "cuda_graph_captured": captured,
+            "cuda_graph_fallback": fallback,
+            "cuda_graph_capture_failures": failures,
+            "cuda_graph_replays": replays,
+        }
+
 
 def create_model(level: int, **kwargs) -> Tuple[ConfigurableMoEModel, MoEOptimizations]:
     """Create model with optimizations enabled up to the given level.
@@ -483,9 +685,9 @@ def create_model(level: int, **kwargs) -> Tuple[ConfigurableMoEModel, MoEOptimiz
     Level 2: + Fused (Triton fuses SiLU*up)
     Level 3: + MemEfficient (reuse buffers)
     Level 4: + Grouped (sort + per-expert GEMM)
-    Level 5: + BMM Fusion (vectorized scatter + single BMM) ← NEW! 5-6x speedup!
-    Level 6: + CUDAGraphs (capture kernel sequence)
-    Level 7: + Compiled (torch.compile does ALL of the above!)
+    Level 5: + BMM Fusion (vectorized scatter + single BMM)
+    Level 6: + CUDAGraphs (capture and replay the fused expert path)
+    Level 7: + Compiled (torch.compile on top of the graph-friendly model)
     """
     opts = MoEOptimizations(
         use_batched=(level >= 1),

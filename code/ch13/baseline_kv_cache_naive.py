@@ -180,12 +180,12 @@ class BaselineKVCacheNaiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 request_id = f"req_{seq_idx}"
                 seq_len = x.size(1)
                 self.kv_cache.allocate(request_id)
-                
+
                 for pos in range(seq_len):
                     token = x[:, pos:pos + 1, :]
                     for layer_idx, layer in enumerate(self.model):
                         token = layer(token, self.kv_cache, request_id, layer_idx, pos)
-                
+
                 self.kv_cache.free(request_id)
             # Store last output for verification
             self.output = token.detach().clone()

@@ -23,6 +23,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from ch01.performance_common import (
     build_training_mlp,
     capture_tf32_state,
+    get_environment_custom_metrics,
     seed_chapter1,
     set_tf32_state,
 )
@@ -141,12 +142,7 @@ class OptimizedPerformanceFusionBenchmark(VerificationPayloadMixin, BaseBenchmar
         return BenchmarkConfig(iterations=5, warmup=10)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        from core.benchmark.metrics import compute_environment_metrics
-
-        return compute_environment_metrics(
-            gpu_count=getattr(self, "gpu_count", 1),
-            gpu_memory_gb=getattr(self, "gpu_memory_gb", 80.0),
-        )
+        return get_environment_custom_metrics()
 
     def validate_result(self) -> Optional[str]:
         if self.model is None or not self.microbatches:

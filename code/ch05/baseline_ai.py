@@ -7,19 +7,9 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from ch05.ai_common import TinyBlock, compute_ai_workload_metrics
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-
-
-class TinyBlock(nn.Module):
-    def __init__(self, hidden_dim: int):
-        super().__init__()
-        self.linear1 = nn.Linear(hidden_dim, hidden_dim * 2)
-        self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(hidden_dim * 2, hidden_dim)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear2(self.relu(self.linear1(x)))
 
 
 class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -35,6 +25,7 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.batch = 64
         self.hidden = 32
         self.num_blocks = 256
+        self.parameter_count = 0
         # Inference benchmark - jitter check not applicable
         tokens = self.batch * self.hidden * self.num_blocks
         self._workload = WorkloadMetadata(
@@ -47,6 +38,7 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.manual_seed_all(42)
         # Initialize model weights after seeding for deterministic comparison
         self.blocks = nn.ModuleList(TinyBlock(self.hidden).to(self.device).eval() for _ in range(self.num_blocks))
+        self.parameter_count = sum(p.numel() for p in self.blocks.parameters())
         self.inputs = torch.randn(self.batch, self.hidden, device=self.device, dtype=torch.float32)
         self._synchronize()
 
@@ -67,7 +59,7 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
             inputs={"inputs": self.inputs},
             output=self.output,
             batch_size=self.batch,
-            parameter_count=sum(p.numel() for p in self.blocks.parameters()),
+            parameter_count=self.parameter_count,
             precision_flags={
                 "fp16": False,
                 "bf16": False,
@@ -81,6 +73,7 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.blocks = None
         self.inputs = None
         self.output = None
+        self.parameter_count = 0
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
@@ -90,13 +83,12 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_storage_io_metrics
-        return compute_storage_io_metrics(
-            bytes_read=getattr(self, '_bytes_read', 0.0),
-            bytes_written=getattr(self, '_bytes_written', 0.0),
-            read_time_ms=getattr(self, '_read_time_ms', 1.0),
-            write_time_ms=getattr(self, '_write_time_ms', 1.0),
+        """Return metrics derived from the actual model/workload shape."""
+        return compute_ai_workload_metrics(
+            batch_size=self.batch,
+            hidden_dim=self.hidden,
+            num_blocks=self.num_blocks,
+            parameter_count=self.parameter_count,
         )
 
     def validate_result(self) -> Optional[str]:

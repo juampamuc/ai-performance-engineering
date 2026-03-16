@@ -20,7 +20,13 @@ except ImportError as exc:
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
-from ch01.performance_common import build_training_mlp, seed_chapter1
+from ch01.performance_common import (
+    build_training_mlp,
+    capture_tf32_state,
+    get_environment_custom_metrics,
+    seed_chapter1,
+    set_tf32_state,
+)
 from ch01.performance_fp16_common import PERFORMANCE_FP16_WORKLOAD
 from ch01.workload_config import WORKLOAD
 
@@ -46,12 +52,15 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         self._verify_input = None
         self._verify_output = None
         self.parameter_count = 0
+        self._tf32_state: tuple[bool, bool | None] | None = None
         self.register_workload_metadata(
             samples_per_iteration=PERFORMANCE_FP16_WORKLOAD.samples_per_iteration,
         )
 
     def setup(self) -> None:
         seed_chapter1()
+        self._tf32_state = capture_tf32_state()
+        set_tf32_state(False)
 
         self.model = build_training_mlp(self.hidden_dim)
         if self.device.type == "cuda":
@@ -126,6 +135,11 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
 
     def teardown(self) -> None:
         del self.model, self.microbatches, self.targets, self.optimizer
+        if self._tf32_state is not None:
+            matmul_state, cudnn_state = self._tf32_state
+            torch.backends.cuda.matmul.allow_tf32 = matmul_state
+            if cudnn_state is not None and torch.backends.cudnn.is_available():
+                torch.backends.cudnn.allow_tf32 = cudnn_state
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -133,12 +147,7 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         return BenchmarkConfig(iterations=5, warmup=10)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        from core.benchmark.metrics import compute_environment_metrics
-
-        return compute_environment_metrics(
-            gpu_count=getattr(self, "gpu_count", 1),
-            gpu_memory_gb=getattr(self, "gpu_memory_gb", 80.0),
-        )
+        return get_environment_custom_metrics()
 
     def validate_result(self) -> Optional[str]:
         if self.model is None or not self.microbatches:

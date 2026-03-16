@@ -1480,11 +1480,11 @@ ENTRIES["ch07"] = chapter_entry(
 
                 | Target | Baseline | Optimized | Measured delta | What changed |
                 | --- | ---: | ---: | ---: | --- |
-                | `tma_copy` | `2.968 ms` | `0.051 ms` | `58.19x` | TMA-assisted copy path instead of a simpler transfer baseline |
+                | `tma_bulk_tensor_2d` | `0.029 ms` | `0.008 ms` | `3.44x` | real tensor-map TMA bulk copy instead of manual 2D staging |
                 | `lookup` | `0.397 ms` | `0.009 ms` | `45.41x` | locality-aware lookup path |
                 | `matmul` | `1.165 ms` | `0.367 ms` | `3.18x` | shared-memory tiled matmul instead of the naive layout |
 
-                This chapter has some intentionally dramatic wins because memory access mistakes are expensive. The point is not that every copy kernel will improve by `58x`, but that access-pattern fixes can dominate the result when the baseline is bandwidth-bound."""
+                This chapter has some intentionally dramatic wins because memory access mistakes are expensive. For the real descriptor-backed TMA story, use `tma_bulk_tensor_2d`; the older `tma_copy` pair remains as a legacy async-neighbor demo and is not the canonical TMA comparison."""
             ),
         ),
         MarkdownSection(
@@ -1494,13 +1494,14 @@ ENTRIES["ch07"] = chapter_entry(
                 Use deep-dive harness runs when you want to see whether the win came from less memory traffic, better staging, or fewer expensive accesses:
 
                 ```bash
-                python -m cli.aisp bench run --targets ch07:tma_copy --profile deep_dive --single-gpu
+                python -m cli.aisp bench run --targets ch07:tma_bulk_tensor_2d --profile deep_dive --single-gpu
                 python -m cli.aisp bench run --targets ch07:lookup --profile deep_dive --single-gpu
                 python -m cli.aisp bench run --targets ch07:matmul --profile deep_dive --single-gpu
                 ```
 
                 These targets answer different chapter-level questions:
-                - `tma_copy`: explicit transfer-path improvement
+                - `tma_bulk_tensor_2d`: descriptor-backed TMA vs manual 2D staging
+                - `tma_copy`: legacy async-neighbor transfer path without tensor maps
                 - `lookup`: cache/locality sensitivity
                 - `matmul`: memory-layout and tile-reuse payoff"""
             ),
@@ -1513,21 +1514,21 @@ ENTRIES["ch07"] = chapter_entry(
                 python -m ch07.compare
                 python -m cli.aisp bench list-targets --chapter ch07
                 python -m cli.aisp bench run --targets ch07 --profile minimal
-                python -m cli.aisp bench run --targets ch07:tma_copy --profile deep_dive --single-gpu
+                python -m cli.aisp bench run --targets ch07:tma_bulk_tensor_2d --profile deep_dive --single-gpu
                 ```"""
             ),
         ),
     ],
     goals=[
         "Measure the gap between scalar, coalesced, and vectorized memory moves.",
-        "Use shared-memory tiling, TMA, and async copy to keep tensor cores saturated.",
+        "Use shared-memory tiling, async copy, and tensor maps where they actually help.",
         "Analyze lookup-heavy workloads and mitigate cache-thrashing access patterns.",
         "Quantify transpose and gather/scatter penalties to justify layout changes.",
     ],
     contents=[
         ("`baseline_copy_scalar.cu`, `baseline_copy_uncoalesced.cu`, `baseline_copy_uncoalesced.py`, `optimized_copy_uncoalesced_coalesced.cu`, `optimized_copy_scalar_vectorized.cu`, `optimized_copy_scalar_vectorized_sm121`", "Copy kernels highlighting coalescing, vector width, and warp-level efficiency."),
         ("`baseline_hbm_copy.cu`, `baseline_hbm_peak.cu`, `optimized_hbm_copy.cu`, `optimized_hbm_peak.cu`, `baseline_hbm_copy.py`, `optimized_hbm_copy.py`", "HBM peak-bandwidth probes with CUDA and Python harnesses."),
-        ("`baseline_async_prefetch.cu`, `optimized_async_prefetch.cu`, `baseline_tma_copy.cu`, `baseline_tma_copy.py`, `optimized_async_prefetch.py`, `async_prefetch_2d_demo.cu`", "Async/TMA samples that overlap global-memory fetch with computation."),
+        ("`baseline_async_prefetch.cu`, `optimized_async_prefetch.cu`, `baseline_tma_copy.cu`, `optimized_tma_copy.cu`, `baseline_tma_copy.py`, `optimized_tma_copy.py`, `async_prefetch_2d_demo.cu`, `baseline_tma_bulk_tensor_2d.{py,cu}`, `optimized_tma_bulk_tensor_2d.{py,cu}`", "Async copy demos plus the separate descriptor-backed TMA benchmark used for the chapter's canonical tensor-map evidence."),
         ("`baseline_matmul.cu`, `baseline_matmul.py`, `optimized_matmul_tiled.py`, `optimized_matmul_tiled.cu`", "Matmul implementations to contrast naive global-memory access with shared-memory tiling and warp-level reuse."),
         ("`baseline_lookup.cu`, `baseline_lookup.py`, `optimized_lookup.cu`, `lookup_pytorch.py`", "Cache-sensitive lookup workloads demonstrating how to reorganize tables for better locality."),
         ("`baseline_transpose.cu`, `baseline_transpose.py`, `optimized_copy_scalar_vectorized.cu`, `optimized_transpose_padded.py`", "Transpose and gather/scatter experiments that show how to minimize bank conflicts."),
@@ -4255,12 +4256,13 @@ ENTRIES["labs/moe_optimization_journey"] = lab_entry(
     ],
     contents=[
         ("`baseline_moe.py`, `baseline_moe_pad_quant.py`", "Naive/reference entrypoints."),
-        ("`level0_naive.py` through `level6_full_stack.py`", "Incremental optimization stages used by the journey."),
+        ("`level0_naive.py` through `level6_full_stack.py`", "Incremental optimization stages used by the journey, including a real CUDA-graph replay stage before the compiled finale."),
         ("`moe_benchmark.py`", "Shared benchmark harness layer for the staged MoE path."),
     ],
     validation=[
         "`python -m cli.aisp bench run --targets labs/moe_optimization_journey --profile minimal` should keep both the core MoE and pad/quant targets green.",
         "Deep-dive runs should make the kernel/layout win attributable to the staged path rather than only to end-to-end timing.",
+        "The Level 6 CUDA-graphs entrypoint should report graph capture/replay instead of silently falling back to the Level 5 fused path.",
     ],
     notes=[
         "This lab is a good example of how the repo should teach optimization: staged, benchmarked, and profiler-backed.",

@@ -34,11 +34,13 @@ class OptimizedAtomicReductionBenchmark(CudaBinaryBenchmark):
         self.register_workload_metadata(bytes_per_iteration=64 * 1024 * 1024)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics."""
-        from core.benchmark.metrics import compute_bandwidth_metrics
-        return compute_bandwidth_metrics(
-            total_bytes=getattr(self, '_total_bytes', 64 * 1024 * 1024 * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+        """Report the actual reduction workload and measured bandwidth."""
+        from ch10.benchmark_metrics_common import compute_reduction_workload_metrics
+
+        return compute_reduction_workload_metrics(
+            num_elements=64 * 1024 * 1024,
+            elapsed_ms=self.last_time_ms,
+            single_pass=True,
         )
 
     def get_input_signature(self) -> dict:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import torch
@@ -19,6 +20,8 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.device_data: Optional[torch.Tensor] = None
         # Match baseline (workload must be identical).
         self.N = 50_000_000
+        self._last_elapsed_ms: Optional[float] = None
+        self._bytes_transferred = float(self.N * 4)
         bytes_per_iter = self.N * 4  # float32 copy
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -42,8 +45,20 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: Optimized H2D transfer (non-blocking)."""
         assert self.host_data is not None and self.device_data is not None
+        if self.device.type == "cuda":
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+            start_event.record()
+        else:
+            start_time = time.perf_counter()
         with self._nvtx_range("memory_transfer_optimized"):
             self.device_data.copy_(self.host_data, non_blocking=True)
+        if self.device.type == "cuda":
+            end_event.record()
+            end_event.synchronize()
+            self._last_elapsed_ms = float(start_event.elapsed_time(end_event))
+        else:
+            self._last_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
     def capture_verification_payload(self) -> None:
         if self.device_data is None:
@@ -95,12 +110,12 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
+        """Return measured host-to-device transfer metrics."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
-            bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
-            transfer_type="hbm",
+            bytes_transferred=self._bytes_transferred,
+            elapsed_ms=self._last_elapsed_ms or 1.0,
+            transfer_type="pcie",
         )
 
     def validate_result(self) -> Optional[str]:
@@ -113,3 +128,9 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedMemoryTransferBenchmark()
+
+
+if __name__ == "__main__":
+    from core.harness.benchmark_harness import benchmark_main
+
+    benchmark_main(get_benchmark)

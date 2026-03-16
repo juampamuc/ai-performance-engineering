@@ -864,6 +864,11 @@ class BenchmarkConfig:
     profile-level compatibility semantics (for example telemetry relaxations).
     """
 
+    allow_foreign_gpu_processes: bool = field(
+        default_factory=lambda: _get_default_value("allow_foreign_gpu_processes", False)
+    )
+    """Warn instead of fail when unrelated CUDA compute processes are active on the benchmark GPU."""
+
     # Legacy timeout field (deprecated, use measurement_timeout_seconds)
     timeout_seconds: int = field(default_factory=lambda: _get_default_value("timeout_seconds", 180))
 
@@ -2432,6 +2437,7 @@ class BenchmarkHarness:
             device=self.device,
             probe=self._environment_probe,
             allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
+            allow_foreign_gpu_processes=bool(getattr(config, "allow_foreign_gpu_processes", False)),
         )
         if LOGGER_AVAILABLE:
             if env_result.details:
@@ -3332,6 +3338,7 @@ class BenchmarkHarness:
             device=self.device,
             probe=self._environment_probe,
             allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
+            allow_foreign_gpu_processes=bool(getattr(config, "allow_foreign_gpu_processes", False)),
         )
         if LOGGER_AVAILABLE:
             for warning in env_result.warnings:
@@ -4263,6 +4270,7 @@ class BenchmarkHarness:
             device=self.device,
             probe=self._environment_probe,
             allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
+            allow_foreign_gpu_processes=bool(getattr(config, "allow_foreign_gpu_processes", False)),
         )
         for warning in env_result.warnings:
             import warnings as warn_module

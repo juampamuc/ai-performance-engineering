@@ -13,6 +13,7 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from labs.flexattention.flexattention_common import (
     build_flex_attention_inputs,
+    compute_attention_workload_metrics,
     make_relative_bias_score_mod,
     resolve_device,
 )
@@ -102,7 +103,7 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                     self.inputs.v,
                 )
             output_tensor = result[0] if isinstance(result, (tuple, list)) else result
-            self.output = output_tensor.detach().float().clone()
+            self.output = output_tensor
         if self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
 
@@ -113,7 +114,7 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "k": self.inputs.k.detach(),
                 "v": self.inputs.v.detach(),
             },
-            output=self.output,
+            output=self.output.detach().float().clone(),
             batch_size=self.batch,
             parameter_count=0,
             precision_flags={"bf16": True, "fp16": False, "tf32": torch.backends.cuda.matmul.allow_tf32},
@@ -138,19 +139,15 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return roofline analysis metrics."""
-        # Estimate problem size for roofline analysis
-        n = getattr(self, 'N', 0) or getattr(self, 'hidden_dim', 0) or 4096
-        batch = getattr(self, 'batch_size', 1) or getattr(self, 'batch', 1)
-        # Simple FLOP estimate for linear layers
-        flops = 2.0 * batch * n * n  # Rough estimate
-        bytes_moved = batch * n * 4.0  # Input/output bytes
-        arithmetic_intensity = flops / max(bytes_moved, 1.0)
-        return {
-            "flex_attention.estimated_flops": flops,
-            "flex_attention.estimated_bytes": bytes_moved,
-            "flex_attention.arithmetic_intensity": arithmetic_intensity,
-        }
+        """Return attention-specific workload metrics."""
+        return compute_attention_workload_metrics(
+            batch=self.batch,
+            heads=self.heads,
+            seq_len=self.seq_len,
+            head_dim=self.head_dim,
+            doc_span=self.doc_span,
+            dtype=self.dtype,
+        )
 
     def validate_result(self) -> Optional[str]:
         if self.inputs is None or self.compiled is None:

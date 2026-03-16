@@ -403,38 +403,19 @@ class OptimizedFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark)
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return FA3-specific metrics using standard roofline helpers."""
-        from core.benchmark.metrics import compute_roofline_metrics
-        
-        # FLOPs: Q@K^T + softmax + attn@V + projections
-        attn_flops = 4.0 * self.batch_size * self.num_heads * (self.seq_len ** 2) * self.head_dim
-        q_dim = self.num_heads * self.head_dim
-        kv_dim = self.num_kv_heads * self.head_dim
-        proj_flops = self.batch_size * self.seq_len * self.hidden_dim * (q_dim + 2 * kv_dim + q_dim)
-        total_flops = attn_flops + proj_flops
-        
-        # Memory: input + Q/K/V + output (O(n) with SDPA tiling)
-        memory_bytes = (
-            self.batch_size * self.seq_len * self.hidden_dim * 2 * 2  # Input + Output
-            + self.batch_size * self.num_heads * self.seq_len * self.head_dim * 2 * 3  # Q, K, V
+        """Report the actual FA3 workload shape without approximate timing."""
+        from ch10.flash_attention_common import compute_attention_workload_metrics
+
+        metrics = compute_attention_workload_metrics(
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            hidden_dim=self.hidden_dim,
+            num_heads=self.num_heads,
+            is_causal=False,
         )
-        
-        # Use roofline analysis
-        metrics = compute_roofline_metrics(
-            total_flops=total_flops,
-            total_bytes=float(memory_bytes),
-            elapsed_ms=2.4,  # Approximate from benchmark
-            precision="tensor",  # Uses Tensor Cores
-        )
-        
-        # Add attention-specific metrics
-        metrics.update({
-            "attention.seq_len": float(self.seq_len),
-            "attention.num_heads": float(self.num_heads),
-            "attention.head_dim": float(self.head_dim),
-            "attention.uses_sdpa": 1.0,
-            "attention.uses_fused_qkv": 1.0,
-        })
+        metrics["attention.num_kv_heads"] = float(self.num_kv_heads)
+        metrics["attention.uses_sdpa"] = 1.0
+        metrics["attention.uses_fused_qkv"] = 1.0
         return metrics
     
     def validate_result(self) -> Optional[str]:

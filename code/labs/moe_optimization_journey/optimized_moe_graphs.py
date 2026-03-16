@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Optimized MoE: Level 4 (CUDA Graphs)."""
+"""Optimized MoE: Level 6 (CUDA Graphs)."""
 
-from labs.moe_optimization_journey.level4_graphs import Level4Graphs
-
-
-def get_benchmark() -> Level4Graphs:
-    return Level4Graphs()
+from labs.moe_optimization_journey.level5_cudagraphs import Level6CUDAGraphs
 
 
-__all__ = ["Level4Graphs", "get_benchmark"]
+def get_benchmark() -> Level6CUDAGraphs:
+    return Level6CUDAGraphs()
+
+
+__all__ = ["Level6CUDAGraphs", "get_benchmark"]

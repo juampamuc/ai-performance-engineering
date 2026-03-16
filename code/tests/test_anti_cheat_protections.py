@@ -678,13 +678,18 @@ class TestDistributedProtections:
         Protection: check_rank_execution()
         Attack: Some ranks don't do work
         """
-        # Rank execution check verifies all ranks do work
-        # In single-GPU mode, only rank 0 exists
-        world_size = 1
-        rank = 0
-        
-        # Verify rank 0 is executing (we're running this test!)
-        assert rank < world_size, "Rank 0 should be valid"
+        from types import SimpleNamespace
+
+        from core.harness.validity_checks import check_rank_execution
+
+        executed, error = check_rank_execution(
+            SimpleNamespace(_skip_rank=True),
+            world_size=2,
+            rank=1,
+        )
+
+        assert not executed
+        assert error == "Rank 1 has _skip_rank=True"
     
     def test_topology_mismatch_detection(self):
         """Test that topology mismatches are detected.
@@ -1520,10 +1525,15 @@ class TestDistributedProtectionsExtended:
         Protection: NCCL validation
         Attack: Communication skipped
         """
-        # In single-GPU mode, no collectives needed
-        # Test validates the protection exists
-        world_size = 1
-        assert world_size >= 1
+        from core.harness.validity_checks import verify_distributed_outputs
+
+        result = verify_distributed_outputs(
+            rank_outputs={0: "hash_a"},
+            expected_world_size=2,
+        )
+
+        assert not result.all_ranks_executed
+        assert result.error_message == "RANK SKIPPING: Missing outputs from ranks [1]"
     
     def test_barrier_timing_protection(self):
         """Test that barrier timing is protected.
@@ -1660,18 +1670,15 @@ class TestDistributedProtectionsExtended:
 class TestEnvironmentProtectionsExtended:
     """Extended environment protection tests."""
     
-    def test_priority_elevation_handling(self):
-        """Test that priority elevation is handled.
-        
-        Protection: Process isolation
-        Attack: Runs at higher priority
-        """
-        import os
-        
-        # Process should run at normal priority
-        # (elevated priority would be detectable)
-        pid = os.getpid()
-        assert pid > 0
+    def test_environment_validation_reports_execution_context(self):
+        """Test that environment validation captures execution context details."""
+        from core.harness.validity_checks import validate_environment
+
+        result = validate_environment(device=torch.device("cuda"))
+
+        assert result.details["device_type"] == "cuda"
+        assert "execution_environment" in result.details
+        assert "platform" in result.details
     
     def test_memory_overcommit_handling(self):
         """Test that memory overcommit is handled.
@@ -1995,17 +2002,17 @@ class TestReproducibilityProtections:
         Protection: Complete run manifest
         Attack: Missing context leads to irreproducibility
         """
-        # Manifest should capture:
-        # - Software versions
-        # - Hardware info
-        # - Seeds used
-        # - Configuration
-        
-        torch_version = torch.__version__
-        cuda_available = torch.cuda.is_available()
-        
-        assert torch_version is not None
-        assert cuda_available
+        from core.benchmark.run_manifest import RunManifest
+
+        manifest = RunManifest.create(
+            config={"iterations": 1, "warmup": 0, "validity_profile": "strict"}
+        )
+
+        assert manifest.software.pytorch_version == torch.__version__
+        assert manifest.hardware.cuda_version is not None
+        assert manifest.git is not None
+        assert manifest.environment is not None
+        assert manifest.config == {"iterations": 1, "warmup": 0, "validity_profile": "strict"}
 
 
 # =============================================================================

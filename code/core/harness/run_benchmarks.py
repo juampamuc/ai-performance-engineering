@@ -2538,6 +2538,149 @@ def _collect_descendant_pids(root_pid: int) -> List[int]:
     return descendants
 
 
+def _safe_read_proc_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except Exception:
+        return b""
+
+
+def _read_proc_environ(pid: int, *, proc_root: Path = Path("/proc")) -> Dict[str, str]:
+    env: Dict[str, str] = {}
+    raw = _safe_read_proc_bytes(proc_root / str(int(pid)) / "environ")
+    if not raw:
+        return env
+    for entry in raw.split(b"\0"):
+        if not entry or b"=" not in entry:
+            continue
+        key, value = entry.split(b"=", 1)
+        try:
+            env[key.decode("utf-8", errors="ignore")] = value.decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+    return env
+
+
+def _read_proc_cmdline(pid: int, *, proc_root: Path = Path("/proc")) -> str:
+    raw = _safe_read_proc_bytes(proc_root / str(int(pid)) / "cmdline")
+    if not raw:
+        return ""
+    return " ".join(part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part)
+
+
+def _read_proc_parent_pid(pid: int, *, proc_root: Path = Path("/proc")) -> Optional[int]:
+    try:
+        stat_text = (proc_root / str(int(pid)) / "stat").read_text(encoding="utf-8")
+    except Exception:
+        return None
+    close_paren = stat_text.rfind(")")
+    if close_paren < 0:
+        return None
+    tail = stat_text[close_paren + 1 :].strip().split()
+    if len(tail) < 2:
+        return None
+    try:
+        return int(tail[1])
+    except ValueError:
+        return None
+
+
+def _pid_exists(pid: Optional[int], *, proc_root: Path = Path("/proc")) -> bool:
+    if pid is None or int(pid) <= 0:
+        return False
+    return (proc_root / str(int(pid))).exists()
+
+
+def _collect_stale_benchmark_orphan_pids(
+    *,
+    current_run_id: str,
+    repo_root: Path,
+    proc_root: Path = Path("/proc"),
+) -> List[int]:
+    """Find leaked benchmark-owned children from older runs that became orphaned."""
+    repo_root_str = str(repo_root.resolve())
+    stale_pids: List[int] = []
+    try:
+        proc_entries = list(proc_root.iterdir())
+    except Exception:
+        return stale_pids
+
+    for proc_dir in proc_entries:
+        if not proc_dir.name.isdigit():
+            continue
+        pid = int(proc_dir.name)
+        env = _read_proc_environ(pid, proc_root=proc_root)
+        owner_run_id = str(env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+        if not owner_run_id or owner_run_id == str(current_run_id).strip():
+            continue
+
+        parent_pid = _read_proc_parent_pid(pid, proc_root=proc_root)
+        if parent_pid not in (1, None) and _pid_exists(parent_pid, proc_root=proc_root):
+            continue
+
+        cmdline = _read_proc_cmdline(pid, proc_root=proc_root)
+        env_context = " ".join(
+            value
+            for value in (
+                env.get("PWD", ""),
+                env.get("PYTHONPATH", ""),
+            )
+            if value
+        )
+        if repo_root_str not in cmdline and repo_root_str not in env_context:
+            continue
+        stale_pids.append(pid)
+
+    stale_pids.sort()
+    return stale_pids
+
+
+def _reap_stale_benchmark_orphans(
+    reason: str,
+    *,
+    current_run_id: str,
+    repo_root: Path,
+    grace_seconds: float = 2.0,
+) -> int:
+    """Kill orphaned benchmark-owned processes left behind by older interrupted runs."""
+    stale_pids = _collect_stale_benchmark_orphan_pids(
+        current_run_id=current_run_id,
+        repo_root=repo_root,
+    )
+    if not stale_pids:
+        return 0
+
+    for pid in stale_pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    remaining = stale_pids
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = [pid for pid in remaining if Path(f"/proc/{pid}").exists()]
+
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    if LOGGER_AVAILABLE:
+        logger.warning(
+            "  Reaped %d orphaned benchmark process(es) from older run(s) before %s",
+            len(stale_pids),
+            reason,
+        )
+    return len(stale_pids)
+
+
 def _reap_run_descendants(reason: str, *, grace_seconds: float = 2.0) -> None:
     """Best-effort cleanup of leaked descendant processes owned by this run."""
     descendants = _collect_descendant_pids(os.getpid())
@@ -2572,6 +2715,21 @@ def _reap_run_descendants(reason: str, *, grace_seconds: float = 2.0) -> None:
             len(descendants),
             reason,
         )
+
+
+def _reap_benchmark_process_leftovers(
+    reason: str,
+    *,
+    current_run_id: str,
+    repo_root: Path,
+) -> None:
+    """Clear benchmark-owned leftovers before the next example starts."""
+    _reap_run_descendants(reason)
+    _reap_stale_benchmark_orphans(
+        reason,
+        current_run_id=current_run_id,
+        repo_root=repo_root,
+    )
 
 
 def profile_python_benchmark_ncu(
@@ -3498,6 +3656,7 @@ def _test_chapter_impl(
     single_gpu: bool = False,
     enforce_environment_validation: bool = True,
     allow_virtualization: bool = False,
+    allow_foreign_gpu_processes: bool = False,
     validity_profile: str = "strict",
     allow_portable_expectations_update: bool = False,
     only_examples: Optional[List[str]] = None,
@@ -3612,6 +3771,7 @@ def _test_chapter_impl(
         enforce_environment_validation=enforce_environment_validation,
         validity_profile=validity_profile,
         allow_virtualization=allow_virtualization,
+        allow_foreign_gpu_processes=allow_foreign_gpu_processes,
         launch_via=launch_via,
         nproc_per_node=nproc_per_node,
         nnodes=nnodes,
@@ -3861,6 +4021,7 @@ def _test_chapter_impl(
         enforce_environment_validation=enforce_environment_validation,
         validity_profile=validity_profile,
         allow_virtualization=allow_virtualization,
+        allow_foreign_gpu_processes=allow_foreign_gpu_processes,
         force_synchronize=force_synchronize,
         ncu_metric_set=ncu_metric_set,
         profile_type=profile_type if enable_profiling else "none",
@@ -4158,6 +4319,12 @@ def _test_chapter_impl(
                 )
                 mark_progress(example_name)
                 continue
+
+            _reap_benchmark_process_leftovers(
+                f"example_start:{chapter_name}:{example_name}",
+                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                repo_root=repo_root,
+            )
         
             result_entry = {
                 'example': example_name,
@@ -6291,6 +6458,12 @@ def _test_chapter_impl(
                 )
                 mark_progress(example_name)
                 continue
+
+            _reap_benchmark_process_leftovers(
+                f"example_start:{chapter_name}:{example_name}:cuda",
+                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                repo_root=repo_root,
+            )
 
             result_entry = {
                 'example': example_name,
@@ -9507,6 +9680,7 @@ def test_chapter(
     single_gpu: bool = False,
     enforce_environment_validation: bool = True,
     allow_virtualization: bool = False,
+    allow_foreign_gpu_processes: bool = False,
     validity_profile: str = "strict",
     allow_portable_expectations_update: bool = False,
     only_examples: Optional[List[str]] = None,
@@ -9563,6 +9737,7 @@ def test_chapter(
         single_gpu=single_gpu,
         enforce_environment_validation=enforce_environment_validation,
         allow_virtualization=allow_virtualization,
+        allow_foreign_gpu_processes=allow_foreign_gpu_processes,
         validity_profile=validity_profile,
         allow_portable_expectations_update=allow_portable_expectations_update,
         graph_capture_ratio_threshold=graph_capture_ratio_threshold,
@@ -10254,6 +10429,11 @@ def main():
         help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT,
     )
     parser.add_argument(
+        '--allow-foreign-gpu-processes',
+        action='store_true',
+        help='Warn instead of fail when unrelated CUDA compute processes are active on the benchmark GPU. Use only on shared hosts when strict isolation is impossible.',
+    )
+    parser.add_argument(
         '--nsys-timeout-seconds',
         type=int,
         default=None,
@@ -10343,6 +10523,11 @@ def main():
     event_run_id = build_run_id("bench-main", base_dir=default_artifacts_root(active_bench_root))
     os.environ["AISP_BENCHMARK_OWNER_RUN_ID"] = event_run_id
     atexit.register(_reap_run_descendants, "run_exit")
+    _reap_benchmark_process_leftovers(
+        "run_start",
+        current_run_id=event_run_id,
+        repo_root=repo_root,
+    )
     event_log_path = args.output.parent / "benchmark_events.jsonl"
     event_logger = BenchmarkEventLogger(event_log_path, event_run_id, logger)
     defaults = get_defaults() or BenchmarkDefaults()
@@ -10358,6 +10543,7 @@ def main():
         nsys_timeout_seconds=args.nsys_timeout_seconds,
         ncu_timeout_seconds=args.ncu_timeout_seconds,
         validity_profile=args.validity_profile,
+        allow_foreign_gpu_processes=bool(args.allow_foreign_gpu_processes),
         update_expectations=args.update_expectations,
         allow_portable_expectations_update=bool(args.allow_portable_expectations_update),
         allow_mixed_provenance=args.allow_mixed_provenance,
@@ -10492,6 +10678,11 @@ def main():
             logger.info(f"\n  Resetting GPU state before {chapter_dir.name}...")
             reset_cuda_state()
             reset_gpu_state()
+        _reap_benchmark_process_leftovers(
+            f"chapter_start:{chapter_dir.name}",
+            current_run_id=event_run_id,
+            repo_root=repo_root,
+        )
         
         # Clean build directories to prevent stale lock issues
         build_dir = chapter_dir / "build"
@@ -10523,6 +10714,7 @@ def main():
             warmup=args.warmup,
             only_examples=only_examples,
             validity_profile=args.validity_profile,
+            allow_foreign_gpu_processes=bool(args.allow_foreign_gpu_processes),
             allow_portable_expectations_update=bool(args.allow_portable_expectations_update),
             accept_regressions=args.accept_regressions if hasattr(args, "accept_regressions") else False,
             update_expectations=args.update_expectations if hasattr(args, "update_expectations") else False,

@@ -267,11 +267,9 @@ def test_environment_enforcement_foreign_gpu_processes_allow_override(
         device=torch.device("cuda"),
         probe=EnvironmentProbe(
             root=Path("/"),
-            env={
-                "AISP_ALLOW_FOREIGN_GPU_PROCESSES": "1",
-                "AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0",
-            },
+            env={"AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0"},
         ),
+        allow_foreign_gpu_processes=True,
     )
     assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
     assert any("Foreign CUDA compute process(es) detected on benchmark GPU" in warning for warning in result.warnings), result.warnings

@@ -122,12 +122,19 @@ class BaselineAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return BenchmarkConfig(iterations=50, warmup=10)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 4),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
+        """Report the actual attention workload shape."""
+        from ch10.flash_attention_common import compute_attention_workload_metrics
+
+        metrics = compute_attention_workload_metrics(
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            hidden_dim=self.hidden_dim,
+            num_heads=self.num_heads,
+            is_causal=False,
         )
+        metrics["attention.uses_sdpa"] = 0.0
+        metrics["attention.materializes_attn_matrix"] = 1.0
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.query is None or self.key is None or self.value is None:

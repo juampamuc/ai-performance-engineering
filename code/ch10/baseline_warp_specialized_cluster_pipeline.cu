@@ -29,7 +29,7 @@ namespace cg = cooperative_groups;
 
 namespace {
 
-constexpr int TILE_SIZE = 128;
+constexpr int TILE_SIZE = 96;
 constexpr int TILE_ELEMS = TILE_SIZE * TILE_SIZE;
 constexpr int CLUSTER_BLOCKS = 4;
 constexpr int WARPS_PER_BLOCK = 3;
@@ -289,11 +289,14 @@ int run_baseline(int num_tiles) {
         static_cast<int>(shared_bytes)));
 
     const int clusters_in_grid = std::max(1, std::min(num_tiles, prop.multiProcessorCount));
+    cudaStream_t stream{};
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
     cudaLaunchConfig_t cfg{};
     cfg.gridDim = dim3(clusters_in_grid * CLUSTER_BLOCKS);
     cfg.blockDim = dim3(THREADS_PER_BLOCK);
     cfg.dynamicSmemBytes = shared_bytes;
-    cfg.stream = 0;
+    cfg.stream = stream;
 
     cudaLaunchAttribute attrs[1]{};
     attrs[0].id = cudaLaunchAttributeClusterDimension;
@@ -304,7 +307,6 @@ int run_baseline(int num_tiles) {
     cfg.numAttrs = 1;
 
     for (int i = 0; i < WARMUP_ITERS; ++i) {
-        NVTX_RANGE("warmup");
         CUDA_CHECK(cudaLaunchKernelEx(
             &cfg,
             baseline_warp_specialized_cluster_pipeline_kernel,
@@ -319,18 +321,20 @@ int run_baseline(int num_tiles) {
     cudaEvent_t stop{};
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
-    CUDA_CHECK(cudaEventRecord(start));
-    for (int i = 0; i < BENCH_ITERS; ++i) {
+    CUDA_CHECK(cudaEventRecord(start, stream));
+    {
         NVTX_RANGE("compute_kernel:baseline_warp_specialized_cluster_pipeline");
-        CUDA_CHECK(cudaLaunchKernelEx(
-            &cfg,
-            baseline_warp_specialized_cluster_pipeline_kernel,
-            d_A,
-            d_B,
-            d_C,
-            num_tiles));
+        for (int i = 0; i < BENCH_ITERS; ++i) {
+            CUDA_CHECK(cudaLaunchKernelEx(
+                &cfg,
+                baseline_warp_specialized_cluster_pipeline_kernel,
+                d_A,
+                d_B,
+                d_C,
+                num_tiles));
+        }
     }
-    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventRecord(stop, stream));
     CUDA_CHECK(cudaEventSynchronize(stop));
 
     float ms = 0.0f;
@@ -357,6 +361,7 @@ int run_baseline(int num_tiles) {
 
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(cudaStreamDestroy(stream));
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));

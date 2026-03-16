@@ -72,13 +72,13 @@ class BaselineHostStagedReductionBenchmark(VerificationPayloadMixin, BaseBenchma
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_storage_io_metrics
-        return compute_storage_io_metrics(
-            bytes_read=getattr(self, '_bytes_read', 0.0),
-            bytes_written=getattr(self, '_bytes_written', 0.0),
-            read_time_ms=getattr(self, '_read_time_ms', 1.0),
-            write_time_ms=getattr(self, '_write_time_ms', 1.0),
+        """Report the actual host-staging behavior of the reduction path."""
+        from ch05.metrics_common import compute_host_reduction_metrics
+
+        return compute_host_reduction_metrics(
+            num_elements=self.num_elements,
+            host_staging_round_trips=2,
+            keeps_reduction_on_device=False,
         )
 
     def validate_result(self) -> Optional[str]:

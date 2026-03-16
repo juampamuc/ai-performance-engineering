@@ -22,6 +22,7 @@ import sys
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -38,6 +39,8 @@ except ImportError:
 
 
 logger = get_logger(__name__)
+_EMITTED_VALIDITY_LIMITATIONS: Set[str] = set()
+_VALIDITY_LIMITATION_RECORDS: Dict[str, "RuntimeCapabilityLimitationRecord"] = {}
 
 
 def _emit_validity_warning(message: str, *, exc: Optional[BaseException] = None) -> None:
@@ -45,6 +48,72 @@ def _emit_validity_warning(message: str, *, exc: Optional[BaseException] = None)
     detail = f"{message}: {exc}" if exc is not None else message
     logger.warning(detail)
     warnings.warn(detail, RuntimeWarning, stacklevel=2)
+
+
+def _emit_validity_limitation_once(
+    key: str,
+    message: str,
+    *,
+    exc: Optional[BaseException] = None,
+    component: str = "validity_checks",
+    category: str = "runtime_capability_gap",
+) -> None:
+    """Surface known runtime capability gaps once per process."""
+    if key in _EMITTED_VALIDITY_LIMITATIONS:
+        return
+    _EMITTED_VALIDITY_LIMITATIONS.add(key)
+    _VALIDITY_LIMITATION_RECORDS[key] = RuntimeCapabilityLimitationRecord(
+        key=key,
+        category=category,
+        component=component,
+        summary=message,
+        detail=str(exc) if exc is not None else None,
+        first_observed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _emit_validity_warning(message, exc=exc)
+
+
+@dataclass(frozen=True)
+class RuntimeCapabilityLimitationRecord:
+    """Structured record of a known runtime capability limitation."""
+
+    key: str
+    category: str
+    component: str
+    summary: str
+    detail: Optional[str]
+    first_observed_at: str
+
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        return {
+            "key": self.key,
+            "category": self.category,
+            "component": self.component,
+            "summary": self.summary,
+            "detail": self.detail,
+            "first_observed_at": self.first_observed_at,
+        }
+
+
+def get_runtime_capability_limitations() -> List[Dict[str, Optional[str]]]:
+    """Return structured runtime capability limitations observed in this process."""
+    return [
+        _VALIDITY_LIMITATION_RECORDS[key].to_dict()
+        for key in sorted(_VALIDITY_LIMITATION_RECORDS)
+    ]
+
+
+def _is_cuda_release_pool_unsupported(exc: BaseException) -> bool:
+    detail = str(exc)
+    return (
+        "_cuda_releasePool" in detail
+        and "incompatible function arguments" in detail
+    )
+
+
+def _is_allocator_reset_setting_unsupported(exc: BaseException) -> bool:
+    detail = str(exc)
+    return "Unrecognized CachingAllocator option: reset_allocator" in detail
 
 
 # =============================================================================
@@ -315,10 +384,19 @@ def reset_cuda_memory_pool(device: Optional[Any] = None) -> None:
         if hasattr(torch, "_C") and hasattr(torch._C, "_cuda_releasePool"):
             torch._C._cuda_releasePool()
     except Exception as exc:
-        _emit_validity_warning(
-            "Failed to release the CUDA allocator pool during memory-pool reset; cached allocations may remain visible to later runs",
-            exc=exc,
-        )
+        if _is_cuda_release_pool_unsupported(exc):
+            _emit_validity_limitation_once(
+                "cuda_release_pool_signature",
+                "This PyTorch runtime exposes torch._C._cuda_releasePool without a zero-argument reset entrypoint; memory-pool reset will fall back to cache/IPC/stat cleanup and allocator reuse checks are partially degraded",
+                exc=exc,
+                component="cuda_memory_pool_reset",
+                category="allocator_cleanup",
+            )
+        else:
+            _emit_validity_warning(
+                "Failed to release the CUDA allocator pool during memory-pool reset; cached allocations may remain visible to later runs",
+                exc=exc,
+            )
     try:
         if hasattr(torch, "_C") and hasattr(torch._C, "_accelerator_setAllocatorSettings"):
             torch._C._accelerator_setAllocatorSettings("reset_allocator:True")
@@ -327,10 +405,19 @@ def reset_cuda_memory_pool(device: Optional[Any] = None) -> None:
         elif hasattr(torch.cuda, "memory") and hasattr(torch.cuda.memory, "_set_allocator_settings"):
             torch.cuda.memory._set_allocator_settings("reset_allocator:True")
     except Exception as exc:
-        _emit_validity_warning(
-            "Failed to reset CUDA allocator settings during memory-pool cleanup; allocator reuse checks may be degraded",
-            exc=exc,
-        )
+        if _is_allocator_reset_setting_unsupported(exc):
+            _emit_validity_limitation_once(
+                "cuda_allocator_reset_setting",
+                "This PyTorch runtime does not support the reset_allocator allocator setting; memory-pool cleanup will proceed without forcing allocator-setting resets and allocator reuse checks are partially degraded",
+                exc=exc,
+                component="cuda_memory_pool_reset",
+                category="allocator_cleanup",
+            )
+        else:
+            _emit_validity_warning(
+                "Failed to reset CUDA allocator settings during memory-pool cleanup; allocator reuse checks may be degraded",
+                exc=exc,
+            )
     
     # Reset allocator statistics
     if hasattr(torch.cuda, 'reset_peak_memory_stats'):
@@ -850,6 +937,7 @@ def validate_environment(
     device: Optional["torch.device"] = None,
     probe: Optional[EnvironmentProbe] = None,
     allow_virtualization: bool = False,
+    allow_foreign_gpu_processes: bool = False,
 ) -> EnvironmentValidationResult:
     """Validate benchmark environment is suitable (fail-fast on known invalid states)."""
     probe = probe or EnvironmentProbe()
@@ -894,12 +982,7 @@ def validate_environment(
             details["gpu_device_index"] = device_index
             # Only perform live process checks against the real host filesystem.
             if probe.root.resolve() == Path("/"):
-                allow_foreign = str(probe.env.get("AISP_ALLOW_FOREIGN_GPU_PROCESSES", "")).strip().lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }
+                details["allow_foreign_gpu_processes"] = bool(allow_foreign_gpu_processes)
                 # Strict mode should reject moderate concurrent workloads too:
                 # a few hundred MiB of active compute can still distort timings.
                 min_foreign_mb = 512.0
@@ -960,9 +1043,9 @@ def validate_environment(
                             + f". Threshold={min_foreign_mb:.0f}MiB. "
                             + "Stop concurrent GPU workloads (for example vLLM serve/bench) before strict benchmarking."
                         )
-                        if allow_foreign:
+                        if allow_foreign_gpu_processes:
                             warnings_list.append(
-                                msg + " Override acknowledged via AISP_ALLOW_FOREIGN_GPU_PROCESSES=1."
+                                msg + " Override acknowledged via allow_foreign_gpu_processes=True."
                             )
                         else:
                             errors.append(msg)

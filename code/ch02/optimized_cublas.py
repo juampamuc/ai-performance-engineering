@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import torch
@@ -10,8 +11,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
@@ -32,6 +31,7 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.A: Optional[torch.Tensor] = None
         self.B: Optional[torch.Tensor] = None
         self.C: Optional[torch.Tensor] = None
+        self._last_elapsed_ms: Optional[float] = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.m * self.n),
@@ -57,8 +57,20 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         config = self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
+        if self.device.type == "cuda":
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+            start_event.record()
+        else:
+            start_time = time.perf_counter()
         with nvtx_range("cublas", enable=enable_nvtx):
             self.C = torch.matmul(self.A, self.B)
+        if self.device.type == "cuda":
+            end_event.record()
+            end_event.synchronize()
+            self._last_elapsed_ms = float(start_event.elapsed_time(end_event))
+        else:
+            self._last_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
         if self.C is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
@@ -83,6 +95,7 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Restore TF32 knobs and free tensors."""
         self.A = None
         self.B = None
+        self._last_elapsed_ms = None
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
@@ -92,12 +105,15 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_memory_transfer_metrics
-        return compute_memory_transfer_metrics(
-            bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
-            transfer_type="hbm",
+        """Return real GEMM workload metrics for the measured matmul."""
+        from core.benchmark.metrics import compute_gemm_metrics
+        return compute_gemm_metrics(
+            self.m,
+            self.n,
+            self.k,
+            elapsed_ms=self._last_elapsed_ms,
+            precision="tensor",
+            bytes_per_element=4,
         )
 
     def validate_result(self) -> Optional[str]:

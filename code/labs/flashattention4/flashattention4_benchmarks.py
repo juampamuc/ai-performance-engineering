@@ -100,7 +100,7 @@ class FlashAttention4BenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
         with torch.inference_mode():
             with self._nvtx_range(self._nvtx_label()):
                 result = self._run_attention()
-                self.output = result.detach().float().clone()
+                self.output = result
         if self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
 

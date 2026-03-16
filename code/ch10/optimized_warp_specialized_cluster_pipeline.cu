@@ -30,7 +30,7 @@ namespace cg = cooperative_groups;
 
 namespace {
 
-constexpr int TILE_SIZE = 128;
+constexpr int TILE_SIZE = 96;
 constexpr int TILE_ELEMS = TILE_SIZE * TILE_SIZE;
 constexpr int CLUSTER_BLOCKS = 4;
 constexpr int WARPS_PER_BLOCK = 3;
@@ -133,11 +133,11 @@ extern "C" __global__ void optimized_warp_specialized_cluster_pipeline_kernel(
     cg::cluster_group cluster = cg::this_cluster();
 
     extern __shared__ float shared_mem[];
-    float* A_tile_local = shared_mem;
-    float* B_tile_local = A_tile_local + TILE_ELEMS;
-    float* C_tile_local = B_tile_local + TILE_ELEMS;
+    float* A_tiles[2] = {shared_mem, shared_mem + TILE_ELEMS};
+    float* B_tiles[2] = {A_tiles[1] + TILE_ELEMS, A_tiles[1] + 2 * TILE_ELEMS};
+    float* C_tile_local = B_tiles[1] + TILE_ELEMS;
 
-    using pipe_state_t = cuda::pipeline_shared_state<cuda::thread_scope_block, 1>;
+    using pipe_state_t = cuda::pipeline_shared_state<cuda::thread_scope_block, 2>;
     __shared__ alignas(pipe_state_t) unsigned char pipe_storage[sizeof(pipe_state_t)];
     auto* pipe_state = reinterpret_cast<pipe_state_t*>(pipe_storage);
     if (threadIdx.x == 0) {
@@ -155,36 +155,55 @@ extern "C" __global__ void optimized_warp_specialized_cluster_pipeline_kernel(
         cluster_dims.x * cluster_dims.y * cluster_dims.z;
     const size_t tile_bytes = static_cast<size_t>(TILE_ELEMS) * sizeof(float);
 
-    for (int tile = blockIdx.x / cluster_dims.x; tile < num_tiles;
-         tile += gridDim.x / cluster_dims.x) {
-        const size_t offset = static_cast<size_t>(tile) * TILE_ELEMS;
+    const int tile_stride = max(1, gridDim.x / cluster_dims.x);
+    int current_tile = blockIdx.x / cluster_dims.x;
+    if (current_tile >= num_tiles) {
+        return;
+    }
 
-        // The block-scoped collectives stay uniform within the leader CTA.
-        if (cluster_rank == 0) {
-            pipe.producer_acquire();
-            if (warp_id == 0) {
-                cuda::memcpy_async(
-                    warp,
-                    A_tile_local,
-                    A_global + offset,
-                    cuda::aligned_size_t<16>(tile_bytes),
-                    pipe);
-                cuda::memcpy_async(
-                    warp,
-                    B_tile_local,
-                    B_global + offset,
-                    cuda::aligned_size_t<16>(tile_bytes),
-                    pipe);
-            }
-            pipe.producer_commit();
-            pipe.consumer_wait();
-            pipe.consumer_release();
+    auto enqueue_tile = [&](int stage_idx, int tile_idx) {
+        if (cluster_rank != 0) {
+            return;
+        }
+        const size_t offset = static_cast<size_t>(tile_idx) * TILE_ELEMS;
+        pipe.producer_acquire();
+        if (warp_id == 0) {
+            cuda::memcpy_async(
+                warp,
+                A_tiles[stage_idx],
+                A_global + offset,
+                cuda::aligned_size_t<16>(tile_bytes),
+                pipe);
+            cuda::memcpy_async(
+                warp,
+                B_tiles[stage_idx],
+                B_global + offset,
+                cuda::aligned_size_t<16>(tile_bytes),
+                pipe);
+        }
+        pipe.producer_commit();
+    };
+
+    int current_stage = 0;
+    enqueue_tile(current_stage, current_tile);
+    if (cluster_rank == 0) {
+        pipe.consumer_wait();
+        pipe.consumer_release();
+    }
+    cta.sync();
+    cluster.sync();
+
+    while (current_tile < num_tiles) {
+        const int next_tile = current_tile + tile_stride;
+        const int next_stage = current_stage ^ 1;
+        const size_t current_offset = static_cast<size_t>(current_tile) * TILE_ELEMS;
+
+        if (next_tile < num_tiles) {
+            enqueue_tile(next_stage, next_tile);
         }
 
-        cluster.sync();
-
-        const float* A_src = cluster.map_shared_rank(A_tile_local, 0);
-        const float* B_src = cluster.map_shared_rank(B_tile_local, 0);
+        const float* A_src = cluster.map_shared_rank(A_tiles[current_stage], 0);
+        const float* B_src = cluster.map_shared_rank(B_tiles[current_stage], 0);
 
         const int rows_per_block =
             (TILE_SIZE + blocks_in_cluster - 1) / blocks_in_cluster;
@@ -200,13 +219,26 @@ extern "C" __global__ void optimized_warp_specialized_cluster_pipeline_kernel(
         if (warp_id == 2) {
             for (int row = row_begin + lane_id; row < row_end; row += warpSize) {
                 for (int col = 0; col < TILE_SIZE; ++col) {
-                    C_global[offset + row * TILE_SIZE + col] =
+                    C_global[current_offset + row * TILE_SIZE + col] =
                         C_tile_local[row * TILE_SIZE + col];
                 }
             }
         }
 
         cluster.sync();
+
+        if (next_tile >= num_tiles) {
+            break;
+        }
+
+        if (cluster_rank == 0) {
+            pipe.consumer_wait();
+            pipe.consumer_release();
+        }
+        cta.sync();
+        cluster.sync();
+        current_tile = next_tile;
+        current_stage = next_stage;
     }
 }
 
@@ -286,7 +318,7 @@ int run_optimized(int num_tiles) {
     CUDA_CHECK(cudaMemcpy(d_A, h_A.data(), bytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B, h_B.data(), bytes, cudaMemcpyHostToDevice));
 
-    const size_t shared_bytes = 3ull * TILE_ELEMS * sizeof(float);
+    const size_t shared_bytes = 5ull * TILE_ELEMS * sizeof(float);
     int max_dynamic_smem = 0;
     CUDA_CHECK(cudaDeviceGetAttribute(
         &max_dynamic_smem,
@@ -313,11 +345,14 @@ int run_optimized(int num_tiles) {
         static_cast<int>(shared_bytes)));
 
     const int clusters_in_grid = std::max(1, std::min(num_tiles, prop.multiProcessorCount));
+    cudaStream_t stream{};
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
     cudaLaunchConfig_t cfg{};
     cfg.gridDim = dim3(clusters_in_grid * CLUSTER_BLOCKS);
     cfg.blockDim = dim3(THREADS_PER_BLOCK);
     cfg.dynamicSmemBytes = shared_bytes;
-    cfg.stream = 0;
+    cfg.stream = stream;
 
     cudaLaunchAttribute attrs[1]{};
     attrs[0].id = cudaLaunchAttributeClusterDimension;
@@ -328,7 +363,6 @@ int run_optimized(int num_tiles) {
     cfg.numAttrs = 1;
 
     for (int i = 0; i < WARMUP_ITERS; ++i) {
-        NVTX_RANGE("warmup");
         CUDA_CHECK(cudaLaunchKernelEx(
             &cfg,
             optimized_warp_specialized_cluster_pipeline_kernel,
@@ -343,9 +377,10 @@ int run_optimized(int num_tiles) {
     cudaEvent_t stop{};
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
-    CUDA_CHECK(cudaEventRecord(start));
+    cudaGraph_t graph{};
+    cudaGraphExec_t graph_exec{};
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
     for (int i = 0; i < BENCH_ITERS; ++i) {
-        NVTX_RANGE("compute_kernel:optimized_warp_specialized_cluster_pipeline");
         CUDA_CHECK(cudaLaunchKernelEx(
             &cfg,
             optimized_warp_specialized_cluster_pipeline_kernel,
@@ -354,7 +389,13 @@ int run_optimized(int num_tiles) {
             d_C,
             num_tiles));
     }
-    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    CUDA_CHECK(cudaGraphInstantiate(&graph_exec, graph, nullptr, nullptr, 0));
+
+    CUDA_CHECK(cudaEventRecord(start, stream));
+    NVTX_RANGE("compute_kernel:optimized_warp_specialized_cluster_pipeline");
+    CUDA_CHECK(cudaGraphLaunch(graph_exec, stream));
+    CUDA_CHECK(cudaEventRecord(stop, stream));
     CUDA_CHECK(cudaEventSynchronize(stop));
 
     float ms = 0.0f;
@@ -379,8 +420,11 @@ int run_optimized(int num_tiles) {
     VERIFY_PRINT_CHECKSUM(static_cast<float>(checksum));
 #endif
 
+    CUDA_CHECK(cudaGraphExecDestroy(graph_exec));
+    CUDA_CHECK(cudaGraphDestroy(graph));
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(cudaStreamDestroy(stream));
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));

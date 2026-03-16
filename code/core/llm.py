@@ -32,6 +32,7 @@ import json
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+from core.utils.dotenv import load_repo_dotenv, reset_repo_dotenv_cache
 
 # Find repo root for .env loading
 CODE_ROOT = Path(__file__).resolve().parent.parent
@@ -127,23 +128,7 @@ def _load_env():
     if _load_env._loaded:
         return
     _load_env._loaded = True
-    
-    for env_name in [".env", ".env.local"]:
-        env_file = CODE_ROOT / env_name
-        if env_file.exists():
-            with open(env_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        key, _, value = line.partition('=')
-                        key = key.strip()
-                        if key.startswith("export "):
-                            key = key.replace("export", "", 1).strip()
-                        value = value.strip().strip('"').strip("'")
-                        # .env.local always overrides, .env only sets if not already in os.environ
-                        if env_name == ".env.local" or key not in os.environ:
-                            if key and value:
-                                os.environ[key] = value
+    load_repo_dotenv(CODE_ROOT)
 
 
 # Load .env files at module import time to ensure they're available
@@ -182,6 +167,7 @@ def reset_config():
     _config = None
     # Reset the _load_env flag so it reloads .env files
     _load_env._loaded = False
+    reset_repo_dotenv_cache(CODE_ROOT)
 
 
 # =============================================================================

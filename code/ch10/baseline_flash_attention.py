@@ -18,6 +18,7 @@ from core.harness.benchmark_harness import (  # noqa: E402
     BenchmarkMode,
     WorkloadMetadata,
 )
+from ch10.flash_attention_common import compute_attention_workload_metrics
 
 
 class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -160,11 +161,13 @@ class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 4),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
+        """Return workload metrics derived from the real attention shape."""
+        return compute_attention_workload_metrics(
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            hidden_dim=self.hidden_dim,
+            num_heads=self.num_heads,
+            is_causal=self.use_causal,
         )
 
     def validate_result(self) -> Optional[str]:

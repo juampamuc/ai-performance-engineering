@@ -160,39 +160,12 @@ CODE_ROOT = _discover_code_root()
 from core.analysis.tool_router import DEFAULT_SUGGEST_RULES, suggest_tools_auto
 from core.harness.progress import ProgressEvent, ProgressRecorder
 from core.jobs import JobStore
+from core.utils.dotenv import load_repo_dotenv
 
 
 def _load_mcp_env() -> None:
     """Load .env and .env.local so MCP has access to API keys."""
-    env_path = CODE_ROOT / ".env"
-    env_local_path = CODE_ROOT / ".env.local"
-    try:
-        from dotenv import load_dotenv  # type: ignore
-    except Exception:
-        load_dotenv = None  # type: ignore
-
-    if load_dotenv:
-        load_dotenv(env_path, override=False)
-        load_dotenv(env_local_path, override=True)
-        return
-
-    for env_file in (env_path, env_local_path):
-        if not env_file.exists():
-            continue
-        with env_file.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key = key.strip()
-                if key.startswith("export "):
-                    key = key.replace("export", "", 1).strip()
-                value = value.strip().strip('"').strip("'")
-                if not key:
-                    continue
-                if env_file.name == ".env.local" or key not in os.environ:
-                    os.environ[key] = value
+    load_repo_dotenv(CODE_ROOT)
 
 
 _load_mcp_env()

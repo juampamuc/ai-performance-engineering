@@ -115,11 +115,15 @@ class OptimizedTensorCoreBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 4),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
+        """Report the actual GEMM workload instead of fake pipeline timing."""
+        from core.benchmark.metrics import compute_gemm_metrics
+
+        return compute_gemm_metrics(
+            m=self.n,
+            n=self.n,
+            k=self.n,
+            precision="bf16" if self.dtype == torch.bfloat16 else "fp16",
+            bytes_per_element=2,
         )
 
     def validate_result(self) -> Optional[str]:

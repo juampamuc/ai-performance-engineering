@@ -10,10 +10,11 @@ Demonstrates optimization strategies for GPT-4 scale models:
 
 import torch
 import torch.nn as nn
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import time
 
-from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkConfig, BenchmarkMode
+from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkConfig, BenchmarkMode
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -44,6 +45,7 @@ class GPT4ArchitectureOptimization:
         self.use_context_parallel = use_context_parallel
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.output: Optional[torch.Tensor] = None
         
         logger.info(f"GPT-4 Architecture Optimization")
         logger.info(f"  MoE: {use_moe}")
@@ -122,15 +124,18 @@ class GPT4ArchitectureOptimization:
     
     def run(self) -> float:
         """Execute forward pass."""
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         start = time.perf_counter()
         
         x = self.input
         for layer in self.layers:
             x = layer(x)
         
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         elapsed_ms = (time.perf_counter() - start) * 1000
+        self.output = x[:1, : min(4, x.shape[1]), : min(8, x.shape[2])]
         
         tokens_per_sec = (self.batch_size * self.seq_length) / (elapsed_ms / 1000)
         
@@ -141,7 +146,72 @@ class GPT4ArchitectureOptimization:
     def cleanup(self):
         """Clean up."""
         del self.layers, self.input
+        self.output = None
         torch.cuda.empty_cache()
+
+
+class GPT4ArchitectureOptimizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Harness-friendly wrapper around the GPT-4 architecture demo."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model_wrapper: Optional[GPT4ArchitectureOptimization] = None
+        self.output: Optional[torch.Tensor] = None
+        self.parameter_count = 0
+        self._last_metrics: Dict[str, float] = {}
+        self.register_workload_metadata(requests_per_iteration=1.0)
+
+    def setup(self) -> None:
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+        self.model_wrapper = GPT4ArchitectureOptimization()
+        self.model_wrapper.setup()
+        self.parameter_count = sum(p.numel() for p in self.model_wrapper.layers.parameters())
+
+    def benchmark_fn(self) -> None:
+        if self.model_wrapper is None:
+            raise RuntimeError("Model wrapper not initialized")
+        elapsed_ms = self.model_wrapper.run()
+        self.output = self.model_wrapper.output
+        self._last_metrics = {
+            "gpt4_architecture.mean_time_ms": float(elapsed_ms),
+            "gpt4_architecture.use_moe": 1.0 if self.model_wrapper.use_moe else 0.0,
+            "gpt4_architecture.use_fp8": 1.0 if self.model_wrapper.use_fp8 else 0.0,
+            "gpt4_architecture.use_context_parallel": 1.0 if self.model_wrapper.use_context_parallel else 0.0,
+        }
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() did not produce output")
+
+    def capture_verification_payload(self) -> None:
+        if self.model_wrapper is None or self.output is None:
+            raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
+        self._set_verification_payload(
+            inputs={"input": self.model_wrapper.input.detach()},
+            output=self.output.detach().float().clone(),
+            batch_size=self.model_wrapper.batch_size,
+            parameter_count=self.parameter_count,
+            precision_flags={
+                "bf16": True,
+                "fp16": False,
+                "fp8": bool(self.model_wrapper.use_fp8),
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+            output_tolerance=(0.1, 1.0),
+        )
+
+    def teardown(self) -> None:
+        if self.model_wrapper is not None:
+            self.model_wrapper.cleanup()
+        self.model_wrapper = None
+        self.output = None
+        super().teardown()
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=3, warmup=5)
+
+    def get_custom_metrics(self) -> dict:
+        return self._last_metrics
 
 
 def run_benchmark(
@@ -178,6 +248,10 @@ def run_benchmark(
             "context_parallel": use_context_parallel,
         }
     }
+
+
+def get_benchmark() -> BaseBenchmark:
+    return GPT4ArchitectureOptimizationBenchmark()
 
 
 if __name__ == "__main__":

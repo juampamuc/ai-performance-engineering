@@ -318,6 +318,49 @@ def reset_gpu_state() -> None:
         logger.warning("Failed to reset GPU state (non-fatal): %s", exc)
 
 
+def _append_collection_warning(collection_warnings: list[str], message: str) -> None:
+    if message not in collection_warnings:
+        collection_warnings.append(message)
+
+
+def _collect_runtime_capability_limitations(
+    collection_warnings: list[str],
+) -> list["RuntimeCapabilityLimitation"]:
+    """Load structured runtime capability limitations from the validity registry."""
+    try:
+        from core.harness.validity_checks import get_runtime_capability_limitations
+    except Exception as exc:
+        _append_collection_warning(
+            collection_warnings,
+            "Failed to import runtime capability limitation registry from "
+            f"core.harness.validity_checks: {exc}",
+        )
+        return []
+
+    limitations: list[RuntimeCapabilityLimitation] = []
+    try:
+        raw_limitations = get_runtime_capability_limitations()
+    except Exception as exc:
+        _append_collection_warning(
+            collection_warnings,
+            "Failed to read runtime capability limitations from the validity registry: "
+            f"{exc}",
+        )
+        return []
+
+    for raw in raw_limitations:
+        try:
+            limitations.append(RuntimeCapabilityLimitation(**raw))
+        except Exception as exc:
+            key = raw.get("key", "unknown") if isinstance(raw, dict) else "unknown"
+            _append_collection_warning(
+                collection_warnings,
+                "Failed to serialize runtime capability limitation "
+                f"{key!r} into the manifest: {exc}",
+            )
+    return limitations
+
+
 class HardwareInfo(BaseModel):
     """Hardware information."""
     
@@ -382,6 +425,19 @@ class SeedInfo(BaseModel):
     cuda_seed: Optional[int] = Field(None, description="torch.cuda.manual_seed_all() value")
     deterministic_mode: bool = Field(False, description="Whether deterministic algorithms were enabled")
     
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+
+
+class RuntimeCapabilityLimitation(BaseModel):
+    """Structured runtime capability limitation captured during a benchmark run."""
+
+    key: str = Field(..., description="Stable identifier for the limitation")
+    category: str = Field(..., description="Broad limitation category")
+    component: str = Field(..., description="Runtime component that observed the limitation")
+    summary: str = Field(..., description="Human-readable summary of the limitation")
+    detail: Optional[str] = Field(None, description="Underlying runtime error or detail string")
+    first_observed_at: Optional[str] = Field(None, description="UTC timestamp when the limitation was first observed")
+
     schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
 
 
@@ -513,6 +569,11 @@ class RunManifest(BaseModel):
         default_factory=list,
         description="Non-fatal collection issues that degraded provenance or artifact completeness",
     )
+
+    runtime_capability_limitations: list[RuntimeCapabilityLimitation] = Field(
+        default_factory=list,
+        description="Structured runtime capability gaps observed during this process that may partially degrade benchmark cleanup or provenance fidelity",
+    )
     
     # Timestamps
     start_time: datetime = Field(..., description="Run start timestamp")
@@ -539,6 +600,7 @@ class RunManifest(BaseModel):
             start_time = datetime.now()
         
         collection_warnings: list[str] = []
+        runtime_capability_limitations = _collect_runtime_capability_limitations(collection_warnings)
 
         # Get hardware info
         cuda_info = get_cuda_info()
@@ -638,6 +700,7 @@ class RunManifest(BaseModel):
             git=git,
             seeds=seeds,
             collection_warnings=collection_warnings,
+            runtime_capability_limitations=runtime_capability_limitations,
             start_time=start_time,
             end_time=None,
             duration_seconds=None,
@@ -651,6 +714,7 @@ class RunManifest(BaseModel):
         Args:
             end_time: Optional end time (defaults to now)
         """
+        self.refresh_runtime_capability_limitations()
         if end_time is None:
             end_time = datetime.now()
         
@@ -658,6 +722,17 @@ class RunManifest(BaseModel):
         if self.start_time:
             delta = end_time - self.start_time
             self.duration_seconds = delta.total_seconds()
+
+    def refresh_runtime_capability_limitations(self) -> None:
+        """Refresh structured runtime capability limitations from the active process registry."""
+        latest = _collect_runtime_capability_limitations(self.collection_warnings)
+        merged = {
+            limitation.key: limitation
+            for limitation in self.runtime_capability_limitations
+        }
+        for limitation in latest:
+            merged[limitation.key] = limitation
+        self.runtime_capability_limitations = [merged[key] for key in sorted(merged)]
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -688,6 +763,7 @@ class RunManifest(BaseModel):
                     "schemaVersion": "1.0"
                 },
                 "collection_warnings": [],
+                "runtime_capability_limitations": [],
                 "start_time": "2024-01-01T12:00:00",
                 "schemaVersion": "1.0"
             }

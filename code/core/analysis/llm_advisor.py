@@ -17,6 +17,9 @@ import os
 import logging
 from typing import Any, Optional
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from core.utils.dotenv import find_repo_root, load_repo_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -130,28 +133,11 @@ When providing recommendations:
 
 def _load_env_file():
     """Load .env file from project root."""
-    from pathlib import Path
-    
-    # Find project root (where .env is located)
-    current = Path(__file__).resolve()
-    for parent in [current] + list(current.parents):
-        env_file = parent / ".env"
-        if env_file.exists():
-            try:
-                with open(env_file) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
-                            key = key.strip()
-                            value = value.strip()
-                            # Don't override existing env vars
-                            if key not in os.environ:
-                                os.environ[key] = value
-                logger.debug(f"Loaded .env from {env_file}")
-                return True
-            except Exception as e:
-                logger.warning(f"Failed to load .env: {e}")
+    repo_root = find_repo_root(Path(__file__))
+    loaded = load_repo_dotenv(repo_root)
+    if loaded:
+        logger.debug("Loaded dotenv files from %s", repo_root)
+        return True
     return False
 
 # Load .env on module import

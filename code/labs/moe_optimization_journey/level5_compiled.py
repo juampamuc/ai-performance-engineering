@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""Level 5: torch.compile - The Grand Finale!
+"""Level 5: BMM fusion on the shared journey model.
 
-ADDS: TorchInductor kernel fusion on top of all previous optimizations.
-- Fuses operations across the entire forward pass
-- Generates optimized CUDA/Triton kernels
-- The compound effect of all techniques!
+ADDS: Vectorized scatter plus a single batched-matmul expert path.
 
-Cumulative: ALL previous optimizations + torch.compile
-This is the FULLY OPTIMIZED version.
+Cumulative: batched + fused + mem_efficient + grouped + BMM fusion
 """
-import torch
 
 from labs.moe_optimization_journey.moe_benchmark import MoEJourneyBenchmark, run_level
 
 
 class Level5Compiled(MoEJourneyBenchmark):
-    """Level 5: + torch.compile (the finale!)."""
+    """Level 5 shared BMM-fusion benchmark."""
+
     LEVEL = 5
 
 def get_benchmark() -> Level5Compiled:

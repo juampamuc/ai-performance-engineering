@@ -1,39 +1,25 @@
 #!/usr/bin/env python3
-"""Optimized: Triton matmul with larger tile configuration for Blackwell.
-
-Uses 128x128x64 blocks - better compute density on high-bandwidth Blackwell SM.
-"""
+"""Optimized: Triton matmul with a wide-N 64x256x32 schedule."""
 
 from __future__ import annotations
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
 from labs.occupancy_tuning.triton_matmul_schedules import (
-    MatmulSchedule,
     TritonMatmulProtonBenchmark,
+    WIDE_N_LATENCY_SCHEDULE,
 )
-
-# This benchmark uses the optimized 128x128x64 config 
-# that performs well on Blackwell's wide execution resources
-SCHEDULE = MatmulSchedule(
-    name="bm128_bn128_bk64",
-    block_m=128,
-    block_n=128,
-    block_k=64,
-    num_warps=4,
-    notes="Larger tile for better compute density on Blackwell SM.",
-)
+from core.harness.benchmark_harness import BaseBenchmark
 
 
 class OptimizedProtonMatmul(TritonMatmulProtonBenchmark):
-    """Optimized Triton matmul with Blackwell-friendly tile config.
-    
-    Block config: 128x128x64, 4 warps
-    Benefit: Better compute density on high-bandwidth SM
+    """Optimized Triton matmul with a wide-N schedule.
+
+    Block config: 64x256x32, 8 warps
+    Benefit: more work per launch along N without switching to the larger 128x tile family.
     """
 
     def __init__(self, size: int = 8192):
         super().__init__(
-            schedule=SCHEDULE,
+            schedule=WIDE_N_LATENCY_SCHEDULE,
             size=size,
             iterations=10,
             warmup=5,

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Optimized MoE: Level 6 (torch.compile - Full Optimization)."""
+"""Optimized MoE: Level 7 (torch.compile on the graph-friendly path)."""
 
-from labs.moe_optimization_journey.level6_compiled import Level6Compiled
-
-
-def get_benchmark() -> Level6Compiled:
-    return Level6Compiled()
+from labs.moe_optimization_journey.level7_compiled import Level7Compiled, run_level
 
 
-__all__ = ["Level6Compiled", "get_benchmark"]
+def get_benchmark() -> Level7Compiled:
+    return Level7Compiled()
+
+
+if __name__ == "__main__":
+    run_level(7)
+
+
+__all__ = ["Level7Compiled", "get_benchmark"]

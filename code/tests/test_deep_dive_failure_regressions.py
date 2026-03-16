@@ -21,6 +21,8 @@ from ch13.optimized_fp8_static import StaticFP8Benchmark
 from ch13.optimized_matmul_pytorch import OptimizedMatmulCUTLASSBenchmark
 from ch13.optimized_memory_profiling import OptimizedMemoryProfilingBenchmark
 from ch13.optimized_precisionfp8_te import OptimizedTEFP8Benchmark
+from ch16.baseline_regional_compilation import DummyTransformer
+from ch16.optimized_regional_compilation import RegionalCompilationTransformer
 from ch16.optimized_regional_compilation import OptimizedRegionalCompilationBenchmark
 from ch17.optimized_memory import OptimizedMemoryBenchmark
 from ch20.optimized_end_to_end_bandwidth import OptimizedEndToEndBandwidthBenchmark
@@ -74,6 +76,26 @@ def test_regional_compilation_uses_light_nsys_capture() -> None:
     config = bench.get_config()
 
     assert config.nsys_preset_override == "light"
+
+
+def test_regional_compilation_optimized_only_uses_compiled_layer_helper(monkeypatch) -> None:
+    call_count = {"value": 0}
+
+    def _wrapped_layer(layer, x):
+        call_count["value"] += 1
+        return layer(x)
+
+    monkeypatch.setattr("ch16.optimized_regional_compilation._run_compiled_layer", _wrapped_layer)
+
+    baseline = DummyTransformer(n_layers=2, d_model=8, d_ff=16)
+    optimized = RegionalCompilationTransformer(n_layers=2, d_model=8, d_ff=16)
+    x = torch.randn(1, 4, 8)
+
+    baseline(x)
+    assert call_count["value"] == 0
+
+    optimized(x)
+    assert call_count["value"] == 2
 
 
 @pytest.mark.parametrize(

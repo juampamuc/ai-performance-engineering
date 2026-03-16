@@ -21,23 +21,24 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
-| `tma_copy` | `2.968 ms` | `0.051 ms` | `58.19x` | TMA-assisted copy path instead of a simpler transfer baseline |
+| `tma_bulk_tensor_2d` | `0.029 ms` | `0.008 ms` | `3.44x` | real tensor-map TMA bulk copy instead of manual 2D staging |
 | `lookup` | `0.397 ms` | `0.009 ms` | `45.41x` | locality-aware lookup path |
 | `matmul` | `1.165 ms` | `0.367 ms` | `3.18x` | shared-memory tiled matmul instead of the naive layout |
 
-This chapter has some intentionally dramatic wins because memory access mistakes are expensive. The point is not that every copy kernel will improve by `58x`, but that access-pattern fixes can dominate the result when the baseline is bandwidth-bound.
+This chapter has some intentionally dramatic wins because memory access mistakes are expensive. For the cleanest descriptor-backed TMA story, use `tma_bulk_tensor_2d`; the older `tma_copy` pair now measures the neighbor-copy staging story, and its optimized path opportunistically upgrades to a descriptor-backed 2D tensor-map copy when the local CUDA 13+ runtime exposes that path.
 
 ## Profiler Evidence
 Use deep-dive harness runs when you want to see whether the win came from less memory traffic, better staging, or fewer expensive accesses:
 
 ```bash
-python -m cli.aisp bench run --targets ch07:tma_copy --profile deep_dive --single-gpu
+python -m cli.aisp bench run --targets ch07:tma_bulk_tensor_2d --profile deep_dive --single-gpu
 python -m cli.aisp bench run --targets ch07:lookup --profile deep_dive --single-gpu
 python -m cli.aisp bench run --targets ch07:matmul --profile deep_dive --single-gpu
 ```
 
 These targets answer different chapter-level questions:
-- `tma_copy`: explicit transfer-path improvement
+- `tma_copy`: neighbor-copy staging benchmark with an async-pipeline baseline and an optional descriptor-backed 2D tensor-map subpath in the optimized binary
+- `tma_bulk_tensor_2d`: the chapter's clean tensor-map/TMA descriptor benchmark
 - `lookup`: cache/locality sensitivity
 - `matmul`: memory-layout and tile-reuse payoff
 
@@ -46,12 +47,12 @@ These targets answer different chapter-level questions:
 python -m ch07.compare
 python -m cli.aisp bench list-targets --chapter ch07
 python -m cli.aisp bench run --targets ch07 --profile minimal
-python -m cli.aisp bench run --targets ch07:tma_copy --profile deep_dive --single-gpu
+python -m cli.aisp bench run --targets ch07:tma_bulk_tensor_2d --profile deep_dive --single-gpu
 ```
 
 ## Learning Goals
 - Measure the gap between scalar, coalesced, and vectorized memory moves.
-- Use shared-memory tiling, TMA, and async copy to keep tensor cores saturated.
+- Use shared-memory tiling, async copy, and tensor maps where they actually help.
 - Analyze lookup-heavy workloads and mitigate cache-thrashing access patterns.
 - Quantify transpose and gather/scatter penalties to justify layout changes.
 
@@ -60,7 +61,7 @@ python -m cli.aisp bench run --targets ch07:tma_copy --profile deep_dive --singl
 | --- | --- |
 | `baseline_copy_scalar.cu`, `baseline_copy_uncoalesced.cu`, `baseline_copy_uncoalesced.py`, `optimized_copy_uncoalesced_coalesced.cu`, `optimized_copy_scalar_vectorized.cu`, `optimized_copy_scalar_vectorized_sm121` | Copy kernels highlighting coalescing, vector width, and warp-level efficiency. |
 | `baseline_hbm_copy.cu`, `baseline_hbm_peak.cu`, `optimized_hbm_copy.cu`, `optimized_hbm_peak.cu`, `baseline_hbm_copy.py`, `optimized_hbm_copy.py` | HBM peak-bandwidth probes with CUDA and Python harnesses. |
-| `baseline_async_prefetch.cu`, `optimized_async_prefetch.cu`, `baseline_tma_copy.cu`, `baseline_tma_copy.py`, `optimized_async_prefetch.py`, `async_prefetch_2d_demo.cu` | Async/TMA samples that overlap global-memory fetch with computation. |
+| `baseline_async_prefetch.cu`, `optimized_async_prefetch.cu`, `baseline_tma_copy.cu`, `optimized_tma_copy.cu`, `baseline_tma_copy.py`, `optimized_tma_copy.py`, `async_prefetch_2d_demo.cu`, `baseline_tma_bulk_tensor_2d.{py,cu}`, `optimized_tma_bulk_tensor_2d.{py,cu}` | Async copy samples plus the separate tensor-map/TMA benchmark used for true descriptor-backed staging. |
 | `baseline_matmul.cu`, `baseline_matmul.py`, `optimized_matmul_tiled.py`, `optimized_matmul_tiled.cu` | Matmul implementations to contrast naive global-memory access with shared-memory tiling and warp-level reuse. |
 | `baseline_lookup.cu`, `baseline_lookup.py`, `optimized_lookup.cu`, `lookup_pytorch.py` | Cache-sensitive lookup workloads demonstrating how to reorganize tables for better locality. |
 | `baseline_transpose.cu`, `baseline_transpose.py`, `optimized_copy_scalar_vectorized.cu`, `optimized_transpose_padded.py` | Transpose and gather/scatter experiments that show how to minimize bank conflicts. |

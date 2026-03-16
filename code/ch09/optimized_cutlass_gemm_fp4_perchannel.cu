@@ -1,6 +1,8 @@
-// optimized_cutlass_gemm_fp4_perchannel.cu -- CUTLASS NVFP4 GEMM with per-channel output scaling
+// optimized_cutlass_gemm_fp4_perchannel.cu -- CUTLASS NVFP4 GEMM with fused per-column output scaling
 //
-// Optimized uses a tuned CUTLASS tile/cluster configuration for SM100 NVFP4.
+// Optimized uses a tuned CUTLASS tile/cluster configuration, fuses the
+// per-column scale into the CUTLASS epilogue, and replays the fused GEMM with
+// CUDA graphs on SM100 NVFP4.
 
 #include <cuda_runtime.h>
 
@@ -16,6 +18,8 @@
 #include "cutlass/float_subbyte.h"
 #include "cutlass/detail/sm100_blockscaled_layout.hpp"
 #include "cutlass/epilogue/collective/collective_builder.hpp"
+#include "cutlass/epilogue/fusion/operations.hpp"
+#include "cutlass/epilogue/thread/activation.h"
 #include "cutlass/gemm/collective/collective_builder.hpp"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
@@ -104,19 +108,6 @@ struct GpuTimer {
     }
 };
 
-__global__ void apply_per_channel_scale(cutlass::bfloat16_t* __restrict__ output,
-                                        const float* __restrict__ scales,
-                                        int rows, int cols) {
-    const int col = blockIdx.x * blockDim.x + threadIdx.x;
-    const int row = blockIdx.y * blockDim.y + threadIdx.y;
-    if (row >= rows || col >= cols) {
-        return;
-    }
-    const int idx = row * cols + col;
-    float val = static_cast<float>(output[idx]) * scales[col];
-    output[idx] = cutlass::bfloat16_t(val);
-}
-
 #if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
 
 using ElementA = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
@@ -137,6 +128,14 @@ constexpr int AlignmentD = 128 / cutlass::sizeof_bits<ElementD>::value;
 using ElementAccumulator = float;
 using ArchTag = cutlass::arch::Sm100;
 using OperatorClass = cutlass::arch::OpClassBlockScaledTensorOp;
+using FusionOperation =
+    cutlass::epilogue::fusion::PerColLinCombPerColBiasEltAct<
+        cutlass::epilogue::thread::Identity,
+        ElementD,
+        ElementAccumulator,
+        float,
+        ElementC,
+        ElementAccumulator>;
 
 using MmaTileShape = Shape<_128, _128, _256>;
 using ClusterShape = Shape<_1, _1, _1>;
@@ -148,7 +147,8 @@ using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBui
     ElementAccumulator, ElementAccumulator,
     ElementC, LayoutCTag, AlignmentC,
     ElementD, LayoutDTag, AlignmentD,
-    cutlass::epilogue::collective::EpilogueScheduleAuto
+    cutlass::epilogue::collective::EpilogueScheduleAuto,
+    FusionOperation
   >::CollectiveOp;
 
 using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
@@ -266,7 +266,7 @@ void initialize(const Options& options) {
     block_SFB.sync_device();
 }
 
-typename Gemm::Arguments args_from_options(const Options& options) {
+typename Gemm::Arguments args_from_options(const Options& options, float* d_scales) {
     typename Gemm::Arguments arguments{
         cutlass::gemm::GemmUniversalMode::kGemm,
         {options.m, options.n, options.k, 1},
@@ -277,59 +277,75 @@ typename Gemm::Arguments args_from_options(const Options& options) {
             block_SFB.device_data(), layout_SFB
         },
         {
-            {options.alpha, options.beta},
+            {},
             block_C.device_data(), stride_C,
             block_D.device_data(), stride_D
         }
     };
+    auto& fusion_args = arguments.epilogue.thread;
+    fusion_args.alpha = options.alpha;
+    fusion_args.beta = 0.0f;
+    fusion_args.alpha_ptr = d_scales;
+    fusion_args.beta_ptr = nullptr;
+    fusion_args.dAlpha = {_0{}, bool(1), 0};
+    fusion_args.dBeta = {_0{}, bool(0), 0};
+    fusion_args.bias_ptr = nullptr;
     arguments.scheduler.max_swizzle_size = options.swizzle;
     return arguments;
 }
 
 int run_cutlass(const Options& options) {
     initialize(options);
-
-    Gemm gemm;
-    auto arguments = args_from_options(options);
-
-    size_t workspace_size = Gemm::get_workspace_size(arguments);
-    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
-
-    CUTLASS_CHECK(gemm.can_implement(arguments));
-    CUTLASS_CHECK(gemm.initialize(arguments, workspace.get()));
-    CUTLASS_CHECK(gemm.run());
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    GpuTimer timer;
-    timer.start();
-    for (int iter = 0; iter < options.iterations; ++iter) {
-        NVTX_RANGE("setup");
-        CUTLASS_CHECK(gemm.initialize(arguments, workspace.get()));
-        CUTLASS_CHECK(gemm.run());
-    }
-    timer.stop();
-
-    const float elapsed_ms = timer.elapsed_millis();
-    const float avg_ms = elapsed_ms / static_cast<float>(options.iterations);
-    std::cout << "CUTLASS NVFP4 GEMM (optimized, per-channel): " << avg_ms << " ms" << std::endl;
-
-    dim3 block(16, 16);
-    dim3 grid((options.n + block.x - 1) / block.x, (options.m + block.y - 1) / block.y);
-
     std::vector<float> h_scales(options.n);
     std::mt19937 gen(42);
     std::uniform_real_distribution<float> scale_dis(0.75f, 1.25f);
     for (auto& v : h_scales) {
-        NVTX_RANGE("setup");
         v = scale_dis(gen);
     }
     float* d_scales = nullptr;
     CUDA_CHECK(cudaMalloc(&d_scales, options.n * sizeof(float)));
     CUDA_CHECK(cudaMemcpy(d_scales, h_scales.data(), options.n * sizeof(float), cudaMemcpyHostToDevice));
 
-    apply_per_channel_scale<<<grid, block>>>(block_D.device_data(), d_scales, options.m, options.n);
-    CUDA_CHECK(cudaDeviceSynchronize());
-    CUDA_CHECK(cudaFree(d_scales));
+    Gemm gemm;
+    auto arguments = args_from_options(options, d_scales);
+
+    size_t workspace_size = Gemm::get_workspace_size(arguments);
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+
+    CUTLASS_CHECK(gemm.can_implement(arguments));
+    CUTLASS_CHECK(gemm.initialize(arguments, workspace.get()));
+
+    cudaStream_t stream{};
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
+    CUTLASS_CHECK(gemm.run(stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    const int graph_unroll = options.iterations;
+    const int graph_launches = 1;
+
+    cudaGraph_t graph{};
+    cudaGraphExec_t graph_exec{};
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+    for (int iter = 0; iter < graph_unroll; ++iter) {
+        CUTLASS_CHECK(gemm.run(stream));
+    }
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    CUDA_CHECK(cudaGraphInstantiate(&graph_exec, graph, nullptr, nullptr, 0));
+
+    GpuTimer timer;
+    timer.start(stream);
+    {
+        NVTX_RANGE("compute_math:cutlass_fp4_perchannel");
+        for (int iter = 0; iter < graph_launches; ++iter) {
+            CUDA_CHECK(cudaGraphLaunch(graph_exec, stream));
+        }
+    }
+    timer.stop();
+
+    const float elapsed_ms = timer.elapsed_millis();
+    const float avg_ms = elapsed_ms / static_cast<float>(options.iterations);
+    std::cout << "CUTLASS NVFP4 GEMM (optimized, fused per-channel): " << avg_ms << " ms" << std::endl;
 
 #ifdef VERIFY
     block_D.sync_host();
@@ -337,11 +353,15 @@ int run_cutlass(const Options& options) {
     double checksum = 0.0;
     const ElementD* h_out = block_D.host_data();
     for (size_t i = 0; i < elements; ++i) {
-        NVTX_RANGE("verify");
         checksum += std::abs(static_cast<float>(h_out[i]));
     }
     VERIFY_PRINT_CHECKSUM(static_cast<float>(checksum));
 #endif
+
+    CUDA_CHECK(cudaGraphExecDestroy(graph_exec));
+    CUDA_CHECK(cudaGraphDestroy(graph));
+    CUDA_CHECK(cudaFree(d_scales));
+    CUDA_CHECK(cudaStreamDestroy(stream));
 
     return 0;
 }

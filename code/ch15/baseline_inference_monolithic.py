@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 import torch
-import torch.nn as nn
 
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
@@ -18,39 +17,8 @@ from core.harness.benchmark_harness import (  # noqa: E402
 )
 from core.benchmark.cuda_event_timing import elapsed_ms, elapsed_ms_list
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range  # noqa: E402
+from ch15.inference_monolithic_common import SimpleLLM
 from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
-
-
-class SimpleLLM(nn.Module):
-    """Simplified LLM for inference simulation."""
-    
-    def __init__(self, *, vocab_size: int = 10000, hidden_dim: int = 1024, num_layers: int = 12):
-        super().__init__()
-        self.embed = nn.Embedding(vocab_size, hidden_dim)
-        self.hidden_dim = hidden_dim
-        self.layers = nn.ModuleList([
-            nn.Linear(hidden_dim, hidden_dim)
-            for _ in range(num_layers)
-        ])
-    
-    def prefill(self, prompt_tokens):
-        """Prefill: Process full prompt (compute-bound)."""
-        x = self.embed(prompt_tokens)
-        for layer in self.layers:
-            x = layer(x)
-            x = torch.relu(x)
-        return x[:, -1:, :]
-    
-    def decode(self, kv_cache, num_tokens=16):
-        """Decode: Generate tokens (memory-bound)."""
-        outputs = []
-        x = kv_cache
-        for _ in range(num_tokens):
-            for layer in self.layers:
-                x = layer(x)
-                x = torch.relu(x)
-            outputs.append(x)
-        return torch.cat(outputs, dim=1)
 
 
 class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -102,18 +70,16 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
                 prefill_end.record()
                 token_event_pairs: List[tuple[torch.cuda.Event, torch.cuda.Event]] = []
                 decoded_tokens = []
+                decode_state = kv_cache
 
-                for i in range(num_tokens):
+                for _ in range(num_tokens):
                     token_start = torch.cuda.Event(enable_timing=True)
                     token_end = torch.cuda.Event(enable_timing=True)
                     token_start.record()
-                    if i == 0:
-                        token_output = self.model.decode(kv_cache, num_tokens=1)
-                    else:
-                        token_output = self.model.decode(token_output[:, -1:, :], num_tokens=1)
+                    decode_state = self.model.decode_step(decode_state)
                     token_end.record()
                     token_event_pairs.append((token_start, token_end))
-                    decoded_tokens.append(token_output)
+                    decoded_tokens.append(decode_state)
 
                 self._pending_ttft_pair = (request_start, prefill_end)
                 self._pending_tpot_pairs = token_event_pairs

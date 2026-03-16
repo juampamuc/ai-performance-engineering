@@ -32,9 +32,9 @@ LEVEL_DESCRIPTIONS = {
     2: ("+ Fused", "Triton kernel fuses SiLU*up"),
     3: ("+ MemEfficient", "Reuse buffers, reduce allocations"),
     4: ("+ Grouped", "Sort tokens + per-expert GEMM"),
-    5: ("+ BMM Fusion", "Vectorized scatter + single BMM (5-6x!)"),  # NEW!
-    6: ("+ CUDAGraphs", "Capture kernel sequence"),
-    7: ("+ Compiled", "torch.compile does ALL of the above!"),
+    5: ("+ BMM Fusion", "Vectorized scatter + single BMM"),
+    6: ("+ CUDAGraphs", "Capture and replay the fused level-5 kernel sequence"),
+    7: ("+ Compiled", "torch.compile on top of the graph-friendly path"),
 }
 
 
@@ -151,9 +151,8 @@ class MoEJourneyBenchmark(VerificationPayloadMixin, BaseBenchmark):
         print(f"  Parameters: {self.parameter_count / 1e6:.1f}M")
         print(f"  Batch: {self.BATCH_SIZE} x {self.SEQ_LEN} = {self.BATCH_SIZE * self.SEQ_LEN} tokens")
         
-        # Apply torch.compile if enabled (Level 5)
+        # Apply torch.compile if enabled (Level 7)
         if self.opts.use_compile:
-            # Always use max-autotune for best performance
             print(f"\n  Compiling with mode='max-autotune'...")
             self.compiled_model = torch.compile(self.model, mode="max-autotune")
         else:
@@ -174,20 +173,19 @@ class MoEJourneyBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 print("    First run (compile): done")
         torch.cuda.synchronize()
         print("  Ready")
-    
+
     def benchmark_fn(self) -> None:
         with self._nvtx_range(f"level{self.LEVEL}"):
             with torch.no_grad():
                 logits = self.compiled_model(self.input_ids)
-        # Capture a lightweight slice of logits for verification.
-        self.output = logits[:, :1, : min(8, logits.shape[-1])].detach().float().clone()
+        self.output = logits[:, :1, : min(8, logits.shape[-1])]
         if self.input_ids is None or self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
             inputs={"input_ids": self.input_ids.detach()},
-            output=self.output,
+            output=self.output.detach().float().clone(),
             batch_size=self.BATCH_SIZE,
             parameter_count=self.parameter_count,
             precision_flags={"bf16": True, "tf32": torch.backends.cuda.matmul.allow_tf32},
@@ -200,6 +198,7 @@ class MoEJourneyBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.compiled_model = None
         self.model = None
         self.input_ids = None
+        self.output = None
         torch.cuda.empty_cache()
         super().teardown()
     
@@ -219,7 +218,7 @@ class MoEJourneyBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return None if self.compiled_model is not None else "Model not initialized"
     
     def get_custom_metrics(self) -> Optional[Dict[str, float]]:
-        return {
+        metrics = {
             "level": float(self.LEVEL),
             "use_batched": float(self.opts.use_batched if self.opts else 0),
             "use_fused": float(self.opts.use_fused if self.opts else 0),
@@ -228,6 +227,9 @@ class MoEJourneyBenchmark(VerificationPayloadMixin, BaseBenchmark):
             "use_cuda_graphs": float(self.opts.use_cuda_graphs if self.opts else 0),
             "use_compile": float(self.opts.use_compile if self.opts else 0),
         }
+        if self.model is not None and hasattr(self.model, "get_cuda_graph_metrics"):
+            metrics.update(self.model.get_cuda_graph_metrics())
+        return metrics
     
     
 

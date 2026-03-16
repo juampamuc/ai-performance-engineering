@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Tuple
 
 import torch
+from core.benchmark.metrics import compute_environment_metrics
 
 
 def seed_chapter1(seed: int = 42) -> None:
@@ -38,3 +39,17 @@ def set_tf32_state(enabled: bool) -> None:
     torch.backends.cuda.matmul.allow_tf32 = enabled
     if torch.backends.cudnn.is_available():
         torch.backends.cudnn.allow_tf32 = enabled
+
+
+def get_environment_custom_metrics() -> dict:
+    """Return real runtime environment metrics for Chapter 1 benchmarks."""
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    gpu_memory_gb = 0.0
+    if gpu_count > 0:
+        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / float(1024 ** 3)
+    return compute_environment_metrics(
+        gpu_count=gpu_count,
+        gpu_memory_gb=gpu_memory_gb,
+        cuda_version=torch.version.cuda or "",
+        pytorch_version=torch.__version__,
+    )

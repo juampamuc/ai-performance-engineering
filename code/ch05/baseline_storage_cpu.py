@@ -89,13 +89,16 @@ class BaselineStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_storage_io_metrics
-        return compute_storage_io_metrics(
-            bytes_read=getattr(self, '_bytes_read', 0.0),
-            bytes_written=getattr(self, '_bytes_written', 0.0),
-            read_time_ms=getattr(self, '_read_time_ms', 1.0),
-            write_time_ms=getattr(self, '_write_time_ms', 1.0),
+        """Report the logical storage path without fake throughput numbers."""
+        from ch05.metrics_common import compute_storage_path_metrics
+
+        bytes_per_tensor = self.size * 4
+        return compute_storage_path_metrics(
+            bytes_read=bytes_per_tensor,
+            bytes_written=bytes_per_tensor,
+            file_count=1,
+            uses_cpu_staging=True,
+            simulates_gpu_direct=False,
         )
 
     def validate_result(self) -> Optional[str]:

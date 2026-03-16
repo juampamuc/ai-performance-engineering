@@ -21,7 +21,6 @@ class BaselineLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.N = 1024 * 1024  # 1M elements
         self.iterations = 5
         self._extension = None
-        self.extra_passes = 2
         # Launch bounds benchmark - fixed input size
         # Treat each element as a token
         self._workload = WorkloadMetadata(
@@ -49,8 +48,7 @@ class BaselineLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Benchmark: kernel without launch bounds."""
         assert self._extension is not None and self.input_data is not None and self.output_data is not None
         with self._nvtx_range("baseline_launch_bounds"):
-            for _ in range(self.extra_passes):
-                self._extension.launch_bounds_baseline(self.input_data, self.output_data, self.iterations)
+            self._extension.launch_bounds_baseline(self.input_data, self.output_data, self.iterations)
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(

@@ -1,23 +1,21 @@
-// optimized_tma_copy.cu -- TMA tiled memory operations (optimized).
+// optimized_tma_copy.cu -- Pipeline-staged neighbor copy with a real 2D TMA path.
 //
 // This file demonstrates:
-// 1. TMA 1D bulk copies with cuda::pipeline (original)
-// 2. TMA 2D tensor descriptors for tiled loads (NEW - from PERFORMANCE_OPTIMIZATION_ANALYSIS.md)
+// 1. Pipeline-staged 1D neighbor copies with cuda::pipeline
+// 2. A descriptor-backed 2D tensor-map copy when CUDA 13+/TMA support is present
 //
 // BEFORE (manual tiling):
 //     for (tile_y) for (tile_x):
 //         for (i in tile): load element[y+i][x+j]
 //     Many small, potentially uncoalesced loads
 //
-// AFTER (TMA 2D):
-//     cuTensorMapEncodeTiled() creates 2D descriptor
-//     Single cp.async.bulk.tensor.2d loads entire tile
-//     Hardware handles swizzling and coalescing
+// AFTER (pipeline-staged copy):
+//     cuda::pipeline overlaps global-memory fetch with the neighbor combine step
+//     Shared-memory staging reduces redundant reads and amortizes latency
 //
-// When to use TMA 2D:
-//     - Attention Q/K/V tile loading
-//     - GEMM tile prefetching  
-//     - Any 2D blocked algorithm
+// The 1D path stays focused on async pipeline staging. The 2D path uses real
+// CUtensorMap descriptors when the local runtime supports them and falls back
+// to the async-pipeline copy otherwise.
 
 #include <cooperative_groups.h>
 #include <cuda/pipeline>
@@ -35,7 +33,15 @@
 #include <vector>
 
 #include "../core/common/headers/cuda_verify.cuh"
+#include "../core/common/headers/tma_helpers.cuh"
 #include "../core/common/nvtx_utils.cuh"
+
+#if CUDART_VERSION >= 13000
+#define TMA_CUDA13_AVAILABLE 1
+namespace cde = cuda::device::experimental;
+#else
+#define TMA_CUDA13_AVAILABLE 0
+#endif
 
 #define CUDA_CHECK(call)                                                     \
   do {                                                                       \
@@ -64,35 +70,24 @@ __host__ __device__ __forceinline__ float combine_values(float center, float nea
     return fmaf(far_val, 0.125f, fmaf(near_val, 0.25f, center * 0.75f));
 }
 
-// ============================================================================
-// TMA 2D Tensor Descriptor Constants
-// From PERFORMANCE_OPTIMIZATION_ANALYSIS.md: "Modern AI workloads benefit 
-// from 2D/3D tensor descriptors"
-// ============================================================================
 constexpr int kTile2D_M = 64;   // Tile height (rows)
 constexpr int kTile2D_N = 64;   // Tile width (cols)  
-constexpr int kSwizzle = 128;   // 128B swizzle for optimal bank access
 
-// TMA 2D tiled matrix copy kernel
-// Demonstrates 2D tensor descriptor for attention/GEMM style workloads
-__global__ void tma_2d_copy_kernel(
+template <int TILE_M, int TILE_N>
+__global__ void async_pipeline_2d_copy_kernel(
     const float* __restrict__ src,
     float* __restrict__ dst,
-    int M,  // rows
-    int N   // cols
+    int M,
+    int N
 ) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
-    // This demonstrates the concept - actual TMA descriptors require
-    // cuTensorMapEncodeTiled() called from host code
-    
     // Tile coordinates
     const int tile_m = blockIdx.y;
     const int tile_n = blockIdx.x;
-    const int row_offset = tile_m * kTile2D_M;
-    const int col_offset = tile_n * kTile2D_N;
+    const int row_offset = tile_m * TILE_M;
+    const int col_offset = tile_n * TILE_N;
     
-    // Shared memory for tile with swizzled layout
-    __shared__ alignas(128) float smem[kTile2D_M][kTile2D_N + 4];  // +4 for bank conflict avoidance
+    __shared__ alignas(128) float smem[TILE_M][TILE_N + 4];
     
     // Cooperative loading using the thread block
     cg::thread_block block = cg::this_thread_block();
@@ -105,17 +100,15 @@ __global__ void tma_2d_copy_kernel(
     block.sync();
     auto pipe = cuda::make_pipeline(block, &pipe_state);
     
-    // 2D tile load using memcpy_async
-    // In production, this would use cp.async.bulk.tensor.2d with TMA descriptor
     pipe.producer_acquire();
     
     const int tid = threadIdx.y * blockDim.x + threadIdx.x;
     const int threads = blockDim.x * blockDim.y;
-    const int elems_per_tile = kTile2D_M * kTile2D_N;
+    const int elems_per_tile = TILE_M * TILE_N;
     
     for (int i = tid; i < elems_per_tile; i += threads) {
-        const int local_row = i / kTile2D_N;
-        const int local_col = i % kTile2D_N;
+        const int local_row = i / TILE_N;
+        const int local_col = i % TILE_N;
         const int global_row = row_offset + local_row;
         const int global_col = col_offset + local_col;
         
@@ -130,10 +123,9 @@ __global__ void tma_2d_copy_kernel(
     pipe.consumer_wait();
     block.sync();
     
-    // Process tile (example: simple copy, could be matmul/attention)
     for (int i = tid; i < elems_per_tile; i += threads) {
-        const int local_row = i / kTile2D_N;
-        const int local_col = i % kTile2D_N;
+        const int local_row = i / TILE_N;
+        const int local_col = i % TILE_N;
         const int global_row = row_offset + local_row;
         const int global_col = col_offset + local_col;
         
@@ -152,6 +144,61 @@ __global__ void tma_2d_copy_kernel(
     }
 #endif
 }
+
+#if TMA_CUDA13_AVAILABLE
+template <int TILE_M, int TILE_N>
+__global__ void descriptor_tma_2d_copy_kernel(
+    const __grid_constant__ CUtensorMap in_desc,
+    const __grid_constant__ CUtensorMap out_desc,
+    int M,
+    int N) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+    constexpr std::size_t kTileBytes = static_cast<std::size_t>(TILE_M) * TILE_N * sizeof(float);
+    __shared__ alignas(128) float tile[TILE_M][TILE_N];
+    using block_barrier = cuda::barrier<cuda::thread_scope_block>;
+    __shared__ alignas(block_barrier) unsigned char barrier_storage[sizeof(block_barrier)];
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        init(reinterpret_cast<block_barrier*>(barrier_storage), blockDim.x * blockDim.y);
+        cde::fence_proxy_async_shared_cta();
+    }
+    __syncthreads();
+
+    auto* bar_ptr = reinterpret_cast<block_barrier*>(barrier_storage);
+    auto& bar = *bar_ptr;
+
+    const int tile_m = blockIdx.y * TILE_M;
+    const int tile_n = blockIdx.x * TILE_N;
+    if (tile_m >= M || tile_n >= N) {
+        return;
+    }
+
+    cuda::barrier<cuda::thread_scope_block>::arrival_token token;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        cde::cp_async_bulk_tensor_2d_global_to_shared(&tile, &in_desc, tile_m, tile_n, bar);
+        token = cuda::device::barrier_arrive_tx(bar, 1, kTileBytes);
+    } else {
+        token = bar.arrive();
+    }
+    bar.wait(std::move(token));
+    __syncthreads();
+
+    cde::fence_proxy_async_shared_cta();
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        cde::cp_async_bulk_tensor_2d_shared_to_global(&out_desc, tile_m, tile_n, &tile);
+        cde::cp_async_bulk_commit_group();
+        cde::cp_async_bulk_wait_group_read<0>();
+    }
+#else
+    (void)in_desc;
+    (void)out_desc;
+    (void)M;
+    (void)N;
+#endif
+}
+#endif
 
 __global__ void tma_neighbor_copy_kernel(const float* __restrict__ src,
                                          float* __restrict__ dst,
@@ -293,11 +340,7 @@ float checksum(const std::vector<float>& data) {
 }  // namespace
 
 void benchmark_tma_2d(cudaDeviceProp& prop) {
-    // ============================================================================
-    // TMA 2D Tensor Descriptor Benchmark
-    // From PERFORMANCE_OPTIMIZATION_ANALYSIS.md: "Add TMA 2D tile loading"
-    // ============================================================================
-    std::printf("\n--- TMA 2D Tensor Copy Benchmark ---\n");
+    std::printf("\n--- 2D Copy Benchmark ---\n");
     
     const int M = 4096;  // Matrix rows
     const int N = 4096;  // Matrix cols  
@@ -315,13 +358,47 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
     }
     CUDA_CHECK(cudaMemcpy(d_mat_src, h_matrix.data(), matrix_bytes, cudaMemcpyHostToDevice));
     
-    // Launch config
     dim3 block2d(16, 16);  // 256 threads per block
-    dim3 grid2d((N + kTile2D_N - 1) / kTile2D_N, 
+    dim3 grid2d((N + kTile2D_N - 1) / kTile2D_N,
                 (M + kTile2D_M - 1) / kTile2D_M);
-    
-    // Warmup
-    tma_2d_copy_kernel<<<grid2d, block2d>>>(d_mat_src, d_mat_dst, M, N);
+
+    bool use_tensor_map = false;
+#if TMA_CUDA13_AVAILABLE
+    CUtensorMap in_desc{};
+    CUtensorMap out_desc{};
+    auto encode = cuda_tma::load_cuTensorMapEncodeTiled();
+    use_tensor_map =
+        cuda_tma::device_supports_tma() &&
+        encode &&
+        cuda_tma::make_2d_tensor_map(
+            in_desc,
+            encode,
+            d_mat_src,
+            N,
+            M,
+            N,
+            kTile2D_N,
+            kTile2D_M,
+            CU_TENSOR_MAP_SWIZZLE_NONE) &&
+        cuda_tma::make_2d_tensor_map(
+            out_desc,
+            encode,
+            d_mat_dst,
+            N,
+            M,
+            N,
+            kTile2D_N,
+            kTile2D_M,
+            CU_TENSOR_MAP_SWIZZLE_NONE);
+
+    if (use_tensor_map) {
+        descriptor_tma_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(in_desc, out_desc, M, N);
+    } else
+#endif
+    {
+        async_pipeline_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(d_mat_src, d_mat_dst, M, N);
+    }
+    CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     
     // Benchmark
@@ -332,9 +409,17 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
     constexpr int kIterations2D = 20;
     CUDA_CHECK(cudaEventRecord(start2d));
     for (int iter = 0; iter < kIterations2D; ++iter) {
-        NVTX_RANGE("compute_kernel:tma_2d_copy_kernel");
-        tma_2d_copy_kernel<<<grid2d, block2d>>>(d_mat_src, d_mat_dst, M, N);
+        if (use_tensor_map) {
+            NVTX_RANGE("compute_kernel:descriptor_tma_2d_copy_kernel");
+#if TMA_CUDA13_AVAILABLE
+            descriptor_tma_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(in_desc, out_desc, M, N);
+#endif
+        } else {
+            NVTX_RANGE("compute_kernel:async_pipeline_2d_copy_kernel");
+            async_pipeline_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(d_mat_src, d_mat_dst, M, N);
+        }
     }
+    CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaEventRecord(stop2d));
     CUDA_CHECK(cudaEventSynchronize(stop2d));
     
@@ -355,7 +440,8 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
 #endif
     const double efficiency = 100.0 * bandwidth_gbps / peak_bandwidth;
     
-    std::printf("TMA 2D tiled copy (%dx%d, tile=%dx%d): %.3f ms\n", 
+    std::printf("%s (%dx%d, tile=%dx%d): %.3f ms\n",
+                use_tensor_map ? "Descriptor-backed 2D TMA copy" : "Async-pipeline 2D copy fallback",
                 M, N, kTile2D_M, kTile2D_N, avg_tma2d_ms);
     std::printf("  Achieved bandwidth: %.1f GB/s (%.1f%% of peak)\n",
                 bandwidth_gbps, efficiency);
@@ -375,8 +461,8 @@ int main() {
         return 3;
     }
 
-    std::printf("=== TMA Memory Copy Benchmarks (SM %d.%d) ===\n\n", prop.major, prop.minor);
-    std::printf("--- TMA 1D Bulk Copy Benchmark ---\n");
+    std::printf("=== Pipeline-Staged Copy Benchmarks (SM %d.%d) ===\n\n", prop.major, prop.minor);
+    std::printf("--- Pipeline-Staged Neighbor Copy Benchmark ---\n");
 
     const size_t bytes = static_cast<size_t>(kElements) * sizeof(float);
 
@@ -419,7 +505,7 @@ int main() {
     float total_ms = 0.0f;
     CUDA_CHECK(cudaEventElapsedTime(&total_ms, start, stop));
     const float avg_ms = total_ms / kIterations;
-    std::printf("TMA-style neighbor copy (optimized): %.3f ms\n", avg_ms);
+    std::printf("Pipeline-staged neighbor copy (optimized, non-TMA): %.3f ms\n", avg_ms);
 
     std::vector<float> h_output(kElements);
     CUDA_CHECK(cudaMemcpy(h_output.data(), d_dst, bytes, cudaMemcpyDeviceToHost));

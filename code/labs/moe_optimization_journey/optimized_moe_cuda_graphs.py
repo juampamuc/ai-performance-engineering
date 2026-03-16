@@ -4,15 +4,14 @@
 Pairs with: baseline_moe.py
 
 This wrapper must stay workload-equivalent with the baseline benchmark. Use the
-MoEJourneyBenchmark implementation (Level 5) to keep parameter_count, inputs,
+MoEJourneyBenchmark implementation (Level 6) to keep parameter_count, inputs,
 and verification semantics consistent across levels.
 """
-from labs.moe_optimization_journey.level5_cudagraphs import Level5CUDAGraphs
+from labs.moe_optimization_journey.level5_cudagraphs import Level6CUDAGraphs
 
 
-def get_benchmark() -> Level5CUDAGraphs:
-    return Level5CUDAGraphs()
+def get_benchmark() -> Level6CUDAGraphs:
+    return Level6CUDAGraphs()
 
 
-__all__ = ["Level5CUDAGraphs", "get_benchmark"]
-
+__all__ = ["Level6CUDAGraphs", "get_benchmark"]

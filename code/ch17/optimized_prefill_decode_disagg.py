@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 import torch
-import torch.nn as nn
 
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
@@ -20,36 +19,7 @@ from core.harness.benchmark_harness import (  # noqa: E402
 from core.benchmark.cuda_event_timing import elapsed_ms, elapsed_ms_list
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range  # noqa: E402
-
-
-class SimpleLLM(nn.Module):
-    """Shared model definition to keep baseline/optimized outputs comparable."""
-
-    def __init__(self, hidden_dim: int = 1024, num_layers: int = 12):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.layers = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)])
-
-    def prefill(self, prompt_tokens: torch.Tensor) -> torch.Tensor:
-        x = torch.randn(
-            prompt_tokens.size(0),
-            prompt_tokens.size(1),
-            self.hidden_dim,
-            device=prompt_tokens.device,
-            dtype=torch.bfloat16,
-        )
-        for layer in self.layers:
-            x = torch.relu(layer(x))
-        return x[:, -1:, :]
-
-    def decode(self, kv_cache: torch.Tensor, num_tokens: int = 16) -> torch.Tensor:
-        outputs = []
-        x = kv_cache
-        for _ in range(num_tokens):
-            for layer in self.layers:
-                x = torch.relu(layer(x))
-            outputs.append(x)
-        return torch.cat(outputs, dim=1)
+from ch17.prefill_decode_disagg_monolithic_common import SimpleLLM
 
 
 class OptimizedDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):

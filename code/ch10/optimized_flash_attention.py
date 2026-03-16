@@ -1,4 +1,4 @@
-"""optimized_flash_attention.py - FlashAttention via SDPA demonstrating tiled attention.
+"""optimized_flash_attention.py - FlashAttention via external kernels or SDPA fallback.
 
 This module demonstrates how FlashAttention achieves O(seq_len) memory complexity
 through the same intra-kernel pipelining and tiling concepts taught in Chapter 10.
@@ -15,21 +15,21 @@ demonstrating the practical benefit of the intra-kernel pipelining concepts.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from contextlib import contextmanager, nullcontext
-from typing import Optional
+from contextlib import contextmanager
+from typing import Callable, Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
+)
+from ch10.flash_attention_common import (
+    compute_attention_backend_metrics,
+    compute_attention_workload_metrics,
 )
 
 # Use new SDPA API when available (PyTorch 2.2+)
@@ -43,8 +43,8 @@ except ImportError:
 
 
 @contextmanager
-def sdpa_flash_backend():
-    """Context manager to select FlashAttention backend in SDPA.
+def sdpa_backend_context(backends: Optional[list[SDPBackend]] = None):
+    """Context manager to select an SDPA backend in SDPA.
     
     FlashAttention uses the same principles taught in Chapter 10:
     - Tiled computation: processes attention in blocks that fit in SRAM
@@ -54,28 +54,10 @@ def sdpa_flash_backend():
     This is analogous to the double-buffered pipeline pattern but applied
     to the attention computation itself.
     """
-    # Use new SDPA API when available (PyTorch 2.2+)
-    if _NEW_SDPA_API and sdpa_kernel is not None:
-        # Check which backends are available and select the best one
-        backends = []
-        if torch.cuda.is_available():
-            major, _minor = torch.cuda.get_device_capability()
-            # Flash attention typically needs SM 8.0+ (Ampere), may have issues on SM 10.0
-            if major >= 10:
-                # On Blackwell (SM 10.0), prefer memory-efficient which is more stable
-                backends = [SDPBackend.EFFICIENT_ATTENTION]
-            elif major < 8:
-                # Older GPUs don't support flash
-                backends = [SDPBackend.EFFICIENT_ATTENTION]
-            else:
-                backends = [SDPBackend.FLASH_ATTENTION]
-        else:
-            backends = [SDPBackend.FLASH_ATTENTION]
-        
+    if _NEW_SDPA_API and sdpa_kernel is not None and backends:
         with sdpa_kernel(backends):
             yield
     else:
-        # No context manager available, just yield
         yield
 
 
@@ -100,6 +82,20 @@ class TiledAttentionModule(nn.Module):
         self.k_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.v_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.out_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+    def _project_qkv(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Project input into [batch, seq, heads, head_dim] tensors."""
+        batch_size, seq_len, _ = x.shape
+        q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim)
+        return q.contiguous(), k.contiguous(), v.contiguous()
+
+    def _project_output(self, attn_output: torch.Tensor) -> torch.Tensor:
+        """Project [batch, seq, heads, head_dim] attention output back to hidden_dim."""
+        batch_size, seq_len, _, _ = attn_output.shape
+        merged = attn_output.reshape(batch_size, seq_len, self.hidden_dim)
+        return self.out_proj(merged)
         
     def forward(self, x: torch.Tensor, is_causal: bool = False) -> torch.Tensor:
         """Forward pass using tiled attention.
@@ -111,17 +107,10 @@ class TiledAttentionModule(nn.Module):
         Returns:
             Output tensor [batch, seq_len, hidden_dim]
         """
-        batch_size, seq_len, _ = x.shape
-        
-        # Project to Q, K, V
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
-        
-        # Reshape for multi-head attention: [batch, heads, seq, head_dim]
-        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        q, k, v = self._project_qkv(x)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
         
         # Tiled attention via SDPA
         # Internally, this uses the same tiling strategy discussed in Ch10:
@@ -136,8 +125,27 @@ class TiledAttentionModule(nn.Module):
         )
         
         # Reshape back: [batch, seq, hidden]
-        attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_dim)
-        return self.out_proj(attn_output)
+        return self._project_output(attn_output.transpose(1, 2).contiguous())
+
+    def forward_external_flash(
+        self,
+        x: torch.Tensor,
+        flash_attn_func: Callable[..., torch.Tensor],
+        *,
+        is_causal: bool,
+    ) -> torch.Tensor:
+        """Run an external FlashAttention kernel when one is available."""
+        q, k, v = self._project_qkv(x)
+        attn_output = flash_attn_func(
+            q,
+            k,
+            v,
+            dropout_p=0.0,
+            causal=is_causal,
+        )
+        if isinstance(attn_output, tuple):
+            attn_output = attn_output[0]
+        return self._project_output(attn_output.contiguous())
 
 
 class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -178,10 +186,96 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
+        self._sdpa_backends: Optional[list[SDPBackend]] = None
+        self._attention_runner: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
+        self._external_flash_func: Optional[Callable[..., torch.Tensor]] = None
+        self._selected_engine_name = "sdpa"
+        self._selected_backend_name = "default"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
+
+    def _candidate_backends(self) -> list[list[SDPBackend]]:
+        if not _NEW_SDPA_API or sdpa_kernel is None or SDPBackend is None:
+            return []
+        candidates: list[list[SDPBackend]] = []
+        if torch.cuda.is_available():
+            candidates.append([SDPBackend.FLASH_ATTENTION])
+            candidates.append([SDPBackend.EFFICIENT_ATTENTION])
+        if hasattr(SDPBackend, "MATH"):
+            candidates.append([SDPBackend.MATH])
+        return candidates
+
+    def _resolve_sdpa_backends(self) -> None:
+        if self.model is None or self.input is None:
+            raise RuntimeError("setup() must initialize model and input before selecting SDPA backends")
+        last_error: Optional[Exception] = None
+        for candidate in self._candidate_backends():
+            try:
+                with torch.no_grad(), sdpa_backend_context(candidate):
+                    _ = self.model(self.input[:1], is_causal=self.use_causal)
+                self._sdpa_backends = candidate
+                self._selected_backend_name = candidate[0].name.lower()
+                return
+            except Exception as exc:  # pragma: no cover - CUDA/PyTorch dependent
+                last_error = exc
+                continue
+        if _NEW_SDPA_API and torch.cuda.is_available():
+            raise RuntimeError("No supported SDPA backend found for the Chapter 10 FlashAttention benchmark") from last_error
+        self._sdpa_backends = None
+        self._selected_backend_name = "default"
+
+    def _resolve_external_flash(self) -> bool:
+        if self.model is None or self.input is None or not torch.cuda.is_available():
+            return False
+        if self.input.dtype not in (torch.float16, torch.bfloat16):
+            return False
+
+        candidates: list[tuple[str, str]] = [
+            ("flash_attn_3", "flash_attn_3.flash_attn_interface"),
+            ("flash_attn", "flash_attn.flash_attn_interface"),
+        ]
+
+        for engine_name, module_name in candidates:
+            try:
+                module = __import__(module_name, fromlist=["flash_attn_func"])
+                flash_attn_func = getattr(module, "flash_attn_func")
+                with torch.no_grad():
+                    _ = self.model.forward_external_flash(
+                        self.input[:1],
+                        flash_attn_func,
+                        is_causal=self.use_causal,
+                    )
+                self._external_flash_func = flash_attn_func
+                self._selected_engine_name = engine_name
+                self._selected_backend_name = engine_name
+                self._attention_runner = lambda x: self.model.forward_external_flash(
+                    x,
+                    flash_attn_func,
+                    is_causal=self.use_causal,
+                )
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _resolve_attention_runner(self) -> None:
+        if self.model is None or self.input is None:
+            raise RuntimeError("setup() must initialize model and input before selecting the attention engine")
+        if self._resolve_external_flash():
+            return
+        self._resolve_sdpa_backends()
+        self._selected_engine_name = "sdpa"
+        self._attention_runner = lambda x: self.model(x, is_causal=self.use_causal)
+
+    def _run_attention(self, x: torch.Tensor) -> torch.Tensor:
+        if self._attention_runner is None:
+            raise RuntimeError("setup() must resolve the attention engine before benchmarking")
+        if self._selected_engine_name == "sdpa":
+            with sdpa_backend_context(self._sdpa_backends):
+                return self._attention_runner(x)
+        return self._attention_runner(x)
     
     def setup(self) -> None:
         """Setup: Initialize tiled attention model."""
@@ -199,21 +293,20 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             self.batch_size, self.seq_len, self.hidden_dim,
             device=self.device, dtype=torch.float16
         )
+        self._resolve_attention_runner()
         
-        # Warmup with tiled backend
-        with torch.no_grad(), sdpa_flash_backend():
+        # Warmup the selected tiled attention engine.
+        with torch.no_grad():
             for _ in range(3):
-                _ = self.model(self.input, is_causal=self.use_causal)
+                _ = self._run_attention(self.input)
         
         torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
         """Benchmark: Tiled attention computation."""
         with self._nvtx_range("optimized_tiled_attention"):
-            with torch.no_grad(), sdpa_flash_backend():
-                # The SDPA call internally uses tiled computation
-                # This is the same pipelining concept from Ch10 applied to attention
-                self.output = self.model(self.input, is_causal=self.use_causal)
+            with torch.no_grad():
+                self.output = self._run_attention(self.input)
         
         if self.output is None or self.input is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
@@ -249,12 +342,32 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 4),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
+        """Return workload metrics derived from the real attention shape."""
+        metrics = compute_attention_workload_metrics(
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            hidden_dim=self.hidden_dim,
+            num_heads=self.num_heads,
+            is_causal=self.use_causal,
         )
+        metrics.update(
+            compute_attention_backend_metrics(
+                engine=self._selected_engine_name,
+                selected_backend=self._selected_backend_name,
+            )
+        )
+        metrics.update(
+            {
+                "attention.backend_flash": 1.0
+                if self._selected_backend_name in {"flash_attention", "flash_attn", "flash_attn_3"}
+                else 0.0,
+                "attention.backend_efficient": 1.0
+                if self._selected_backend_name == "efficient_attention"
+                else 0.0,
+                "attention.backend_math": 1.0 if self._selected_backend_name == "math" else 0.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
@@ -264,8 +377,8 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             return "Input not initialized"
         
         # Verify tiled attention produces valid output
-        with torch.no_grad(), sdpa_flash_backend():
-            output = self.model(self.input[:1], is_causal=False)
+        with torch.no_grad():
+            output = self._run_attention(self.input[:1])
             if torch.isnan(output).any():
                 return "NaN values in attention output"
         

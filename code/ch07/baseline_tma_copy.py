@@ -1,4 +1,9 @@
-"""Python harness wrapper for the non-TMA baseline in the tma_copy benchmark."""
+"""Harness wrapper for the scalar baseline in the `tma_copy` benchmark.
+
+The chapter's clean descriptor-backed TMA benchmark is still
+`tma_bulk_tensor_2d`. This baseline stays focused on the scalar neighbor-gather
+path so the `tma_copy` pair continues to measure staging and locality changes.
+"""
 
 from __future__ import annotations
 from typing import Optional
@@ -9,7 +14,7 @@ from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
 class BaselineTMACopyBenchmark(CudaBinaryBenchmark):
-    """Wraps the non-TMA baseline for the tma_copy benchmark pair."""
+    """Wrap the scalar neighbor-gather baseline for `tma_copy`."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -20,7 +25,7 @@ class BaselineTMACopyBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_tma_copy",
-            friendly_name="Baseline Tma Copy (Non-TMA)",
+            friendly_name="Scalar Neighbor Gather Copy",
             iterations=3,
             warmup=5,
             timeout_seconds=120,
@@ -37,7 +42,11 @@ class BaselineTMACopyBenchmark(CudaBinaryBenchmark):
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return memory access metrics."""
-        return None
+        return {
+            "copy.async_pipeline_1d": 0.0,
+            "copy.tensor_map_2d_requested": 0.0,
+            "copy.tensor_map_2d_runtime_candidate": 0.0,
+        }
 
 def get_benchmark() -> BaselineTMACopyBenchmark:
     """Factory for discover_benchmarks()."""

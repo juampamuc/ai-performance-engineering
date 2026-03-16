@@ -239,36 +239,18 @@ class BaselineFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return baseline attention metrics using standard roofline helpers."""
-        from core.benchmark.metrics import compute_roofline_metrics
-        
-        # FLOPs for naive attention (same compute as optimized)
-        attn_flops = 4.0 * self.batch_size * self.num_heads * (self.seq_len ** 2) * self.head_dim
-        proj_flops = 4.0 * self.batch_size * self.seq_len * self.hidden_dim * self.hidden_dim
-        total_flops = attn_flops + proj_flops
-        
-        # Memory: O(n^2) for naive attention (full attention matrix)
-        attn_matrix_bytes = self.batch_size * self.num_heads * (self.seq_len ** 2) * 2  # FP16
-        qkv_bytes = self.batch_size * self.num_heads * self.seq_len * self.head_dim * 2 * 3
-        io_bytes = self.batch_size * self.seq_len * self.hidden_dim * 2 * 2
-        memory_bytes = attn_matrix_bytes + qkv_bytes + io_bytes
-        
-        # Use roofline analysis
-        metrics = compute_roofline_metrics(
-            total_flops=total_flops,
-            total_bytes=float(memory_bytes),
-            elapsed_ms=17.6,  # Approximate from benchmark
-            precision="tensor",
+        """Report the actual attention workload shape without approximate timing."""
+        from ch10.flash_attention_common import compute_attention_workload_metrics
+
+        metrics = compute_attention_workload_metrics(
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            hidden_dim=self.hidden_dim,
+            num_heads=self.num_heads,
+            is_causal=False,
         )
-        
-        # Add attention-specific metrics
-        metrics.update({
-            "attention.seq_len": float(self.seq_len),
-            "attention.num_heads": float(self.num_heads),
-            "attention.head_dim": float(self.head_dim),
-            "attention.uses_sdpa": 0.0,  # Naive attention
-            "attention.materializes_attn_matrix": 1.0,  # O(n^2) memory
-        })
+        metrics["attention.uses_sdpa"] = 0.0
+        metrics["attention.materializes_attn_matrix"] = 1.0
         return metrics
     
     def validate_result(self) -> Optional[str]:

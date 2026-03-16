@@ -1,4 +1,4 @@
-"""optimized_regional_compilation.py - Optimized: Regional compilation via CUDA graphs.
+"""optimized_regional_compilation.py - Optimized: per-layer compile regions plus CUDA graph replay.
 
 Demonstrates the solution: compile hot regions of the large transformer independently
 instead of compiling the entire model monolithically. We capture per-sequence CUDA
@@ -12,8 +12,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
 from core.utils.compile_utils import maybe_nested_compile_region
@@ -36,56 +35,18 @@ def resolve_device() -> torch.device:
     return torch.device("cuda")
 
 
-class LargeTransformerBlock(nn.Module):
-    """A large transformer block that's computationally expensive."""
-    
-    def __init__(self, d_model: int = 8192, d_ff: int = 32768):
-        super().__init__()
-        self.output = None
-        self.ln1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(d_model, num_heads=64, batch_first=True)
-        self.ln2 = nn.LayerNorm(d_model)
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.GELU(),
-            nn.Linear(d_ff, d_model),
-        )
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        residual = x
-        x = self.ln1(x)
-        attn_out, _ = self.attn(x, x, x)
-        x = residual + attn_out
-        residual = x
-        x = self.ln2(x)
-        x = residual + self.mlp(x)
-        return x
-
-
-class LargeTransformerModel(nn.Module):
-    """A large transformer model (~40B+ parameters) that causes compilation hangs."""
-    
-    def __init__(self, n_layers: int = 48, d_model: int = 8192, d_ff: int = 32768):
-        super().__init__()
-        self.embed = nn.Embedding(50304, d_model)
-        self.blocks = nn.ModuleList([
-            LargeTransformerBlock(d_model, d_ff) for _ in range(n_layers)
-        ])
-        self.ln_f = nn.LayerNorm(d_model)
-        self.lm_head = nn.Linear(d_model, 50304, bias=False)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.embed(x)
-        for block in self.blocks:
-            x = _run_block(block, x)
-        x = self.ln_f(x)
-        x = self.lm_head(x)
-        return x
-
-
 @maybe_nested_compile_region
-def _run_block(block: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    return block(x)
+def _run_compiled_layer(layer: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    return layer(x)
+
+
+class RegionalCompilationTransformer(DummyTransformer):
+    """Optimized model that routes each block through a compile-friendly region."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for layer in self.layers:
+            x = x + _run_compiled_layer(layer, x)
+        return x
 
 
 GraphCacheEntry = Tuple["torch.cuda.CUDAGraph", torch.Tensor, torch.Tensor]
@@ -126,7 +87,7 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         self.d_model = candidate["d_model"]
         self.max_seq_len = candidate["seq_len"]
         self.sequence_schedule = [self.max_seq_len]
-        model = DummyTransformer(
+        model = RegionalCompilationTransformer(
             n_layers=candidate["n_layers"],
             d_model=self.d_model,
             d_ff=candidate["d_ff"],
@@ -157,13 +118,6 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
-
-    def setup_with_custom_regions(self, config: BenchmarkConfig, layer_indices: Optional[list[int]] = None) -> None:
-        """Compatibility shim: reuse standard setup for demo purposes."""
-        _ = config  # config is unused in this simplified path
-        _ = layer_indices
-        self._iteration = 0
-        self.setup()
 
     def _prepare_cuda_graphs(self) -> None:
         """Capture CUDA graphs per sequence length to eliminate Python overhead."""
@@ -307,40 +261,23 @@ def get_benchmark() -> BaseBenchmark:
 def main():
     """Run the optimized benchmark."""
     benchmark = OptimizedRegionalCompilationBenchmark()
-    config = BenchmarkConfig(
-        iterations=1,
-        warmup=10,
-    )
-    
+
     print("\n" + "=" * 80)
-    print("Example 1: Automatic Regional Compilation (smart_compile)")
+    print("Regional Compilation Benchmark Demo")
     print("=" * 80)
-    
+
     benchmark.setup()
     output = benchmark.run(compare_eager=True)
     print(f"\n[OK] Optimized completed: output shape {output.shape}")
-    print(f"   Compiled layers: {benchmark.compiled_layers}")
+    print(f"   Captured CUDA graph buckets: {benchmark.compiled_layers}")
+    print("   Path: per-layer compile regions + fixed-shape CUDA graph replay")
     benchmark.teardown()
-    
-    print("\n" + "=" * 80)
-    print("Example 2: Custom Regional Compilation (specific layers)")
-    print("=" * 80)
-    print("Compiling only layers [0, 1, 2, 10, 20, 30] (regional compilation)")
-    
-    benchmark.setup_with_custom_regions(config, layer_indices=[0, 1, 2, 10, 20, 30])
-    output = benchmark.run(compare_eager=True)
-    print(f"\n[OK] Custom regional compilation completed: output shape {output.shape}")
-    print(f"   Compiled layers: {benchmark.compiled_layers}")
-    benchmark.teardown()
-    
+
     print("\n" + "=" * 80)
     print("Summary")
     print("=" * 80)
-    print("Regional compilation (selective layer compilation) solves the hang problem by:")
-    print("  1. Compiling layers individually (avoids graph explosion)")
-    print("  2. Using per-layer timeouts (prevents hangs)")
-    print("  3. Falling back to eager for problematic layers")
-    print("  4. Only compiling compute-intensive regions/layers")
+    print("Baseline: eager transformer blocks in the timed region.")
+    print("Optimized: the same blocks routed through nested compile regions and replayed via CUDA graphs.")
 
 
 if __name__ == "__main__":

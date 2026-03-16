@@ -39,16 +39,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Load environment from .env files
-try:
-    from dotenv import load_dotenv
-    # Load .env first, then .env.local (local overrides)
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    env_local_path = Path(__file__).resolve().parents[2] / ".env.local"
-    load_dotenv(env_path)
-    load_dotenv(env_local_path, override=True)
-except ImportError:
-    pass  # dotenv not installed, rely on environment variables
+from core.utils.dotenv import load_repo_dotenv
+
+load_repo_dotenv(Path(__file__).resolve().parents[2])
 
 from core.utils.logger import get_logger
 

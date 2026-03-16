@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Level 4: CUDA Graphs.
+"""Level 4: Grouped expert routing on the shared journey model.
 
-ADDS: Graph capture for reduced kernel launch overhead.
-- Captures sequence of CUDA operations
-- Replays with single launch
-- Reduces CPU-GPU synchronization
+ADDS: Sort tokens by expert and execute grouped expert work.
 
-Cumulative: batched + sorting + FP8 + CUDA graphs
+Cumulative: batched + fused + mem_efficient + grouped
 """
-import torch
 
 from labs.moe_optimization_journey.moe_benchmark import MoEJourneyBenchmark, run_level
 
 
 class Level4Graphs(MoEJourneyBenchmark):
-    """Level 4: + CUDA graphs."""
+    """Level 4 shared grouped-routing benchmark."""
+
     LEVEL = 4
 
 def get_benchmark() -> Level4Graphs:

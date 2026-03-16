@@ -103,7 +103,7 @@ class NvlinkOffloadBenchmark(VerificationPayloadMixin, BaseBenchmark):
             target.copy_(self.gpu_cache[..., :slice_len, :].to("cpu", non_blocking=self.cfg.non_blocking))
 
         # Capture a representative slice for verification (GPU slice to avoid host sync patterns)
-        self.output = self.gpu_cache[..., : min(1, self.cfg.max_seq_len), : min(8, self.cfg.head_dim)].detach().float().clone()
+        self.output = self.gpu_cache[..., : min(1, self.cfg.max_seq_len), : min(8, self.cfg.head_dim)].detach()
         self.next_start = 0 if end >= self.cfg.max_seq_len else end
         if self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
@@ -111,7 +111,7 @@ class NvlinkOffloadBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
             inputs={"gpu_cache": self.gpu_cache.detach()},
-            output=self.output,
+            output=self.output.float().clone(),
             batch_size=self.cfg.batch_size,
             parameter_count=0,
             precision_flags={

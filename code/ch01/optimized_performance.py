@@ -20,7 +20,13 @@ from typing import Optional
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from ch01.performance_common import build_training_mlp, seed_chapter1
+from ch01.performance_common import (
+    build_training_mlp,
+    capture_tf32_state,
+    get_environment_custom_metrics,
+    seed_chapter1,
+    set_tf32_state,
+)
 from ch01.workload_config import WORKLOAD
 
 
@@ -43,12 +49,15 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         self._verify_input = None
         self._verify_output = None
         self.parameter_count = 0
+        self._tf32_state: tuple[bool, bool | None] | None = None
         samples = float(self.batch_size * self.workload.performance_microbatches)
         self.register_workload_metadata(samples_per_iteration=samples)
     
     def setup(self) -> None:
         """Setup: initialize model, fixed inputs, and verification output."""
         seed_chapter1()
+        self._tf32_state = capture_tf32_state()
+        set_tf32_state(False)
         
         self.model = build_training_mlp(self.hidden_dim)
         if self.device.type == "cuda":
@@ -135,6 +144,11 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         del self.model, self.microbatches, self.targets, self.optimizer
         self._fused_batches = None
         self._fused_targets = None
+        if self._tf32_state is not None:
+            matmul_state, cudnn_state = self._tf32_state
+            torch.backends.cuda.matmul.allow_tf32 = matmul_state
+            if cudnn_state is not None and torch.backends.cudnn.is_available():
+                torch.backends.cudnn.allow_tf32 = cudnn_state
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
@@ -146,12 +160,8 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         )
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_environment_metrics
-        return compute_environment_metrics(
-            gpu_count=getattr(self, 'gpu_count', 1),
-            gpu_memory_gb=getattr(self, 'gpu_memory_gb', 80.0),
-        )
+        """Return real runtime environment metrics for this benchmark host."""
+        return get_environment_custom_metrics()
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""

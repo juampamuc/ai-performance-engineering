@@ -26,6 +26,7 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from ch01.performance_common import (
     build_training_mlp,
     capture_tf32_state,
+    get_environment_custom_metrics,
     seed_chapter1,
     set_tf32_state,
 )
@@ -171,12 +172,8 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_environment_metrics
-        return compute_environment_metrics(
-            gpu_count=getattr(self, 'gpu_count', 1),
-            gpu_memory_gb=getattr(self, 'gpu_memory_gb', 80.0),
-        )
+        """Return real runtime environment metrics for this benchmark host."""
+        return get_environment_custom_metrics()
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""

@@ -1,6 +1,7 @@
 // baseline_cutlass_gemm_fp4_perchannel.cu -- CUTLASS NVFP4 GEMM with per-channel output scaling
 //
-// Baseline uses an aggressive CUTLASS tile/cluster configuration without tuning.
+// Baseline uses a naive launch path: one GEMM launch plus one standalone
+// per-channel scale kernel per timed iteration.
 
 #include <cuda_runtime.h>
 
@@ -297,15 +298,34 @@ int run_cutlass(const Options& options) {
 
     CUTLASS_CHECK(gemm.can_implement(arguments));
     CUTLASS_CHECK(gemm.initialize(arguments, workspace.get()));
-    CUTLASS_CHECK(gemm.run());
-    CUDA_CHECK(cudaDeviceSynchronize());
+
+    cudaStream_t stream{};
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
+    dim3 block(16, 16);
+    dim3 grid((options.n + block.x - 1) / block.x, (options.m + block.y - 1) / block.y);
+    std::vector<float> h_scales(options.n);
+    std::mt19937 gen(42);
+    std::uniform_real_distribution<float> scale_dis(0.75f, 1.25f);
+    for (auto& v : h_scales) {
+        v = scale_dis(gen);
+    }
+    float* d_scales = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_scales, options.n * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_scales, h_scales.data(), options.n * sizeof(float), cudaMemcpyHostToDevice));
+
+    CUTLASS_CHECK(gemm.run(stream));
+    apply_per_channel_scale<<<grid, block, 0, stream>>>(block_D.device_data(), d_scales, options.m, options.n);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     GpuTimer timer;
-    timer.start();
-    for (int iter = 0; iter < options.iterations; ++iter) {
-        NVTX_RANGE("setup");
-        CUTLASS_CHECK(gemm.initialize(arguments, workspace.get()));
-        CUTLASS_CHECK(gemm.run());
+    timer.start(stream);
+    {
+        NVTX_RANGE("compute_math:cutlass_fp4_perchannel");
+        for (int iter = 0; iter < options.iterations; ++iter) {
+            CUTLASS_CHECK(gemm.run(stream));
+            apply_per_channel_scale<<<grid, block, 0, stream>>>(block_D.device_data(), d_scales, options.m, options.n);
+        }
     }
     timer.stop();
 
@@ -313,35 +333,19 @@ int run_cutlass(const Options& options) {
     const float avg_ms = elapsed_ms / static_cast<float>(options.iterations);
     std::cout << "CUTLASS NVFP4 GEMM (baseline, per-channel): " << avg_ms << " ms" << std::endl;
 
-    dim3 block(16, 16);
-    dim3 grid((options.n + block.x - 1) / block.x, (options.m + block.y - 1) / block.y);
-
-    std::vector<float> h_scales(options.n);
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<float> scale_dis(0.75f, 1.25f);
-    for (auto& v : h_scales) {
-        NVTX_RANGE("setup");
-        v = scale_dis(gen);
-    }
-    float* d_scales = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_scales, options.n * sizeof(float)));
-    CUDA_CHECK(cudaMemcpy(d_scales, h_scales.data(), options.n * sizeof(float), cudaMemcpyHostToDevice));
-
-    apply_per_channel_scale<<<grid, block>>>(block_D.device_data(), d_scales, options.m, options.n);
-    CUDA_CHECK(cudaDeviceSynchronize());
-    CUDA_CHECK(cudaFree(d_scales));
-
 #ifdef VERIFY
     block_D.sync_host();
     const size_t elements = static_cast<size_t>(options.m) * options.n;
     double checksum = 0.0;
     const ElementD* h_out = block_D.host_data();
     for (size_t i = 0; i < elements; ++i) {
-        NVTX_RANGE("verify");
         checksum += std::abs(static_cast<float>(h_out[i]));
     }
     VERIFY_PRINT_CHECKSUM(static_cast<float>(checksum));
 #endif
+
+    CUDA_CHECK(cudaFree(d_scales));
+    CUDA_CHECK(cudaStreamDestroy(stream));
 
     return 0;
 }

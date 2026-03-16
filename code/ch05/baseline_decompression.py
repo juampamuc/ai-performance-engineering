@@ -79,13 +79,18 @@ class CPUDecompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_storage_io_metrics
-        return compute_storage_io_metrics(
-            bytes_read=getattr(self, '_bytes_read', 0.0),
-            bytes_written=getattr(self, '_bytes_written', 0.0),
-            read_time_ms=getattr(self, '_read_time_ms', 1.0),
-            write_time_ms=getattr(self, '_write_time_ms', 1.0),
+        """Report the actual decompression workload shape."""
+        from ch05.metrics_common import compute_decompression_metrics
+
+        if self.counts is None:
+            return None
+        run_count = int(self.counts.numel())
+        run_length = int(self.counts[0].item()) if run_count > 0 else 0
+        return compute_decompression_metrics(
+            run_count=run_count,
+            run_length=run_length,
+            decompressed_elements=run_count * run_length,
+            runs_on_device=False,
         )
 
 

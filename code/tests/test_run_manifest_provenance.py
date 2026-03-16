@@ -141,6 +141,138 @@ def test_run_manifest_create_records_warning_when_git_metadata_missing(monkeypat
     )
 
 
+def test_run_manifest_create_captures_runtime_capability_limitations(monkeypatch) -> None:
+    monkeypatch.setattr(
+        run_manifest_module,
+        "get_git_info",
+        lambda: {"commit": "deadbeef", "branch": "main", "dirty": False},
+    )
+    monkeypatch.setattr(
+        run_manifest_module,
+        "_collect_runtime_capability_limitations",
+        lambda warnings: [
+            run_manifest_module.RuntimeCapabilityLimitation(
+                key="cuda_allocator_reset_setting",
+                category="allocator_cleanup",
+                component="cuda_memory_pool_reset",
+                summary="reset_allocator unsupported",
+                detail="Unrecognized CachingAllocator option: reset_allocator",
+                first_observed_at="2026-03-16T00:00:00+00:00",
+                schemaVersion="1.0",
+            )
+        ],
+    )
+
+    manifest = RunManifest.create(config={"validity_profile": "strict"})
+
+    assert len(manifest.runtime_capability_limitations) == 1
+    limitation = manifest.runtime_capability_limitations[0]
+    assert limitation.key == "cuda_allocator_reset_setting"
+    assert limitation.component == "cuda_memory_pool_reset"
+    assert limitation.detail == "Unrecognized CachingAllocator option: reset_allocator"
+
+
+def test_run_manifest_finalize_refreshes_runtime_capability_limitations(monkeypatch) -> None:
+    monkeypatch.setattr(
+        run_manifest_module,
+        "get_git_info",
+        lambda: {"commit": "deadbeef", "branch": "main", "dirty": False},
+    )
+    limitation_batches = iter(
+        [
+            [],
+            [
+                run_manifest_module.RuntimeCapabilityLimitation(
+                    key="cuda_release_pool_signature",
+                    category="allocator_cleanup",
+                    component="cuda_memory_pool_reset",
+                    summary="releasePool zero-arg reset unsupported",
+                    detail="_cuda_releasePool(): incompatible function arguments",
+                    first_observed_at="2026-03-16T00:00:00+00:00",
+                    schemaVersion="1.0",
+                )
+            ],
+        ]
+    )
+    monkeypatch.setattr(
+        run_manifest_module,
+        "_collect_runtime_capability_limitations",
+        lambda warnings: next(limitation_batches),
+    )
+
+    manifest = RunManifest.create(config={"validity_profile": "strict"})
+    assert manifest.runtime_capability_limitations == []
+
+    manifest.finalize()
+
+    assert len(manifest.runtime_capability_limitations) == 1
+    assert manifest.runtime_capability_limitations[0].key == "cuda_release_pool_signature"
+
+
+def test_benchmark_with_manifest_serializes_runtime_capability_limitations(monkeypatch) -> None:
+    harness = BenchmarkHarness(
+        mode=BenchmarkMode.CUSTOM,
+        config=BenchmarkConfig(
+            iterations=1,
+            warmup=5,
+            device=torch.device("cpu"),
+            use_subprocess=False,
+        ),
+    )
+    monkeypatch.setattr(
+        run_manifest_module,
+        "get_git_info",
+        lambda: {"commit": "deadbeef", "branch": "main", "dirty": False},
+    )
+    limitation_batches = iter(
+        [
+            [],
+            [
+                run_manifest_module.RuntimeCapabilityLimitation(
+                    key="cuda_allocator_reset_setting",
+                    category="allocator_cleanup",
+                    component="cuda_memory_pool_reset",
+                    summary="reset_allocator unsupported",
+                    detail="Unrecognized CachingAllocator option: reset_allocator",
+                    first_observed_at="2026-03-16T00:00:00+00:00",
+                    schemaVersion="1.0",
+                )
+            ],
+        ]
+    )
+    monkeypatch.setattr(
+        run_manifest_module,
+        "_collect_runtime_capability_limitations",
+        lambda warnings: next(limitation_batches),
+    )
+    monkeypatch.setattr(
+        harness,
+        "benchmark",
+        lambda benchmark: _minimal_result(),
+    )
+
+    run = harness.benchmark_with_manifest(object(), run_id="manifest_runtime_limitations")
+
+    assert run.manifest is not None
+    assert len(run.manifest.runtime_capability_limitations) == 1
+    limitation = run.manifest.runtime_capability_limitations[0]
+    assert limitation.key == "cuda_allocator_reset_setting"
+    assert limitation.component == "cuda_memory_pool_reset"
+
+    serialized = run.manifest.model_dump(mode="json")
+    assert serialized["runtime_capability_limitations"] == [
+        {
+            "key": "cuda_allocator_reset_setting",
+            "category": "allocator_cleanup",
+            "component": "cuda_memory_pool_reset",
+            "summary": "reset_allocator unsupported",
+            "detail": "Unrecognized CachingAllocator option: reset_allocator",
+            "first_observed_at": "2026-03-16T00:00:00+00:00",
+            "schemaVersion": "1.0",
+        }
+    ]
+
+
 def test_ensure_cuda_executables_built_warns_when_cleanup_fails(tmp_path, monkeypatch) -> None:
     chapter_dir = tmp_path / "ch99"
     chapter_dir.mkdir()

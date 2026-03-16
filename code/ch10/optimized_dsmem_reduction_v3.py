@@ -41,11 +41,14 @@ class OptimizedDSMEMReductionV3Benchmark(CudaBinaryBenchmark):
         self.register_workload_metadata(bytes_per_iteration=float(64 * 1024 * 1024 * 4))
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics."""
-        from core.benchmark.metrics import compute_reduction_metrics
-        return compute_reduction_metrics(
-            num_elements=getattr(self, 'num_elements', 64 * 1024 * 1024),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 0.03),
+        """Report the actual reduction workload and measured bandwidth."""
+        from ch10.benchmark_metrics_common import compute_reduction_workload_metrics
+
+        return compute_reduction_workload_metrics(
+            num_elements=64 * 1024 * 1024,
+            elapsed_ms=self.last_time_ms,
+            uses_dsmem=True,
+            cluster_size=2.0,
         )
 
     def get_input_signature(self) -> dict:

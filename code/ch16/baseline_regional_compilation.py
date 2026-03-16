@@ -8,13 +8,10 @@ import torch
 import torch.nn as nn
 
 from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
-from core.utils.compile_utils import error_on_graph_break, maybe_nested_compile_region  # noqa: E402
 from core.benchmark.verification_mixin import VerificationPayloadMixin  # noqa: E402
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.benchmark.utils import warn_benchmark_scaling  # noqa: E402
@@ -61,13 +58,8 @@ class DummyTransformer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
-            x = x + _run_layer(layer, x)
+            x = x + layer(x)
         return x
-
-
-@maybe_nested_compile_region
-def _run_layer(layer: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    return layer(x)
 
 
 class BaselineRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchmark):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import inspect
+import math
 from typing import Callable
 
 import torch
@@ -124,3 +125,38 @@ def make_relative_bias_score_mod(rel_bias: torch.Tensor) -> Callable:
         return score + bias
 
     return score_mod
+
+
+def compute_attention_workload_metrics(
+    *,
+    batch: int,
+    heads: int,
+    seq_len: int,
+    head_dim: int,
+    doc_span: int = 256,
+    dtype: torch.dtype = torch.bfloat16,
+) -> dict[str, float]:
+    """Return attention-specific workload metrics for the FlexAttention lab."""
+    bytes_per_element = float(torch.tensor([], dtype=dtype).element_size())
+    span = max(doc_span, 1)
+    num_docs = max(1, math.ceil(seq_len / span))
+    active_pairs_per_head = 0.0
+    for doc_idx in range(num_docs):
+        start = doc_idx * span
+        stop = min(seq_len, start + span)
+        tokens_in_doc = max(stop - start, 0)
+        active_pairs_per_head += float(tokens_in_doc * tokens_in_doc)
+    total_active_pairs = float(batch * heads) * active_pairs_per_head
+    total_flops = 4.0 * total_active_pairs * float(head_dim)
+    total_bytes = float(batch * heads * seq_len * head_dim) * bytes_per_element * 4.0
+    return {
+        "flex_attention.batch": float(batch),
+        "flex_attention.heads": float(heads),
+        "flex_attention.seq_len": float(seq_len),
+        "flex_attention.head_dim": float(head_dim),
+        "flex_attention.doc_span": float(doc_span),
+        "flex_attention.active_score_pairs": total_active_pairs,
+        "flex_attention.total_flops": float(total_flops),
+        "flex_attention.total_bytes": float(total_bytes),
+        "flex_attention.arithmetic_intensity": float(total_flops / max(total_bytes, 1.0)),
+    }

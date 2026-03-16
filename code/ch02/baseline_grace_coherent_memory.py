@@ -179,10 +179,11 @@ class GraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_custom_metrics(self) -> Optional[dict]:
         """Return memory transfer metrics for grace_coherent_memory."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
+        bytes_transferred = float(self.size_mb * 1024 * 1024 * self._impl.iterations * 2)
         return compute_memory_transfer_metrics(
-            bytes_transferred=self.size,
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
-            transfer_type="hbm",
+            bytes_transferred=bytes_transferred,
+            elapsed_ms=(self.elapsed_s or 0.001) * 1000.0,
+            transfer_type="nvlink" if self._impl.is_grace_blackwell else "pcie",
         )
 
     def validate_result(self) -> Optional[str]:

@@ -12,34 +12,10 @@ from __future__ import annotations
 from typing import Optional
 
 import torch
-import torch.nn as nn
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata  # noqa: E402
+from ch15.inference_monolithic_common import SimpleLLM
 from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
-
-
-class SimpleLLM(nn.Module):
-    """Simplified LLM for inference simulation."""
-
-    def __init__(self, *, vocab_size: int = 10000, hidden_dim: int = 512, num_layers: int = 8) -> None:
-        super().__init__()
-        self.embed = nn.Embedding(vocab_size, hidden_dim)
-        self.layers = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)])
-
-    def prefill(self, prompt_tokens: torch.Tensor) -> torch.Tensor:
-        x = self.embed(prompt_tokens)
-        for layer in self.layers:
-            x = torch.relu(layer(x))
-        return x[:, -1:, :]
-
-    def decode(self, kv_cache: torch.Tensor, *, num_tokens: int) -> torch.Tensor:
-        outputs = []
-        x = kv_cache
-        for _ in range(int(num_tokens)):
-            for layer in self.layers:
-                x = torch.relu(layer(x))
-            outputs.append(x)
-        return torch.cat(outputs, dim=1)
 
 
 class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -50,6 +26,7 @@ class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchm
         self.model: Optional[SimpleLLM] = None
         self.prompt: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
+        self._decode_buffer: Optional[torch.Tensor] = None
 
         self.batch_size = 1
         self.prefill_seq = 64
@@ -65,15 +42,26 @@ class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchm
         self.model = SimpleLLM(vocab_size=10000, hidden_dim=512, num_layers=8).to(self.device).to(torch.bfloat16).eval()
         self.prompt = (torch.arange(self.prefill_seq, device=self.device, dtype=torch.int64) % 10000).unsqueeze(0)
         self.output = None
+        self._decode_buffer = torch.empty(
+            self.batch_size,
+            self.num_tokens,
+            self.model.hidden_dim,
+            device=self.device,
+            dtype=torch.bfloat16,
+        )
 
     def benchmark_fn(self) -> None:
-        if self.model is None or self.prompt is None:
+        if self.model is None or self.prompt is None or self._decode_buffer is None:
             raise RuntimeError("Model or prompt not initialized")
 
         with self._nvtx_range("inference_monolithic_optimized"):
             with torch.no_grad():
                 kv_cache = self.model.prefill(self.prompt)
-                self.output = self.model.decode(kv_cache, num_tokens=self.num_tokens)
+                self.output = self.model.decode_autoregressive(
+                    kv_cache,
+                    num_tokens=self.num_tokens,
+                    output_buffer=self._decode_buffer,
+                )
 
     def capture_verification_payload(self) -> None:
         if self.model is None or self.prompt is None or self.output is None:
@@ -96,6 +84,7 @@ class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchm
         self.model = None
         self.prompt = None
         self.output = None
+        self._decode_buffer = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 

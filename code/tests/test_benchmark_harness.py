@@ -508,8 +508,25 @@ class TestBenchmarkModes:
         assert result.timing.iterations == 10
     
     def test_triton_mode(self):
-        """Test TRITON mode works (requires Triton benchmark)."""
-        assert True
+        """Test TRITON mode either runs through Triton or fails explicitly."""
+        benchmark = SimpleBenchmark()
+        config = BenchmarkConfig(
+            iterations=3,
+            warmup=1,
+            enable_profiling=False,
+            adaptive_iterations=False,
+        )
+        harness = BenchmarkHarness(mode=BenchmarkMode.TRITON, config=config)
+
+        try:
+            import triton.testing  # noqa: F401
+        except ImportError:
+            with pytest.raises(RuntimeError, match="Triton benchmarking mode requested but Triton not available"):
+                harness.benchmark(benchmark)
+            return
+
+        result = harness.benchmark(benchmark)
+        assert result.timing.iterations == 3
 
 
 class TestErrorHandling:

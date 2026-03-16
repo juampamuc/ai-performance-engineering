@@ -50,6 +50,15 @@ EXTRA_SCHEDULE = MatmulSchedule(
     notes="Wide-N tile with more warps for higher throughput on large matrices.",
 )
 
+WIDE_N_LATENCY_SCHEDULE = MatmulSchedule(
+    name="bm64_bn256_bk32",
+    block_m=64,
+    block_n=256,
+    block_k=32,
+    num_warps=8,
+    notes="Wide-N tile that keeps smaller M/K tiles while increasing work per launch.",
+)
+
 WARP_HEAVY_SCHEDULE = MatmulSchedule(
     name="bm128_bn128_bk32_nw8",
     block_m=128,
@@ -72,6 +81,7 @@ SCHEDULES = [
     BASELINE_SCHEDULE,
     OPTIMIZED_SCHEDULE,
     EXTRA_SCHEDULE,
+    WIDE_N_LATENCY_SCHEDULE,
     WARP_HEAVY_SCHEDULE,
     LATENCY_FRIENDLY_SCHEDULE,
 ]
@@ -239,6 +249,7 @@ __all__ = [
     "BASELINE_SCHEDULE",
     "OPTIMIZED_SCHEDULE",
     "EXTRA_SCHEDULE",
+    "WIDE_N_LATENCY_SCHEDULE",
     "WARP_HEAVY_SCHEDULE",
     "LATENCY_FRIENDLY_SCHEDULE",
     "SCHEDULES",

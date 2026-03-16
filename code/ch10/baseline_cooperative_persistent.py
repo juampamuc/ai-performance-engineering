@@ -33,11 +33,13 @@ class BaselineCooperativePersistentBenchmark(CudaBinaryBenchmark):
 
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 1),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
+        """Report the persistent-kernel structure without fake stage timing."""
+        from ch10.benchmark_metrics_common import compute_pipeline_variant_metrics
+
+        return compute_pipeline_variant_metrics(
+            self._workload_params,
+            num_stages=1,
+            persistent=True,
         )
 
     def get_input_signature(self) -> dict:

@@ -322,6 +322,109 @@ def compute_roofline_metrics(
     }
 
 
+def compute_gemm_metrics(
+    m: int,
+    n: int,
+    k: int,
+    *,
+    elapsed_ms: Optional[float] = None,
+    precision: str = "fp32",
+    bytes_per_element: int = 4,
+    specs: Optional[HardwareSpecs] = None,
+) -> Dict[str, float]:
+    """Compute GEMM workload metrics and optional roofline metrics.
+
+    Args:
+        m: GEMM rows in the output matrix.
+        n: GEMM columns in the output matrix.
+        k: Reduction dimension.
+        elapsed_ms: Optional measured latency for achieved-performance metrics.
+        precision: Precision/backend used for the GEMM roofline classification.
+        bytes_per_element: Storage bytes per matrix element.
+        specs: Hardware specs (auto-detected if None).
+
+    Returns:
+        Dict with GEMM shape, FLOP/byte totals, and roofline metrics when timing is available.
+    """
+    total_flops = 2.0 * float(m) * float(n) * float(k)
+    total_bytes = float((m * k) + (k * n) + (m * n)) * float(bytes_per_element)
+    metrics = {
+        "gemm.m": float(m),
+        "gemm.n": float(n),
+        "gemm.k": float(k),
+        "gemm.total_flops": total_flops,
+        "gemm.total_bytes": total_bytes,
+        "gemm.bytes_per_element": float(bytes_per_element),
+    }
+    if elapsed_ms is None:
+        return metrics
+    return {
+        **metrics,
+        **compute_roofline_metrics(
+            total_flops=total_flops,
+            total_bytes=total_bytes,
+            elapsed_ms=elapsed_ms,
+            precision=precision,
+            specs=specs,
+        ),
+    }
+
+
+def compute_bandwidth_metrics(
+    total_bytes: float,
+    elapsed_ms: Optional[float],
+    *,
+    bandwidth_type: str = "hbm",
+    specs: Optional[HardwareSpecs] = None,
+) -> Dict[str, float]:
+    """Compute achieved bandwidth for kernels that only expose byte traffic."""
+    metrics = {
+        "bandwidth.total_bytes": float(total_bytes),
+    }
+    if elapsed_ms is None:
+        return metrics
+
+    specs = specs or detect_hardware_specs()
+    elapsed_s = max(float(elapsed_ms) / 1000.0, 1e-9)
+    achieved_gbps = (float(total_bytes) / 1e9) / elapsed_s
+    peak_map = {
+        "pcie": specs.pcie_bandwidth_gbps,
+        "nvlink": specs.nvlink_bandwidth_gbps,
+        "hbm": specs.hbm_bandwidth_gbps,
+    }
+    theoretical_peak = peak_map.get(str(bandwidth_type).lower(), specs.hbm_bandwidth_gbps)
+    efficiency = (achieved_gbps / theoretical_peak) * 100.0 if theoretical_peak > 0 else 0.0
+    return {
+        **metrics,
+        "bandwidth.elapsed_ms": float(elapsed_ms),
+        "bandwidth.achieved_gbps": achieved_gbps,
+        "bandwidth.theoretical_peak_gbps": theoretical_peak,
+        "bandwidth.efficiency_pct": min(efficiency, 100.0),
+    }
+
+
+def compute_reduction_metrics(
+    num_elements: int,
+    elapsed_ms: Optional[float],
+    *,
+    bytes_per_element: int = 4,
+    specs: Optional[HardwareSpecs] = None,
+) -> Dict[str, float]:
+    """Compute reduction workload size plus optional achieved bandwidth."""
+    total_bytes = float(num_elements) * float(bytes_per_element)
+    return {
+        "reduction.num_elements": float(num_elements),
+        "reduction.bytes_per_element": float(bytes_per_element),
+        "reduction.total_bytes": total_bytes,
+        **compute_bandwidth_metrics(
+            total_bytes=total_bytes,
+            elapsed_ms=elapsed_ms,
+            bandwidth_type="hbm",
+            specs=specs,
+        ),
+    }
+
+
 # =============================================================================
 # Chapter 11: CUDA Stream Metrics
 # =============================================================================
@@ -997,4 +1100,3 @@ def validate_metrics(metrics: Optional[Dict[str, float]]) -> Dict[str, Any]:
         "issues": issues,
         "stats": stats,
     }
-

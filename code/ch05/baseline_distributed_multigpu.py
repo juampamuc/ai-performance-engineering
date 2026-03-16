@@ -90,12 +90,12 @@ class BaselineDistributedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        from core.benchmark.metrics import compute_storage_io_metrics
-        return compute_storage_io_metrics(
-            bytes_read=getattr(self, "_bytes_read", 0.0),
-            bytes_written=getattr(self, "_bytes_written", 0.0),
-            read_time_ms=getattr(self, "_read_time_ms", 1.0),
-            write_time_ms=getattr(self, "_write_time_ms", 1.0),
+        from ch05.metrics_common import compute_multi_gpu_reduction_metrics
+
+        return compute_multi_gpu_reduction_metrics(
+            num_elements_per_gpu=self.num_elements,
+            device_count=len(self.device_ids) if self.device_ids else 0,
+            uses_cpu_staging=True,
         )
 
     def validate_result(self) -> Optional[str]:
