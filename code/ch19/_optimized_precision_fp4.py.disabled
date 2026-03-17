@@ -7,6 +7,7 @@ Optimized for Blackwell B200/GB10 with FP4 (NVFP4) support.
 from __future__ import annotations
 
 import sys
+from functools import partial
 from pathlib import Path
 
 # Add repo root to path for imports
@@ -16,6 +17,7 @@ if str(repo_root) not in sys.path:
 
 import torch
 import torch.nn as nn
+from core.common.device_utils import require_cuda_device
 
 try:
     import arch_config  # noqa: F401
@@ -42,12 +44,7 @@ from core.harness.benchmark_harness import (
     BenchmarkMode,
 )
 
-
-def resolve_device() -> torch.device:
-    """Return CUDA device if available."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch19")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for ch19")
 
 
 class ProductionTransformer(nn.Module):
@@ -228,5 +225,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

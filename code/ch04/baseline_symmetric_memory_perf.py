@@ -13,7 +13,7 @@ from core.benchmark.cuda_event_timing import elapsed_ms
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.metrics import compute_memory_transfer_metrics
 from ch04.symmetric_memory_perf_common import build_square_verification_probe
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class BaselineSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -124,7 +124,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineSymmetricMemoryPerfBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

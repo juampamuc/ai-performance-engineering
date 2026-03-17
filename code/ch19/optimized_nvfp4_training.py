@@ -6,6 +6,7 @@ which provides memory savings and potential speedups through reduced memory band
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Optional, List
 
@@ -14,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from core.benchmark.verification import InputSignature, PrecisionFlags
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 
@@ -33,11 +35,7 @@ except Exception as exc:  # pragma: no cover
 else:
     TE_IMPORT_ERROR = None
 
-
-def resolve_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for NVFP4 benchmarks")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for NVFP4 benchmarks")
 
 
 class _NVFP4Block(nn.Module):
@@ -246,7 +244,7 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             iterations=8,
-            warmup=10,  # Extra warmup for quantization stability
+            warmup=5,
             enable_memory_tracking=False,
             deterministic=False,
             seed=None,
@@ -272,7 +270,3 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return OptimizedNVFP4TrainingBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

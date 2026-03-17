@@ -107,7 +107,6 @@ def _measure_nccl_broadcast(bytes_per_rank: int, iterations: int) -> BenchmarkRe
     compute_passes = max(1, int(os.environ.get("AISP_BROADCAST_COMPUTE_PASSES", "1")))
     comm_stream = torch.cuda.Stream(device=device) if overlap_compute else None
     done = torch.cuda.Event() if overlap_compute and comm_stream is not None else None
-    done = torch.cuda.Event() if overlap_compute and comm_stream is not None else None
 
     # Warmup
     for _ in range(5):
@@ -165,6 +164,7 @@ def _measure_symmetric_broadcast(bytes_per_rank: int, iterations: int) -> Option
     overlap_compute = os.environ.get("AISP_BROADCAST_OVERLAP", "").lower() in {"1", "true", "yes"}
     compute_passes = max(1, int(os.environ.get("AISP_BROADCAST_COMPUTE_PASSES", "1")))
     comm_stream = torch.cuda.Stream(device=device) if overlap_compute else None
+    done = torch.cuda.Event() if overlap_compute and comm_stream is not None else None
 
     for _ in range(5):
         if rank == 0:

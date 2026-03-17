@@ -75,6 +75,9 @@ class BenchmarkData:
     memory_optimized_mb: float = 0
     status: str = "success"
     notes: str = ""
+    pair_role: str = ""
+    chapter_alignment: str = ""
+    chapter_native_exemplar: Optional[bool] = None
 
 
 class ReportGenerator:
@@ -215,6 +218,10 @@ class ReportGenerator:
                 memory_baseline_mb=item.get("baseline_memory_mb", 0),
                 memory_optimized_mb=item.get("optimized_memory_mb", 0),
                 status=item.get("status", "success"),
+                notes=item.get("story_note") or item.get("notes", ""),
+                pair_role=item.get("pair_role", ""),
+                chapter_alignment=item.get("chapter_alignment", ""),
+                chapter_native_exemplar=item.get("chapter_native_exemplar"),
             ))
         
         return benchmarks
@@ -242,9 +249,14 @@ class ReportGenerator:
         for b in sorted(benchmarks, key=lambda x: -x.speedup)[:50]:
             status_color = "#22c55e" if b.speedup > 1.1 else "#f59e0b" if b.speedup > 1.0 else "#ef4444"
             techniques_str = ", ".join(b.techniques[:3]) if b.techniques else "-"
+            note_html = ""
+            if b.notes:
+                note_html = (
+                    f"<div style=\"margin-top: 6px; font-size: 11px; color: #94a3b8;\">{b.notes}</div>"
+                )
             benchmark_rows += f"""
             <tr>
-                <td style="padding: 12px; border-bottom: 1px solid #334155;">{b.name}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #334155;">{b.name}{note_html}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #334155;">{b.chapter}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #334155; text-align: right;">{b.baseline_time_ms:.2f}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #334155; text-align: right;">{b.optimized_time_ms:.2f}</td>
@@ -599,8 +611,11 @@ class ReportGenerator:
         table_data = [['Benchmark', 'Baseline (ms)', 'Optimized (ms)', 'Speedup']]
         
         for b in sorted(benchmarks, key=lambda x: -x.speedup)[:30]:
+            display_name = b.name
+            if b.pair_role == "control" and b.chapter_alignment == "supplementary":
+                display_name = f"{display_name} [supplementary control]"
             table_data.append([
-                b.name[:40],
+                display_name[:56],
                 f'{b.baseline_time_ms:.2f}',
                 f'{b.optimized_time_ms:.2f}',
                 f'{b.speedup:.2f}x',
@@ -652,6 +667,10 @@ def generate_report(
             # It's a file
             with open(data_path) as f:
                 data = json.load(f)
+            if isinstance(data, dict) and "results" in data and "benchmarks" not in data:
+                from core.analysis.performance_analyzer import load_benchmark_data
+
+                data = load_benchmark_data(data_file=data_path)
         elif str(data).startswith("http"):
             # It's a URL
             return generator.generate_from_api(str(data), output_path, format=format)
@@ -689,5 +708,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

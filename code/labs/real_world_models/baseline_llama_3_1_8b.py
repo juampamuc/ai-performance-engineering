@@ -79,6 +79,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineLlama31_8B()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

@@ -1,4 +1,4 @@
-"""optimized_performance.py - FP16 + fused-microbatch performance benchmark."""
+"""optimized_performance.py - FP32 fused-microbatch performance benchmark."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from ch01.workload_config import WORKLOAD
 
 
 class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Combined optimization: FP16 execution plus fused microbatch execution."""
+    """Isolate microbatch fusion without also changing arithmetic precision."""
 
     signature_equivalence_group = "ch01_performance_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
@@ -59,13 +59,8 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         self._tf32_state = capture_tf32_state()
         set_tf32_state(False)
         
-        self.model = build_training_mlp(self.hidden_dim)
-        if self.device.type == "cuda":
-            self.model = self.model.half()
-            dtype = torch.float16
-        else:
-            dtype = torch.float32
-        self.model = self.model.to(self.device)
+        self.model = build_training_mlp(self.hidden_dim).to(self.device)
+        dtype = torch.float32
         
         # Match baseline: use eval() mode (baseline has this even though it does backward pass)
         self.model.eval()
@@ -107,7 +102,7 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
     
     def benchmark_fn(self) -> None:
         """Function to benchmark."""
-        with self._nvtx_range("optimized_performance_batch"):
+        with self._nvtx_range("optimized_performance_fusion"):
             for data, target in zip(self._fused_batches, self._fused_targets):
                 self.optimizer.zero_grad(set_to_none=True)
                 logits = self.model(data)
@@ -130,7 +125,7 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
             batch_size=self._verify_input.shape[0],
             parameter_count=int(self.parameter_count),
             precision_flags={
-                "fp16": bool(model_params) and model_params[0].dtype == torch.float16,
+                "fp16": False,
                 "bf16": False,
                 "fp8": False,
                 "tf32": torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32),
@@ -187,7 +182,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return OptimizedPerformanceBatchBenchmark(batch_size=32)
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

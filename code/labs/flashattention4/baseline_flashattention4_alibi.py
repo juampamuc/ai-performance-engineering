@@ -16,7 +16,3 @@ def get_benchmark() -> BaselineFlashAttention4Benchmark:
     return BaselineFlashAttention4AlibiBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

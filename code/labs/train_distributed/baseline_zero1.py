@@ -168,10 +168,6 @@ def main():
     dist.destroy_process_group()
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(

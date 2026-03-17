@@ -13,8 +13,6 @@ from core.benchmark.verification import InputSignature, PrecisionFlags
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
@@ -197,7 +195,3 @@ class BaselineNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return BaselineNVFP4TrainingBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

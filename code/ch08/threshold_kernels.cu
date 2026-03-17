@@ -122,16 +122,14 @@ void threshold_tma_baseline(torch::Tensor inputs, torch::Tensor output, double t
     const int count = static_cast<int>(inputs.numel());
     at::cuda::CUDAGuard guard(inputs.device());
     const auto stream = at::cuda::getCurrentCUDAStream();
-    for (int pass = 0; pass < 3; ++pass) {
-        NVTX_RANGE("iteration");
-        launch_threshold_naive(
-            inputs.data_ptr<float>(),
-            output.data_ptr<float>(),
-            static_cast<float>(threshold),
-            count,
-            stream);
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-    }
+    NVTX_RANGE("iteration");
+    launch_threshold_naive(
+        inputs.data_ptr<float>(),
+        output.data_ptr<float>(),
+        static_cast<float>(threshold),
+        count,
+        stream);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
 void threshold_tma_optimized(torch::Tensor inputs, torch::Tensor output, double threshold) {

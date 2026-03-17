@@ -37,12 +37,14 @@ The tcgen05 path is worth profiling separately. Its win is much smaller than the
 ## Repro Commands
 ```bash
 python -m cli.aisp bench list-targets --chapter labs/fullstack_cluster
+python -m cli.aisp bench run --targets labs/fullstack_cluster:moe_hybrid_ep --profile minimal
 python -m cli.aisp bench run --targets labs/fullstack_cluster:cluster_gemm --profile minimal
 python labs/fullstack_cluster/run_lab_fullstack_cluster.py --size 2048
 ```
 
 ## Learning Goals
 - Run scenario benchmarks that stitch together chapters into end-to-end workflows.
+- Compare a baseline vs topology-aware DeepSeek-style hybrid expert-parallel optimizer step.
 - Inspect cluster GEMM kernels (baseline and DSMEM/TMA optimized) via the CUDA extension.
 - Track GPU requirements, expected shapes, and automation scripts in one place.
 - Collect artifact bundles that summarize every phase of the scenario.
@@ -50,7 +52,7 @@ python labs/fullstack_cluster/run_lab_fullstack_cluster.py --size 2048
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `baseline_moe_readiness.py`, `optimized_moe_readiness.py`, `baseline_moe_readiness_multigpu.py`, `optimized_moe_readiness_multigpu.py` | MoE readiness benchmarks that stress all-to-all sharding, routing, and capacity planning. |
+| `baseline_moe_hybrid_ep.py`, `optimized_moe_hybrid_ep.py`, `baseline_moe_hybrid_ep_multigpu.py`, `optimized_moe_hybrid_ep_multigpu.py`, `moe_hybrid_ep_common.py` | DeepSeek-style hybrid EP optimizer-step benchmarks with explicit dispatch/combine phases, load-balance metrics, and intra-node fallback reporting. |
 | `baseline_cluster_gemm.py`, `optimized_cluster_gemm.py`, `baseline_cluster_gemm_tcgen05.py`, `optimized_cluster_gemm_tcgen05.py` | Python entrypoints for the cluster GEMM kernels with tcgen05 fallbacks. |
 | `capstone_extension.py`, `capstone_extension_tcgen05.py`, `capstone_kernels.cu`, `capstone_kernels_tcgen05.cu`, `capstone_benchmarks.py` | PyTorch extension, CUDA kernels, and harness hooks for the GEMM showcase. |
 | `run_lab_fullstack_cluster.py`, `gpu_requirements.py`, `expectations_{hardware_key}.json` | Standalone runner, hardware requirement helper, and expectation file. |
@@ -67,6 +69,7 @@ python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal
 - Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
 
 ## Validation Checklist
+- `python -m cli.aisp bench run --targets labs/fullstack_cluster:moe_hybrid_ep --profile minimal` records a full optimizer step with routing/dispatch/combine/backward/grad-sync metrics.
 - `python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal` records per-phase metrics for the entire scenario suite.
 - `python labs/fullstack_cluster/run_lab_fullstack_cluster.py --size 2048` builds the extension on first run and prints baseline vs optimized TFLOP/s.
 - KF-specific kernels skip gracefully on hardware lacking tcgen05 or DSMEM, ensuring CI signal stays meaningful.

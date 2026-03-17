@@ -57,6 +57,7 @@ _LAST_LOAD_ERROR: Optional[str] = None
 @dataclass(frozen=True)
 class _CompareCliArgs:
     validity_profile: Optional[str] = None
+    allow_foreign_gpu_processes: bool = False
     profile: str = "none"
     examples: Optional[List[str]] = None
 
@@ -174,6 +175,14 @@ def _parse_compare_cli_args(
         help=VALIDITY_PROFILE_HELP_TEXT,
     )
     parser.add_argument(
+        "--allow-foreign-gpu-processes",
+        action="store_true",
+        help=(
+            "Warn instead of fail when unrelated CUDA compute processes are active on the "
+            "benchmark GPU. Use only on shared hosts where strict isolation is impossible."
+        ),
+    )
+    parser.add_argument(
         "--profile",
         choices=["none", "minimal", "deep_dive", "roofline"],
         default="none",
@@ -198,6 +207,7 @@ def _parse_compare_cli_args(
                 normalized_examples.append(example)
     return _CompareCliArgs(
         validity_profile=cast(Optional[str], parsed.validity_profile),
+        allow_foreign_gpu_processes=bool(parsed.allow_foreign_gpu_processes),
         profile=cast(str, parsed.profile),
         examples=normalized_examples or None,
     )
@@ -493,6 +503,9 @@ def profile_template(
             cli_validity_profile,
         )
         config = replace(config, validity_profile=cli_validity_profile)
+    if cli_args.allow_foreign_gpu_processes and not config.allow_foreign_gpu_processes:
+        logger.info("Applying compare.py CLI override: --allow-foreign-gpu-processes")
+        config = replace(config, allow_foreign_gpu_processes=True)
     if cli_args.profile != "none":
         logger.info("Applying compare.py CLI profiling preset: --profile %s", cli_args.profile)
         config = replace(

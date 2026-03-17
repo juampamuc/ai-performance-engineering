@@ -22,22 +22,32 @@ class OptimizedWarpSpecializedPipelineEnhancedBenchmark(CudaBinaryBenchmark):
             warmup=5,
             timeout_seconds=180,
             workload_params={
-                "shared_bytes": 3,
+                "min_tile_size": 8,
+                "max_tile_size": 32,
+                "tile_candidate_count": 3,
+                "min_tiles": 4096,
+                "max_tiles": 16384,
+                "shared_tiles": 3,
                 "iterations": 10,
-                "dtype": 'float32',
                 "batch_size": 1,
             },
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        return None
+        from ch10.benchmark_metrics_common import compute_warp_specialization_metrics
+
+        return compute_warp_specialization_metrics(
+            self._workload_params,
+            num_stages=2,
+            producer_warps=1,
+            compute_warps=1,
+            consumer_warps=1,
+            adaptive_tile_selection=True,
+            uses_pipeline_api=True,
+            async_staging=True,
+        )
 
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedWarpSpecializedPipelineEnhancedBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

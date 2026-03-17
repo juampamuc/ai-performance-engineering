@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 import torch
 
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.benchmark.metrics import compute_inference_metrics
 from core.benchmark.wrapper_utils import attach_benchmark_metadata
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata

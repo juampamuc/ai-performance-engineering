@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Baseline: Grace-Blackwell coherent memory without optimization.
-
-Demonstrates basic coherent memory access patterns on Grace-Blackwell systems
-without cache-aware optimizations or NUMA awareness.
-"""
+"""Baseline: coherent-memory transfer path without placement optimizations."""
 
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -70,26 +66,19 @@ class BaselineGraceCoherentMemory:
         
         logger.info(f"Allocated {self.size_mb}MB pageable CPU memory")
     
-    def run(self) -> float:
-        """Execute baseline coherent memory access pattern."""
+    def run_step(self) -> float:
+        """Execute one pageable H2D -> compute -> D2H transfer step."""
         torch.cuda.synchronize()
         start = time.perf_counter()
-        
-        for _ in range(self.iterations):
-            # Baseline: Explicit H2D copy
-            self.gpu_data.copy_(self.cpu_data.to(self.device))
-            
-            # Simple computation
-            self.gpu_data.mul_(2.0).add_(1.0)
-            
-            # Baseline: Explicit D2H copy
-            self.cpu_data = self.gpu_data.cpu()
-        
+
+        self.gpu_data.copy_(self.cpu_data, non_blocking=False)
+        self.gpu_data.mul_(2.0).add_(1.0)
+        self.cpu_data.copy_(self.gpu_data, non_blocking=False)
+
         torch.cuda.synchronize()
         end = time.perf_counter()
-        
         elapsed = end - start
-        bandwidth_gb_s = (self.size_mb / 1024) * self.iterations * 2 / elapsed  # 2 for H2D + D2H
+        bandwidth_gb_s = (self.size_mb / 1024) * 2 / elapsed  # H2D + D2H
         
         logger.info(f"Baseline bandwidth: {bandwidth_gb_s:.2f} GB/s")
         return elapsed
@@ -137,11 +126,13 @@ class GraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.synchronize()
 
     def benchmark_fn(self) -> None:
-        elapsed = self._impl.run()
+        elapsed = self._impl.run_step()
         self.elapsed_s = elapsed
-        self.bandwidth_gb_s = (self._impl.size_mb / 1024) * self._impl.iterations * 2 / elapsed
+        self.bandwidth_gb_s = (self._impl.size_mb / 1024) * 2 / elapsed
 
-        verify_output = self._impl.gpu_data[:1000].detach().clone()
+        # Use the post-transfer host-visible view so verification compares the
+        # same observable result across pageable and staged-copy strategies.
+        verify_output = self._impl.cpu_data[:1000].detach().cpu().clone()
         self.output = verify_output
 
     def capture_verification_payload(self) -> None:
@@ -167,11 +158,14 @@ class GraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
-        # This benchmark does substantial work inside benchmark_fn() (it runs an
-        # internal loop of coherent-memory transfers). A single harness iteration
-        # is intentional and still yields stable timings (the harness also has
-        # adaptive-iterations enabled by default).
-        return BenchmarkConfig(iterations=1, warmup=5, enable_memory_tracking=False)
+        return BenchmarkConfig(
+            iterations=max(1, self._impl.iterations),
+            warmup=5,
+            enable_memory_tracking=False,
+            # benchmark_fn mutates the transfer buffers, so adaptive iteration
+            # expansion would change the observable output used for verification.
+            adaptive_iterations=False,
+        )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
@@ -179,7 +173,7 @@ class GraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_custom_metrics(self) -> Optional[dict]:
         """Return memory transfer metrics for grace_coherent_memory."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
-        bytes_transferred = float(self.size_mb * 1024 * 1024 * self._impl.iterations * 2)
+        bytes_transferred = float(self.size_mb * 1024 * 1024 * 2)
         return compute_memory_transfer_metrics(
             bytes_transferred=bytes_transferred,
             elapsed_ms=(self.elapsed_s or 0.001) * 1000.0,
@@ -208,7 +202,7 @@ def run_benchmark(
     harness = BenchmarkHarness(
         mode=BenchmarkMode.CUSTOM,
         config=BenchmarkConfig(
-            iterations=1,
+            iterations=max(1, iterations),
             warmup=5,
             profile_mode=profile,
         ),
@@ -216,7 +210,7 @@ def run_benchmark(
     result = harness.benchmark(benchmark, name="baseline_grace_coherent_memory")
     mean_ms = result.timing.mean_ms if result.timing else 0.0
     elapsed_s = mean_ms / 1000.0 if mean_ms > 0 else 0.0
-    bandwidth_gb_s = (size_mb / 1024) * iterations * 2 / elapsed_s if elapsed_s > 0 else 0.0
+    bandwidth_gb_s = (size_mb / 1024) * 2 / elapsed_s if elapsed_s > 0 else 0.0
 
     return {
         "mean_time_ms": mean_ms,
@@ -225,8 +219,3 @@ def run_benchmark(
         "size_mb": size_mb,
         "iterations": iterations,
     }
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

@@ -99,6 +99,10 @@ def should_ignore_benchmark_candidate(file_path: Path) -> bool:
     """Return True for baseline_/optimized_ files reserved for non-harness helper flows."""
     stem = file_path.stem
     return stem in {
+        "baseline_add",
+        "baseline_add_cuda",
+        "optimized_add",
+        "optimized_add_cuda_parallel",
         "baseline_submission",
         "optimized_submission",
         "reference_submission",
@@ -206,7 +210,6 @@ LAB_ALIASES: Dict[str, str] = {
     "capstone": "labs/fullstack_cluster",
     "moe_journey": "labs/moe_optimization_journey",
 }
-
 
 def _labs_root(repo_root: Path, bench_root: Optional[Path] = None) -> Path:
     root = bench_root or get_bench_roots(repo_root=repo_root, bench_root=bench_root)[0]
@@ -469,7 +472,7 @@ def discover_benchmarks(
                 continue
             if validate_benchmark_file(pattern2, warn=warn_missing):
                 optimized_files.append(pattern2)
-        
+
         if optimized_files:
             pairs.append((baseline_file, optimized_files, example_name))
             for variant_name, opt_path in variant_aliases:
@@ -484,10 +487,14 @@ def discover_cuda_benchmarks(repo_root: Path) -> List[Path]:
     cuda_benchmarks: List[Path] = []
 
     def _collect_from_dir(root: Path) -> None:
-        cuda_benchmarks.extend(root.glob("*.cu"))
+        cuda_benchmarks.extend(
+            path for path in root.glob("*.cu") if not is_generated_benchmark_copy(path)
+        )
         cuda_subdir = root / "cuda"
         if cuda_subdir.exists() and cuda_subdir.is_dir():
-            cuda_benchmarks.extend(cuda_subdir.glob("*.cu"))
+            cuda_benchmarks.extend(
+                path for path in cuda_subdir.glob("*.cu") if not is_generated_benchmark_copy(path)
+            )
 
     for chapter_dir in discover_all_chapters(repo_root):
         _collect_from_dir(chapter_dir)

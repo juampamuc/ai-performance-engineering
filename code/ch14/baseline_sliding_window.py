@@ -5,7 +5,7 @@ This baseline uses explicit matmul/softmax/matmul operations which have:
 - Multiple kernel launches (matmul, softmax, matmul)
 - No memory optimization
 
-Compare with optimized_sliding_window_bench.py which uses Flash Attention
+Compare with optimized_sliding_window.py which uses Flash Attention
 via scaled_dot_product_attention for O(n) memory and fused kernels.
 """
 
@@ -20,8 +20,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
@@ -172,8 +170,3 @@ class BaselineSlidingWindowBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselineSlidingWindowBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

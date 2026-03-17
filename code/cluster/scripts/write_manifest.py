@@ -88,6 +88,40 @@ def _collect_legacy_paths(cluster_root: Path, run_id: str, include_figures: bool
     return sorted(paths_set)
 
 
+def _artifact_role_for(rel_path: str) -> str | None:
+    name = Path(rel_path).name
+    role_patterns = [
+        ("fabric_command_catalog", "_fabric_command_catalog.json"),
+        ("fabric_capability_matrix", "_fabric_capability_matrix.json"),
+        ("fabric_verification", "_fabric_verification.json"),
+        ("fabric_ai_correlation", "_fabric_ai_correlation.json"),
+        ("fabric_scorecard", "_fabric_scorecard.json"),
+        ("cluster_scorecard", "_cluster_scorecard.json"),
+        ("benchmark_coverage_analysis", "_benchmark_coverage_analysis.json"),
+        ("mlperf_alignment", "_mlperf_alignment.json"),
+        ("suite_steps", "_suite_steps.json"),
+        ("meta", "_meta.json"),
+        ("nccl_allreduce", "_nccl.json"),
+        ("nccl_alltoall", "_alltoall_nccl_alltoall.json"),
+        ("vllm_request_rate_sweep", "_vllm_serve_request_rate_sweep.csv"),
+        ("vllm_concurrency_sweep", "_vllm_serve_sweep.csv"),
+        ("gemm_sanity", "_gemm_gpu_sanity.csv"),
+        ("fio", "_fio.json"),
+        ("nvbandwidth", "_nvbandwidth.json"),
+        ("gpu_stream", "_gpu_stream.json"),
+        ("allreduce_stability", "_allreduce_stability.json"),
+        ("allreduce_latency_comp", "_allreduce_latency_comp.json"),
+        ("allgather_control_plane", "_allgather_control_plane.json"),
+        ("nccl_algo_comparison", "_nccl_algo_comparison.json"),
+        ("train_step", "_train_step.json"),
+        ("multinode_readiness", "_multinode_readiness.json"),
+    ]
+    for role, suffix in role_patterns:
+        if name.endswith(suffix):
+            return role
+    return None
+
+
 def main() -> int:
     args = parse_args()
     cluster_root = _resolve_cluster_root(args.root)
@@ -113,6 +147,12 @@ def main() -> int:
     for p in paths:
         suffix = p.suffix.lstrip(".") or "no_ext"
         artifact_counts[suffix] = artifact_counts.get(suffix, 0) + 1
+    artifact_roles: Dict[str, List[str]] = {}
+    for rel_path in files:
+        role = _artifact_role_for(rel_path)
+        if role is None:
+            continue
+        artifact_roles.setdefault(role, []).append(rel_path)
 
     hosts = [h.strip() for h in args.hosts.split(",") if h.strip()]
     labels = [l.strip() for l in args.labels.split(",") if l.strip()]
@@ -131,6 +171,7 @@ def main() -> int:
         "manifest_mode": manifest_mode,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "nodes": nodes,
+        "artifact_roles": artifact_roles,
         "files": files,
         "summary": {
             "file_count": len(files),

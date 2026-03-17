@@ -23,7 +23,3 @@ def get_benchmark() -> Level3Grouped:
     return Level3Grouped()
 
 
-if __name__ == "__main__":
-    run_level(3)
-
-

@@ -15,10 +15,9 @@ from core.harness.benchmark_harness import (  # noqa: E402
     BenchmarkConfig,
     WorkloadMetadata,
 )
-from core.benchmark.cuda_event_timing import elapsed_ms, elapsed_ms_list
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range  # noqa: E402
 from ch15.inference_monolithic_common import SimpleLLM
-from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
+from core.benchmark.verification_mixin import VerificationPayloadMixin  # noqa: E402
 
 
 class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -40,8 +39,8 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
             tokens_per_iteration=self.prefill_seq + self.num_tokens,
         )
         self._verify_prompt: Optional[torch.Tensor] = None
-        self._pending_ttft_pair: Optional[tuple[torch.cuda.Event, torch.cuda.Event]] = None
-        self._pending_tpot_pairs: List[tuple[torch.cuda.Event, torch.cuda.Event]] = []
+        self._last_elapsed_ms: Optional[float] = None
+        self._metrics_pending = False
     
     def setup(self) -> None:
         """Setup: initialize model and data."""
@@ -61,40 +60,39 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
 
         with nvtx_range("inference_monolithic", enable=enable_nvtx):
             with torch.no_grad():
-                request_start = torch.cuda.Event(enable_timing=True)
-                prefill_end = torch.cuda.Event(enable_timing=True)
-                request_start.record()
                 kv_cache = self.model.prefill(self.prompt)
-                
-                num_tokens = self.num_tokens
-                prefill_end.record()
-                token_event_pairs: List[tuple[torch.cuda.Event, torch.cuda.Event]] = []
                 decoded_tokens = []
                 decode_state = kv_cache
 
-                for _ in range(num_tokens):
-                    token_start = torch.cuda.Event(enable_timing=True)
-                    token_end = torch.cuda.Event(enable_timing=True)
-                    token_start.record()
-                    decode_state = self.model.decode_step(decode_state)
-                    token_end.record()
-                    token_event_pairs.append((token_start, token_end))
+                for _ in range(self.num_tokens):
+                    decoded = self.model.decode(decode_state, num_tokens=1)
+                    decode_state = decoded[:, -1:, :]
                     decoded_tokens.append(decode_state)
 
-                self._pending_ttft_pair = (request_start, prefill_end)
-                self._pending_tpot_pairs = token_event_pairs
+                if not decoded_tokens:
+                    raise RuntimeError("Decode loop produced no tokens")
+
                 self.output = torch.cat(decoded_tokens, dim=1)
+                self._metrics_pending = True
                 return {}
 
     def finalize_iteration_metrics(self) -> Optional[Dict[str, List[float]]]:
-        if self._pending_ttft_pair is None:
+        if self._last_elapsed_ms is None or not self._metrics_pending:
             return None
-        ttft_ms = elapsed_ms(self._pending_ttft_pair)
-        tpot_times_ms = elapsed_ms_list(self._pending_tpot_pairs)
-        self._pending_ttft_pair = None
-        self._pending_tpot_pairs = []
+
+        # Use the harness-timed iteration latency and split it by token-equivalent work:
+        # prefill processes the full prompt, while decode advances one token at a time.
+        total_token_work = float(self.prefill_seq + self.num_tokens)
+        if total_token_work <= 0:
+            return None
+
+        ttft_ms = float(self._last_elapsed_ms) * (float(self.prefill_seq) / total_token_work)
+        tpot_mean_ms = float(self._last_elapsed_ms) / total_token_work
+        tpot_times_ms = [tpot_mean_ms] * self.num_tokens
+
         self._history["ttft"].append(ttft_ms)
         self._history["tpot"].extend(tpot_times_ms)
+        self._metrics_pending = False
         return {
             "ttft_times_ms": [ttft_ms],
             "tpot_times_ms": tpot_times_ms,
@@ -121,6 +119,8 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
         self.model = None
         self.prompt = None
         self.kv_cache = None
+        self._last_elapsed_ms = None
+        self._metrics_pending = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
@@ -151,8 +151,3 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselineInferenceMonolithicBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

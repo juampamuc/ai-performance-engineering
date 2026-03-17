@@ -21,5 +21,3 @@ def get_benchmark() -> Level3FP8:
     return Level3FP8()
 
 
-if __name__ == "__main__":
-    run_level(3)

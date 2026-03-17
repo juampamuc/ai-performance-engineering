@@ -23,6 +23,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+from core.discovery import is_generated_benchmark_copy
+
 
 @dataclass
 class ChapterStats:
@@ -169,7 +171,7 @@ def analyze_chapter(root: Path, chapter: int) -> ChapterStats:
                 stats.has_nvtx_range += 1
     
     # Count CUDA files
-    stats.cuda_count = len(list(ch_dir.glob("*.cu")))
+    stats.cuda_count = len([path for path in ch_dir.glob("*.cu") if not is_generated_benchmark_copy(path)])
     
     # Count paired files
     stats.paired_count = len(baselines & optimized)
@@ -392,6 +394,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 

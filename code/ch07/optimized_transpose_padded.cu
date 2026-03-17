@@ -11,7 +11,7 @@
 #include "../core/common/nvtx_utils.cuh"
 
 constexpr int WIDTH = 4096;
-constexpr int TILE_DIM = 32;
+constexpr int TILE_DIM = 64;
 constexpr int BLOCK_ROWS = 8;
 constexpr int REPEAT = 200;
 

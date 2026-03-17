@@ -1,14 +1,13 @@
-"""ddp_no_overlap.py - DDP-style step without communication/compute overlap.
+"""ddp_no_overlap.py - Single-GPU simulation of a no-overlap DDP step.
 
-This baseline uses standard DDP which synchronizes gradient all-reduce
-after the backward pass completes. No overlap between communication and
-computation.
+This single-process benchmark models the "no communication overlap" pattern
+from Chapter 4 without launching a real multi-GPU collective. The benchmark
+uses a synchronous CPU-visible host-buffer round-trip as a stand-in for
+all-reduce latency so the overlap pattern remains inspectable on one GPU.
 
 This module is an implementation detail; the harness entrypoint is
-`baseline_no_overlap.py`.
-
-The optimized variant is implemented in `ddp_overlap.py` and exposed via
-`optimized_no_overlap.py`.
+`baseline_no_overlap.py`. The real multi-GPU benchmark lives in the
+`*_multigpu.py` variants.
 """
 
 from __future__ import annotations
@@ -29,11 +28,9 @@ from typing import Optional
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class MultiLayerNet(nn.Module):
@@ -52,7 +49,7 @@ class MultiLayerNet(nn.Module):
 
 
 class BaselineNoOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """DDP without communication overlap - baseline."""
+    """Single-GPU stand-in for DDP without communication overlap."""
 
     def __init__(self):
         super().__init__()
@@ -74,7 +71,7 @@ class BaselineNoOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: smoke-fast, no distributed init to avoid hangs."""
+        """Setup a one-GPU overlap simulation without distributed init."""
         print("[baseline_no_overlap] setup starting", flush=True)
         skip_if_insufficient_gpus()
         # Treat as single process even if torchrun sets RANK/LOCAL_RANK; skip dist.init.
@@ -100,7 +97,7 @@ class BaselineNoOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
         print("[baseline_no_overlap] setup done", flush=True)
     
     def benchmark_fn(self) -> None:
-        """Benchmark: DDP training step without overlap."""
+        """Benchmark a no-overlap step with a synchronous host round-trip stand-in."""
         from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
 
         config = self.get_config()
@@ -110,6 +107,7 @@ class BaselineNoOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
             output = self.model(self.data)
             loss = nn.functional.mse_loss(output, self.target)
             loss.backward()
+            # Stand in for a blocking all-reduce on single-GPU hosts.
             self._host_buffer.copy_(self.data, non_blocking=False)
             self.data.copy_(self._host_buffer, non_blocking=False)
             self.optimizer.step()
@@ -163,7 +161,7 @@ class BaselineNoOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
             bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             transfer_type="hbm",
         )
 
@@ -210,8 +208,3 @@ def _parse_args():
     parser.add_argument("--enable-profiling", action="store_true", help="Enable profiling for the run.")
     parser.add_argument("--enable-memory-tracking", action="store_true", help="Track GPU memory usage.")
     return parser.parse_args()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

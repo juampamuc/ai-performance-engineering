@@ -105,7 +105,7 @@ class OptimizedComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
         return BenchmarkConfig(
-            iterations=10,
+            iterations=5,
             warmup=5,
             enable_memory_tracking=False,
             enable_profiling=False,
@@ -128,7 +128,7 @@ class OptimizedComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return compute_roofline_metrics(
             total_flops=total_flops,
             total_bytes=total_bytes,
-            elapsed_ms=getattr(self, "_last_elapsed_ms", 1.0),
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
             precision="fp16",
         )
     
@@ -143,6 +143,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedComputeBoundBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

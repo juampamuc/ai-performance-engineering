@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +51,43 @@ def fmt_float(value: float, digits: int = 3) -> str:
 
 def md_link(rel_path: str) -> str:
     return f"[{rel_path}]({rel_path})"
+
+
+def fmt_inline_json(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return "`n/a`"
+    return f"`{json.dumps(value, sort_keys=True)}`"
+
+
+def redact_nmx_base(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "n/a"
+    return re.sub(r"https?://[^\\s`]+/nmx/v1", "<nmx-base>", text)
+
+
+def localhost_fabric_repro_cmd(run_id: str, label: str) -> str:
+    return (
+        "python -m cli.aisp cluster fabric-eval --run-id "
+        + run_id
+        + " --hosts localhost --labels "
+        + label
+        + " --ssh-user $(id -un) --primary-label "
+        + label
+        + " --nmx-url https://<your-nmx-host> --timeout 7200"
+        + " --extra-arg --skip-bootstrap-nodes --extra-arg --disable-fp4"
+        + " --extra-arg --health-suite --extra-arg off"
+        + " --extra-arg --skip-vllm-multinode"
+        + " --extra-arg --model --extra-arg openai-community/gpt2"
+        + " --extra-arg --tp --extra-arg 1"
+        + " --extra-arg --isl --extra-arg 128 --extra-arg --osl --extra-arg 64"
+        + " --extra-arg --concurrency-range --extra-arg '1 2'"
+        + " --extra-arg --vllm-request-rate-range --extra-arg '1 2'"
+        + " --extra-arg --vllm-request-rate-max-concurrency --extra-arg 4"
+        + " --extra-arg --vllm-request-rate-num-prompts --extra-arg 80"
+        + " --extra-arg --fio-runtime --extra-arg 15"
+        + " --extra-arg --nvbandwidth-quick"
+    )
 
 
 def _resolve_run_dir(cluster_root: Path, run_id: str, raw_run_dir: str | None) -> Path:
@@ -226,6 +264,11 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     preflight_rel, preflight_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_preflight_services.json")
     nvlink_rel, nvlink_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_{label}_meta_nvlink_topology.json")
     node_parity_rel, _ = _artifact_ref(run_dir, target, "structured", f"{run_id}_node_parity_summary.json")
+    fabric_catalog_rel, fabric_catalog_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_command_catalog.json")
+    fabric_caps_rel, fabric_caps_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_capability_matrix.json")
+    fabric_ver_rel, fabric_ver_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_verification.json")
+    fabric_ai_rel, fabric_ai_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_ai_correlation.json")
+    fabric_score_rel, fabric_score_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_scorecard.json")
 
     nccl_fig_rel, nccl_fig_path = _artifact_ref(run_dir, target, "figures", f"{run_id}_node1_nccl_bw_vs_msg.png")
     nccl_scale_fig_rel, _ = _artifact_ref(run_dir, target, "figures", f"{run_id}_node1_nccl_scaling_efficiency.png")
@@ -249,6 +292,11 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     preflight = load_json(preflight_path)
     nvlink = load_json(nvlink_path)
     vllm_rows = summarize_vllm_rows(read_csv_rows(vllm_csv_path))
+    fabric_catalog = load_json_optional(fabric_catalog_path)
+    fabric_caps = load_json_optional(fabric_caps_path)
+    fabric_verification = load_json_optional(fabric_ver_path)
+    fabric_ai = load_json_optional(fabric_ai_path)
+    fabric_score = load_json_optional(fabric_score_path)
 
     ok_steps, total_steps, failed_steps = parse_suite_summary(steps)
     gpu_count = parse_gpu_count(meta)
@@ -274,6 +322,19 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     now_text = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     has_operator_checks = quick is not None or mon is not None or operator_dashboard is not None
     has_operator_fig = operator_fig_path.exists()
+    capability_families = ((fabric_caps or {}).get("families") or {}) if fabric_caps else {}
+    fabric_families = ((fabric_score or {}).get("families") or {}) if fabric_score else {}
+    fabric_summary = (fabric_score or {}).get("summary") or {}
+    fabric_findings = (fabric_ai or {}).get("findings") or []
+    nvlink_control_plane = ((((fabric_verification or {}).get("families") or {}).get("nvlink") or {}).get("control_plane")) or {}
+    ib_verification = (((fabric_verification or {}).get("families") or {}).get("infiniband") or {})
+    spectrum_verification = (((fabric_verification or {}).get("families") or {}).get("spectrum-x") or {})
+    nmx_summary = nvlink_control_plane.get("nmx") or {}
+    nmx_topology = nmx_summary.get("topology") or {}
+    nmx_partitions = nmx_summary.get("partitions") or {}
+    nmx_telemetry = nmx_summary.get("telemetry") or {}
+    ib_summary = ib_verification.get("scenario_summary") or {}
+    spectrum_summary = spectrum_verification.get("scenario_summary") or {}
 
     lines: list[str] = []
     lines.append("# Cluster Perf Field Report (Localhost, 1 Node)")
@@ -284,21 +345,22 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append("1. [TL;DR](#tldr)")
     lines.append("2. [Scope + Canonical Artifacts](#scope--canonical-artifacts)")
     lines.append("3. [Required Reliability Gates (Canonical Run)](#required-reliability-gates-canonical-run)")
-    lines.append("4. [Operator Friction + Monitoring Expectations (New Checks)](#operator-friction--monitoring-expectations-new-checks)")
-    lines.append("5. [Cluster Story (First Contact)](#cluster-story-first-contact)")
-    lines.append("6. [Weird / New / Interesting (with Normal Baseline)](#weird--new--interesting-with-normal-baseline)")
-    lines.append("7. [Benchmark A (Networking Story)](#benchmark-a-networking-story)")
-    lines.append("8. [Benchmark B (Inference Story)](#benchmark-b-inference-story)")
-    lines.append("9. [Required Issues (Explicit)](#required-issues-explicit)")
-    lines.append("10. [Root Cause + Fix Mapping](#root-cause--fix-mapping)")
-    lines.append("11. [Report Completeness Delta (vs prior condensed revision)](#report-completeness-delta-vs-prior-condensed-revision)")
-    lines.append("12. [Gaps, Risks, and Smell Checks](#gaps-risks-and-smell-checks)")
-    lines.append("13. [Implications for Small AI Teams](#implications-for-small-ai-teams)")
-    lines.append("14. [Stakeholder Recommendations (Prioritized)](#stakeholder-recommendations-prioritized)")
-    lines.append("15. [Repro Steps](#repro-steps)")
-    lines.append("16. [Reproducibility Package](#reproducibility-package)")
-    lines.append("17. [Appendix (Coverage vs Case-Study Goals)](#appendix-coverage-vs-case-study-goals)")
-    lines.append("18. [Activity Log](#activity-log)")
+    lines.append("4. [Fabric Evaluation](#fabric-evaluation)")
+    lines.append("5. [Operator Friction + Monitoring Expectations (New Checks)](#operator-friction--monitoring-expectations-new-checks)")
+    lines.append("6. [Cluster Story (First Contact)](#cluster-story-first-contact)")
+    lines.append("7. [Weird / New / Interesting (with Normal Baseline)](#weird--new--interesting-with-normal-baseline)")
+    lines.append("8. [Benchmark A (Networking Story)](#benchmark-a-networking-story)")
+    lines.append("9. [Benchmark B (Inference Story)](#benchmark-b-inference-story)")
+    lines.append("10. [Required Issues (Explicit)](#required-issues-explicit)")
+    lines.append("11. [Root Cause + Fix Mapping](#root-cause--fix-mapping)")
+    lines.append("12. [Report Completeness Delta (vs prior condensed revision)](#report-completeness-delta-vs-prior-condensed-revision)")
+    lines.append("13. [Gaps, Risks, and Smell Checks](#gaps-risks-and-smell-checks)")
+    lines.append("14. [Implications for Small AI Teams](#implications-for-small-ai-teams)")
+    lines.append("15. [Stakeholder Recommendations (Prioritized)](#stakeholder-recommendations-prioritized)")
+    lines.append("16. [Repro Steps](#repro-steps)")
+    lines.append("17. [Reproducibility Package](#reproducibility-package)")
+    lines.append("18. [Appendix (Coverage vs Case-Study Goals)](#appendix-coverage-vs-case-study-goals)")
+    lines.append("19. [Activity Log](#activity-log)")
     lines.append("")
     lines.append("## TL;DR")
     lines.append("| Topic | Summary |")
@@ -316,6 +378,9 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     if not has_operator_checks:
         operator_summary = "not run in this preset"
     lines.append(f"| Operator checks | {operator_summary} |")
+    lines.append(
+        f"| Fabric headline | status `{(fabric_score or {}).get('status', 'not_run')}`, completeness `{(fabric_score or {}).get('completeness', 'not_run')}`, full-stack families `{fabric_summary.get('full_stack_verified_families', 0)}` |"
+    )
     lines.append("| Key weird/new | Single-node NCCL env sweep can show `busbw=0.0` by definition (rank=1), while algbw is still strong. |")
     lines.append("")
 
@@ -330,6 +395,170 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append(f"| Meta snapshot | {md_link(meta_rel)} |")
     lines.append(f"| Node parity summary | {md_link(node_parity_rel)} |")
     lines.append(f"| Operator checks dashboard | {md_link(op_dash_rel) if operator_dashboard else 'not generated in this preset'} |")
+    lines.append(f"| Fabric scorecard | {md_link(fabric_score_rel) if fabric_score else 'not generated in this preset'} |")
+    lines.append("")
+
+    lines.append("## Fabric Evaluation")
+    lines.append("| Family | Present | Completeness | Mgmt plane | Link health | Routing | AI workload impact |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+    if fabric_families:
+        for family in ("nvlink", "infiniband", "spectrum-x"):
+            values = fabric_families.get(family) or {}
+            lines.append(
+                f"| `{family}` | `{values.get('present', False)}` | `{values.get('completeness', 'not_present')}` | "
+                f"`{values.get('management_plane_configured', False)}` | `{values.get('link_health', 'n/a')}` | "
+                f"`{values.get('routing_correctness', 'n/a')}` | {values.get('ai_workload_impact', 'n/a')} |"
+            )
+    else:
+        lines.append("| `all` | `False` | `not_run` | `False` | `n/a` | `n/a` | Fabric evaluation was not requested in this run. |")
+    lines.append("")
+    lines.append("| Fabric summary | Value |")
+    lines.append("| --- | --- |")
+    lines.append(f"| Management planes configured | `{fabric_summary.get('configured_management_planes', 0)}` |")
+    lines.append(f"| Runtime-verified families | `{fabric_summary.get('runtime_verified_families', 0)}` |")
+    lines.append(f"| Full-stack-verified families | `{fabric_summary.get('full_stack_verified_families', 0)}` |")
+    lines.append(f"| Catalog entries | `{len((fabric_catalog or {}).get('entries') or [])}` |")
+    lines.append("")
+    if nmx_summary:
+        alpha = (nmx_topology.get("scenario_answers") or {}).get("team_alpha_candidate") or {}
+        beta = (nmx_topology.get("scenario_answers") or {}).get("team_beta_candidate") or {}
+        topology_answers = nmx_topology.get("scenario_answers") or {}
+        ports_summary = nmx_topology.get("ports") or {}
+        alpha_nodes = ", ".join(str(node.get("node") or node.get("system_uid") or "unknown") for node in (alpha.get("nodes") or [])) or "none"
+        beta_nodes = ", ".join(str(node.get("node") or node.get("system_uid") or "unknown") for node in (beta.get("nodes") or [])) or "none"
+        alpha_locations = ", ".join(alpha.get("gpu_locations") or []) or "none"
+        beta_locations = ", ".join(beta.get("gpu_locations") or []) or "none"
+        chassis_serials = ", ".join(nmx_topology.get("chassis_serial_numbers") or []) or "none"
+        sample_compute_node = nmx_topology.get("sample_compute_node") or {}
+        sample_gpu = nmx_topology.get("sample_gpu") or {}
+        sample_switch = nmx_topology.get("sample_switch") or {}
+        sample_chassis = nmx_topology.get("sample_chassis") or {}
+        sample_switch_tray = topology_answers.get("sample_switch_tray") or {}
+        default_partition = nmx_partitions.get("default_partition") or {}
+        unassigned_locations = ", ".join((nmx_partitions.get("unassigned_gpu_locations") or [])[:8]) or "none"
+        lines.append("| NMX Topology Scenario | Value |")
+        lines.append("| --- | --- |")
+        lines.append(f"| Chassis | `{nmx_topology.get('chassis_count', 0)}` |")
+        lines.append(f"| Chassis serials | {chassis_serials} |")
+        lines.append(f"| Compute nodes | `{nmx_topology.get('compute_node_count', 0)}` |")
+        lines.append(f"| GPUs | `{nmx_topology.get('gpu_count', 0)}` |")
+        lines.append(f"| Switch ASICs | `{nmx_topology.get('switch_asic_count', 0)}` |")
+        lines.append(f"| Switch trays | `{nmx_topology.get('switch_tray_count', 0)}` |")
+        lines.append(f"| Ports | `{nmx_topology.get('port_count', 0)}` |")
+        lines.append(
+            f"| Supports Alpha+Beta 4-GPU split | `{topology_answers.get('can_support_two_concurrent_4gpu_workloads', False)}` |"
+        )
+        lines.append(f"| Node/GPU grouping field | `{topology_answers.get('node_gpu_grouping_field', 'unknown')}` |")
+        lines.append(f"| Switch ASIC field | `{topology_answers.get('switch_asic_distinguishing_field', 'unknown')}` |")
+        lines.append(f"| Switch tray grouping fields | `{', '.join(topology_answers.get('switch_tray_grouping_fields') or []) or 'unknown'}` |")
+        lines.append(f"| Team Alpha candidate nodes | {alpha_nodes} |")
+        lines.append(f"| Team Alpha candidate GPU locations | {alpha_locations} |")
+        lines.append(f"| Team Beta candidate nodes | {beta_nodes} |")
+        lines.append(f"| Team Beta candidate GPU locations | {beta_locations} |")
+        lines.append(f"| GPU-facing ports | `{ports_summary.get('gpu_facing_ports', 0)}` (`BaseLID all-present={ports_summary.get('gpu_facing_ports_have_base_lid', False)}`) |")
+        lines.append(f"| Switch-facing ports | `{ports_summary.get('switch_facing_ports', 0)}` (`BaseLID all-present={ports_summary.get('switch_facing_ports_have_base_lid', False)}`) |")
+        lines.append(f"| Port formula check | `{ports_summary.get('expected_formula', 'n/a')}` (`matches={ports_summary.get('matches_expected_formula', False)}`) |")
+        lines.append(f"| Sample compute-node fields | {fmt_inline_json(sample_compute_node)} |")
+        lines.append(f"| Sample GPU fields | {fmt_inline_json(sample_gpu)} |")
+        lines.append(f"| Sample switch fields | {fmt_inline_json(sample_switch)} |")
+        lines.append(f"| Sample switch-tray grouping | {fmt_inline_json(sample_switch_tray)} |")
+        lines.append(f"| Sample chassis fields | {fmt_inline_json(sample_chassis)} |")
+        lines.append("")
+        lines.append("| NMX Partition Scenario | Value |")
+        lines.append("| --- | --- |")
+        lines.append(f"| Partition count | `{nmx_partitions.get('partition_count', 0)}` |")
+        lines.append(f"| Default partition | `{default_partition.get('name', 'none')}` (`members={default_partition.get('member_count', 0)}`) |")
+        lines.append(
+            f"| Default partition present | `{(nmx_partitions.get('scenario_answers') or {}).get('default_partition_present', False)}` "
+            f"(`members={(nmx_partitions.get('scenario_answers') or {}).get('default_partition_member_count', 0)}`) |"
+        )
+        lines.append(f"| Unassigned GPUs | `{nmx_partitions.get('unassigned_gpu_count', 0)}` |")
+        lines.append(f"| Unassigned GPU locations (first 8) | {unassigned_locations} |")
+        lines.append(
+            f"| Ready for partition create | `{(nmx_partitions.get('scenario_answers') or {}).get('ready_for_new_partition_create', False)}` |"
+        )
+        lines.append(
+            f"| Operation poll path | `{redact_nmx_base((nmx_partitions.get('scenario_answers') or {}).get('operation_poll_path', 'n/a'))}` |"
+        )
+        lines.append(
+            "| Lab helper entrypoint | `python -m cli.aisp cluster nmx-partition-lab --nmx-url <nmx-base>` |"
+        )
+        lines.append("")
+        lines.append("| NMX Telemetry Scenario | Value |")
+        lines.append("| --- | --- |")
+        lines.append(f"| Metrics endpoint | `{redact_nmx_base(nmx_telemetry.get('metrics_endpoint', 'n/a'))}` |")
+        lines.append(f"| switch_temperature series | `{nmx_telemetry.get('switch_temperature_series', 0)}` |")
+        lines.append(f"| PortXmitDataExtended series | `{nmx_telemetry.get('tx_throughput_series', 0)}` |")
+        lines.append(f"| PortRcvDataExtended series | `{nmx_telemetry.get('rx_throughput_series', 0)}` |")
+        lines.append(f"| PortLocalPhysicalErrors series | `{nmx_telemetry.get('physical_error_series', 0)}` |")
+        lines.append(f"| CableInfoTemperature series | `{nmx_telemetry.get('cable_temperature_series', 0)}` |")
+        lines.append(f"| CableInfoRxPower series | `{nmx_telemetry.get('cable_rx_power_series', 0)}` |")
+        lines.append(f"| CableInfoTxPower series | `{nmx_telemetry.get('cable_tx_power_series', 0)}` |")
+        lines.append("")
+    ib_family = fabric_families.get("infiniband") or {}
+    ib_capability = capability_families.get("infiniband") or {}
+    ib_runtime = (ib_verification.get("runtime") or {}).get("evidence") or {}
+    ib_routing_checks = ", ".join(ib_summary.get("routing_checks_ok") or []) or "none"
+    ib_hcas = ", ".join(ib_capability.get("hcas") or ib_family.get("hcas") or []) or "none"
+    lines.append("| InfiniBand Scenario | Value |")
+    lines.append("| --- | --- |")
+    lines.append(f"| Family present | `{ib_family.get('present', False)}` |")
+    lines.append(f"| Completeness | `{ib_family.get('completeness', 'not_present')}` |")
+    lines.append(f"| Management plane configured | `{ib_family.get('management_plane_configured', False)}` |")
+    lines.append(f"| Capacity/path visibility ready | `{ib_summary.get('capacity_and_path_visibility_ready', False)}` |")
+    lines.append(f"| Visible HCAs | `{ib_summary.get('visible_hca_count', len(ib_capability.get('hcas') or ib_family.get('hcas') or []))}` ({ib_hcas}) |")
+    lines.append(f"| Visible hosts from `ibhosts` | `{ib_summary.get('visible_host_count', 0)}` |")
+    lines.append(f"| Visible switches from `ibswitches` | `{ib_summary.get('visible_switch_count', 0)}` |")
+    lines.append(f"| `iblinkinfo` visible | `{ib_summary.get('linkinfo_visible', False)}` |")
+    lines.append(f"| `ibnetdiscover` visible | `{ib_summary.get('subnet_discovery_visible', False)}` |")
+    lines.append(f"| `saquery` visible | `{ib_summary.get('saquery_visible', False)}` |")
+    lines.append(f"| Routing/counter verification ready | `{ib_summary.get('routing_and_counter_verification_ready', False)}` |")
+    lines.append(f"| Routing checks passed | {ib_routing_checks} |")
+    lines.append(f"| Runtime correlation ready | `{ib_summary.get('runtime_correlation_ready', False)}` |")
+    lines.append(
+        f"| Multi-node NCCL / single-node ratio | `{fmt_float(ib_summary.get('multi_to_single_nccl_ratio', 0.0), 3)}` "
+        f"(`world_size={ib_summary.get('world_size', ib_runtime.get('world_size', 0))}`) |"
+    )
+    lines.append(f"| Runtime interpretation | {ib_summary.get('runtime_interpretation', ib_family.get('ai_workload_impact', 'InfiniBand not present in this run.'))} |")
+    lines.append("")
+    spectrum_family = fabric_families.get("spectrum-x") or {}
+    spectrum_runtime = (spectrum_verification.get("runtime") or {}).get("evidence") or {}
+    switches_targeted = ", ".join(spectrum_summary.get("switches_targeted") or []) or "none"
+    lines.append("| Spectrum-X / RoCE Scenario | Value |")
+    lines.append("| --- | --- |")
+    lines.append(f"| Family present | `{spectrum_family.get('present', False)}` |")
+    lines.append(f"| Completeness | `{spectrum_family.get('completeness', 'not_present')}` |")
+    lines.append(f"| Management plane configured | `{spectrum_family.get('management_plane_configured', False)}` |")
+    lines.append(f"| Switches targeted | `{spectrum_summary.get('switch_count_targeted', 0)}` ({switches_targeted}) |")
+    lines.append(f"| Fabric readiness ready | `{spectrum_summary.get('fabric_readiness_ready', False)}` |")
+    lines.append(f"| Adaptive routing visible | `{spectrum_summary.get('adaptive_routing_visible', False)}` |")
+    lines.append(f"| RoCE QoS visible | `{spectrum_summary.get('roce_qos_visible', False)}` |")
+    lines.append(f"| BGP neighbor state visible | `{spectrum_summary.get('bgp_neighbor_state_visible', False)}` |")
+    lines.append(f"| BGP summary visible | `{spectrum_summary.get('bgp_summary_visible', False)}` |")
+    lines.append(f"| BGP route visibility | `{spectrum_summary.get('bgp_route_visibility', False)}` |")
+    lines.append(f"| Runtime correlation ready | `{spectrum_summary.get('runtime_correlation_ready', False)}` |")
+    lines.append(
+        f"| Multi-node NCCL / single-node ratio | `{fmt_float(spectrum_summary.get('multi_to_single_nccl_ratio', 0.0), 3)}` "
+        f"(`world_size={spectrum_summary.get('world_size', spectrum_runtime.get('world_size', 0))}`) |"
+    )
+    lines.append(
+        f"| Runtime interpretation | "
+        f"{spectrum_summary.get('runtime_interpretation', spectrum_family.get('ai_workload_impact', 'Spectrum-X / RoCE not present in this run.'))} |"
+    )
+    lines.append("")
+    if fabric_findings:
+        lines.append("Cross-fabric interpretation:")
+        for finding in fabric_findings:
+            lines.append(f"- {finding}")
+        lines.append("")
+    fabric_data_refs = [md_link(rel) for rel, payload in (
+        (fabric_catalog_rel, fabric_catalog),
+        (fabric_caps_rel, fabric_caps),
+        (fabric_ver_rel, fabric_verification),
+        (fabric_ai_rel, fabric_ai),
+        (fabric_score_rel, fabric_score),
+    ) if payload]
+    lines.append(f"Data: {', '.join(fabric_data_refs) if fabric_data_refs else 'fabric evaluation was not requested in this preset run.'}")
     lines.append("")
 
     lines.append("## Required Reliability Gates (Canonical Run)")
@@ -386,6 +615,7 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append("| --- | --- | --- | --- | --- |")
     lines.append(f"| Preflight services | strict service checks pass | prior flake path removed (`systemctl show`-based unit check) | avoids false-negative invalidations | {md_link(preflight_rel)} |")
     lines.append(f"| NVLink topology parsing | topology summary generated | parser now handles single-GPU header formats robustly | keeps topology evidence reproducible on localhost | {md_link(nvlink_rel)} |")
+    lines.append(f"| Fabric control-plane coverage | {('fabric scorecard generated' if fabric_score else 'not run in this preset')} | management-plane completeness drops to structured `not_configured`, never a silent skip | makes NVLink / IB / Spectrum-X coverage auditable | {md_link(fabric_score_rel) if fabric_score else md_link(suite_rel)} |")
     lines.append(f"| NCCL env sweep | all profiles `ok` | `busbw=0.0` in rank-1 mode looks odd but is expected | prevents false network conclusions on 1-GPU runs | {md_link(nccl_env_rel)} |")
     lines.append(f"| Operator friction | {'full quick-friction battery executed' if quick else 'not run in this preset'} | expected failures captured explicitly (`{','.join(qf['expected_failed']) or 'none'}` if present) | preserves operator visibility without false-red localhost status | {md_link(quick_rel) if quick else md_link(suite_rel)} |")
     lines.append(f"| Monitoring mode | {'gpu/system checks run' if mon else 'not run in this preset'} | control-plane checks can be `not_applicable` without kubeconfig | clarifies expected non-K8s behavior | {md_link(mon_rel) if mon else md_link(suite_rel)} |")
@@ -395,11 +625,14 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append("| --- | --- | --- | --- |")
     lines.append(f"| 1 | Preflight services | service gate remains strict while eliminating pipeline flake behavior | {md_link(preflight_rel)} |")
     lines.append(f"| 2 | NVLink topology parsing | single-node topology visual now lands in canonical package consistently | {md_link(nvlink_rel)} |")
-    lines.append(f"| 3 | Operator friction classification | expected misses are tracked separately from unexpected failures when operator checks are enabled | {md_link(quick_rel) if quick else md_link(suite_rel)} |")
+    lines.append(f"| 3 | Fabric completeness ledger | each family records `not_present`, `present_unverified`, `runtime_verified`, or `full_stack_verified` | {md_link(fabric_score_rel) if fabric_score else md_link(suite_rel)} |")
+    lines.append(f"| 4 | Operator friction classification | expected misses are tracked separately from unexpected failures when operator checks are enabled | {md_link(quick_rel) if quick else md_link(suite_rel)} |")
     lines.append("")
     lines.append(f"<p><a href=\"{story_fig_rel}\"><img src=\"{story_fig_rel}\" alt=\"Weird and normal baseline dashboard localhost\" width=\"920\"/></a></p>")
     lines.append("")
     deep_dive_data = [md_link(preflight_rel), md_link(nvlink_rel)]
+    if fabric_score:
+        deep_dive_data.append(md_link(fabric_score_rel))
     if operator_dashboard:
         deep_dive_data.append(md_link(op_dash_rel))
     lines.append(f"Data: {', '.join(deep_dive_data)}")
@@ -497,13 +730,9 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append("| Step | Command |")
     lines.append("| --- | --- |")
     lines.append(
-        "| Run localhost common system eval | `python -m cli.aisp cluster common-eval --preset core-system --run-id "
-        + run_id
-        + " --hosts localhost --labels "
-        + label
-        + " --ssh-user $(id -un) --primary-label "
-        + label
-        + " --timeout 7200 --extra-arg --skip-bootstrap-nodes --extra-arg --disable-fp4 --extra-arg --health-suite --extra-arg off --extra-arg --skip-vllm-multinode --extra-arg --model --extra-arg openai-community/gpt2 --extra-arg --tp --extra-arg 1 --extra-arg --isl --extra-arg 128 --extra-arg --osl --extra-arg 64 --extra-arg --concurrency-range --extra-arg '1 2' --extra-arg --vllm-request-rate-range --extra-arg '1 2' --extra-arg --vllm-request-rate-max-concurrency --extra-arg 4 --extra-arg --vllm-request-rate-num-prompts --extra-arg 80 --extra-arg --fio-runtime --extra-arg 15 --extra-arg --nvbandwidth-quick` |"
+        "| Run localhost fabric eval | `"
+        + localhost_fabric_repro_cmd(run_id, label)
+        + "` |"
     )
     lines.append(
         "| Validate localhost report package | `cluster/scripts/validate_field_report_requirements.sh --report "
@@ -525,6 +754,7 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append(f"| Reliability gates | {md_link(hang_rel)}, {md_link(conn_rel)}, {md_link(nccl_env_rel)} |")
     lines.append(f"| Operator checks | " + (f"{md_link(quick_rel)}, {md_link(mon_rel)}, {md_link(op_dash_rel)}" if has_operator_checks else md_link(suite_rel)) + " |")
     lines.append(f"| Core benchmarks | {md_link(nccl_rel)}, {md_link(vllm_csv_rel)}, {md_link(gemm_rel)}, {md_link(fio_rel)} |")
+    lines.append(f"| Fabric artifacts | {', '.join(fabric_data_refs) if fabric_data_refs else md_link(suite_rel)} |")
     figure_links = [md_link(story_fig_rel), md_link(nccl_fig_rel), md_link(vllm_tok_fig_rel)]
     if has_operator_fig:
         figure_links.insert(1, md_link(operator_fig_rel))
@@ -535,6 +765,7 @@ def render_report(args: argparse.Namespace, *, target: str = "run_local") -> str
     lines.append("| Case-study goal | Coverage |")
     lines.append("| --- | --- |")
     lines.append("| Cluster story | Covered via suite timeline and cluster story dashboard |")
+    lines.append("| Fabric characterization | Covered via family scorecard, verification ledger, and AI-correlation findings |")
     lines.append("| Weird/new findings | Covered in merged weird/normal section with deep-dive table |")
     lines.append("| Benchmark A/B | Covered with NCCL + vLLM tables and visuals |")
     lines.append("| Reproducible scripts + artifacts | Covered in Repro Steps + Reproducibility Package |")
@@ -567,10 +798,14 @@ def render_notes(args: argparse.Namespace, *, target: str = "run_local") -> str:
     fio_rel, _ = _artifact_ref(run_dir, target, "structured", f"{run_id}_{label}_fio.json")
     vllm_csv_rel, _ = _artifact_ref(run_dir, target, "structured", f"{run_id}_{label}_vllm_serve_sweep.csv")
     story_fig_rel, _ = _artifact_ref(run_dir, target, "figures", f"{run_id}_cluster_story_dashboard.png")
+    fabric_score_rel, fabric_score_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_scorecard.json")
+    fabric_ver_rel, fabric_ver_path = _artifact_ref(run_dir, target, "structured", f"{run_id}_fabric_verification.json")
     quick_exists = quick_path.exists()
     mon_exists = mon_path.exists()
     operator_dashboard_exists = op_dash_path.exists()
     operator_fig_exists = operator_fig_path.exists()
+    fabric_score_exists = fabric_score_path.exists()
+    fabric_ver_exists = fabric_ver_path.exists()
 
     now_text = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -582,11 +817,12 @@ def render_notes(args: argparse.Namespace, *, target: str = "run_local") -> str:
     lines.append("## Table of Contents")
     lines.append("1. [Scope](#scope)")
     lines.append("2. [Required Reliability Gates](#required-reliability-gates)")
-    lines.append("3. [Operator Friction + Monitoring](#operator-friction--monitoring)")
-    lines.append("4. [Required Issue Ledger](#required-issue-ledger)")
-    lines.append("5. [Root Cause + Fix Mapping](#root-cause--fix-mapping)")
-    lines.append("6. [Evidence Matrix](#evidence-matrix)")
-    lines.append("7. [Repro Entry Point](#repro-entry-point)")
+    lines.append("3. [Fabric Evaluation](#fabric-evaluation)")
+    lines.append("4. [Operator Friction + Monitoring](#operator-friction--monitoring)")
+    lines.append("5. [Required Issue Ledger](#required-issue-ledger)")
+    lines.append("6. [Root Cause + Fix Mapping](#root-cause--fix-mapping)")
+    lines.append("7. [Evidence Matrix](#evidence-matrix)")
+    lines.append("8. [Repro Entry Point](#repro-entry-point)")
     lines.append("")
 
     lines.append("## Scope")
@@ -598,6 +834,7 @@ def render_notes(args: argparse.Namespace, *, target: str = "run_local") -> str:
     lines.append(f"| Manifest | {md_link(manifest_rel)} |")
     lines.append(f"| Suite steps | {md_link(suite_rel)} |")
     lines.append(f"| Operator dashboard | {md_link(op_dash_rel) if operator_dashboard_exists else 'not generated in this preset'} |")
+    lines.append(f"| Fabric scorecard | {md_link(fabric_score_rel) if fabric_score_exists else 'not generated in this preset'} |")
     lines.append("")
 
     lines.append("## Required Reliability Gates")
@@ -606,6 +843,13 @@ def render_notes(args: argparse.Namespace, *, target: str = "run_local") -> str:
     lines.append(f"| Hang triage readiness | `ok` | {md_link(hang_rel)} |")
     lines.append(f"| Torchrun connectivity probe | `ok` | {md_link(conn_rel)} |")
     lines.append(f"| NCCL env sensitivity | `ok` | {md_link(nccl_env_rel)} |")
+    lines.append("")
+
+    lines.append("## Fabric Evaluation")
+    lines.append("| Item | Status | Evidence |")
+    lines.append("| --- | --- | --- |")
+    lines.append(f"| Fabric scorecard | {'generated' if fabric_score_exists else 'not run'} | {md_link(fabric_score_rel) if fabric_score_exists else md_link(suite_rel)} |")
+    lines.append(f"| Fabric verification ledger | {'generated' if fabric_ver_exists else 'not run'} | {md_link(fabric_ver_rel) if fabric_ver_exists else md_link(suite_rel)} |")
     lines.append("")
 
     lines.append("## Operator Friction + Monitoring")
@@ -639,6 +883,7 @@ def render_notes(args: argparse.Namespace, *, target: str = "run_local") -> str:
     lines.append("| Claim | Evidence | Verdict |")
     lines.append("| --- | --- | --- |")
     lines.append(f"| Localhost suite is clean | {md_link(suite_rel)} | Backed |")
+    lines.append(f"| Fabric coverage is {'included' if fabric_score_exists else 'not included in this preset'} | {md_link(fabric_score_rel) if fabric_score_exists else md_link(suite_rel)} | Backed |")
     lines.append(f"| Operator checks are {'included' if quick_exists or mon_exists or operator_dashboard_exists else 'optional and skipped in this preset'} | " + (f"{md_link(quick_rel)}, {md_link(mon_rel)}, {md_link(op_dash_rel)}" if quick_exists or mon_exists or operator_dashboard_exists else md_link(suite_rel)) + " | Backed |")
     lines.append(f"| Visual package is present | " + (md_link(operator_fig_rel) if operator_fig_exists else md_link(story_fig_rel)) + " | Backed |")
     lines.append("")
@@ -647,13 +892,9 @@ def render_notes(args: argparse.Namespace, *, target: str = "run_local") -> str:
     lines.append("| Step | Command |")
     lines.append("| --- | --- |")
     lines.append(
-        "| Re-run localhost canonical package | `python -m cli.aisp cluster common-eval --preset core-system --run-id "
-        + run_id
-        + " --hosts localhost --labels "
-        + label
-        + " --ssh-user $(id -un) --primary-label "
-        + label
-        + " --timeout 7200 --extra-arg --skip-bootstrap-nodes --extra-arg --disable-fp4 --extra-arg --health-suite --extra-arg off --extra-arg --skip-vllm-multinode --extra-arg --model --extra-arg openai-community/gpt2 --extra-arg --tp --extra-arg 1 --extra-arg --isl --extra-arg 128 --extra-arg --osl --extra-arg 64 --extra-arg --concurrency-range --extra-arg '1 2' --extra-arg --vllm-request-rate-range --extra-arg '1 2' --extra-arg --vllm-request-rate-max-concurrency --extra-arg 4 --extra-arg --vllm-request-rate-num-prompts --extra-arg 80 --extra-arg --fio-runtime --extra-arg 15 --extra-arg --nvbandwidth-quick` |"
+        "| Re-run localhost canonical package | `"
+        + localhost_fabric_repro_cmd(run_id, label)
+        + "` |"
     )
 
     return "\n".join(lines) + "\n"

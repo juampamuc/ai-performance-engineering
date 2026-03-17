@@ -1492,6 +1492,7 @@ if TYPER_AVAILABLE:
         import importlib.util
         import hashlib
 
+        repo_root = Path(__file__).resolve().parents[2]
         active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
 
         # Set enforcement phase

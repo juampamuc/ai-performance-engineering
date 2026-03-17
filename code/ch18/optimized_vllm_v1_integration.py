@@ -210,7 +210,6 @@ class OptimizedVLLMV1Integration:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         torch.cuda.synchronize()
-                    time.sleep(2.0)
                     continue
                 raise RuntimeError(
                     "FAIL FAST: Optimized vLLM engine initialization failed in CUDA-graphs mode "
@@ -387,7 +386,3 @@ class OptimizedVLLMV1IntegrationBenchmark(VerificationPayloadMixin, BaseBenchmar
 def get_benchmark() -> BaseBenchmark:
     return OptimizedVLLMV1IntegrationBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

@@ -44,7 +44,7 @@ __global__ void hbm_peak_copy(const Float8* __restrict__ src,
 
 int main() {
     NVTX_RANGE("main");
-    const size_t target_bytes = 1024ULL * 1024 * 1024;  // 1 GB
+    const size_t target_bytes = 512ULL * 1024 * 1024;  // Match baseline workload
     const size_t n_floats = target_bytes / sizeof(float);
     const size_t n_vec8 = n_floats / 8;
     
@@ -58,10 +58,13 @@ int main() {
     CUDA_CHECK(cudaEventCreate(&stop));
     
     const int iterations = 10;
+    const int block_size = 256;
+    const int grid_size = static_cast<int>((n_vec8 + block_size - 1) / block_size);
+    const int launch_blocks = grid_size > 4096 ? 4096 : grid_size;
     CUDA_CHECK(cudaEventRecord(start));
     for (int i = 0; i < iterations; i++) {
         NVTX_RANGE("compute_kernel:hbm_peak_copy");
-        hbm_peak_copy<<<2048, 512>>>(d_src, d_dst, n_vec8);
+        hbm_peak_copy<<<launch_blocks, block_size>>>(d_src, d_dst, n_vec8);
     }
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -72,7 +75,7 @@ int main() {
     double bandwidth_tbs = (bytes_transferred / elapsed_ms) / 1e9;
     
     printf("HBM peak (Float8): %.2f ms, %.2f TB/s\n", elapsed_ms / iterations, bandwidth_tbs);
-    printf("Expected: 7-8 TB/s (B200), 8-9 TB/s (B300)\n");
+    printf("Vectorized path reuses the same 512 MB workload with wider loads/stores.\n");
 
 #ifdef VERIFY
     float* h_verify = static_cast<float*>(malloc(target_bytes));
@@ -94,7 +97,6 @@ int main() {
     
     return 0;
 }
-
 
 
 

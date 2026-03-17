@@ -41,6 +41,9 @@ _EXPORTS = {
     ),
     "get_preferred_device": ("core.common.device_utils", "get_preferred_device"),
     "cuda_supported": ("core.common.device_utils", "cuda_supported"),
+    "require_cuda_device": ("core.common.device_utils", "require_cuda_device"),
+    "resolve_requested_device": ("core.common.device_utils", "resolve_requested_device"),
+    "get_usable_cuda_or_cpu": ("core.common.device_utils", "get_usable_cuda_or_cpu"),
 }
 
 __all__ = [
@@ -60,6 +63,9 @@ __all__ = [
     "set_active_spec_preset",
     "get_preferred_device",
     "cuda_supported",
+    "require_cuda_device",
+    "resolve_requested_device",
+    "get_usable_cuda_or_cpu",
 ]
 
 

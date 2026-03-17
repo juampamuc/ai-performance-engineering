@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.utils.extension_loader_template import load_cuda_extension
 
-def resolve_device() -> torch.device:
-    """Return the CUDA device used for Chapter 8 examples."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for Chapter 8 tiling benchmarks")
-    return torch.device("cuda")
+resolve_device = partial(
+    require_cuda_device,
+    "CUDA required for Chapter 8 tiling benchmarks",
+)
 
 
 class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
-    """Base class that pre-loads the CUDA tiling extension and inputs."""
+    """Base class for the Chapter 8 matmul bridge-control tiling pairs."""
 
     extension_name = "ch08_tiling_kernels"
     kernel_source = Path(__file__).with_name("tiling_kernels.cu")
@@ -195,4 +196,7 @@ class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
             f"{self.nvtx_label}.flops": flops,
             f"{self.nvtx_label}.bytes_transferred": bytes_transferred,
             f"{self.nvtx_label}.arithmetic_intensity": flops / bytes_transferred if bytes_transferred > 0 else 0.0,
+            "story.control_pair": 1.0,
+            "story.chapter_native_exemplar": 0.0,
+            "story.bridge_to_ch09": 1.0,
         }

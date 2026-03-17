@@ -2,53 +2,44 @@
 
 from __future__ import annotations
 
-import ctypes
-from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 
+from ch13.te_runtime_common import ensure_te_runtime_initialized
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.env import apply_env_defaults
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
-
-apply_env_defaults()
-
-
-def _preload_torch_cuda_symbols() -> None:
-    """Ensure torch CUDA shared objects are loaded with RTLD_GLOBAL."""
-    torch_lib_dir = Path(torch.__file__).resolve().parent / "lib"
-    libs = [
-        "libtorch_cuda.so",
-        "libtorch_cuda_linalg.so",
-        "libtorch_nvshmem.so",
-        "libc10_cuda.so",
-    ]
-    for name in libs:
-        candidate = torch_lib_dir / name
-        if candidate.exists():
-            ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
+TELinear: Any | None = None
+fp8_autocast: Any | None = None
+te_recipe: Any | None = None
+TE_IMPORT_ERROR: Optional[ImportError] = None
 
 
-_preload_torch_cuda_symbols()
-
-try:
-    from transformer_engine.pytorch import Linear as TELinear, fp8_autocast
-    from transformer_engine.common import recipe as te_recipe
-
-    TE_AVAILABLE = True
-except ImportError as exc:  # pragma: no cover
-    TE_AVAILABLE = False
-    TE_IMPORT_ERROR = exc
+def _load_transformer_engine() -> tuple[Any, Any, Any]:
+    global TELinear, fp8_autocast, te_recipe, TE_IMPORT_ERROR
+    if TELinear is not None and fp8_autocast is not None and te_recipe is not None:
+        return TELinear, fp8_autocast, te_recipe
+    ensure_te_runtime_initialized()
+    try:
+        from transformer_engine.pytorch import Linear as te_linear, fp8_autocast as te_fp8_autocast
+        from transformer_engine.common import recipe as te_recipe_module
+    except ImportError as exc:  # pragma: no cover
+        TE_IMPORT_ERROR = exc
+        raise RuntimeError(
+            "SKIPPED: Transformer Engine is required for optimized_precisionfp8_te. "
+            f"(import error: {exc})"
+        ) from exc
+    TELinear = te_linear
+    fp8_autocast = te_fp8_autocast
+    te_recipe = te_recipe_module
+    return TELinear, fp8_autocast, te_recipe
 
 
 class TEFP8MLP(nn.Module):
@@ -56,8 +47,9 @@ class TEFP8MLP(nn.Module):
 
     def __init__(self, hidden_dim: int = 1024):
         super().__init__()
-        self.fc1 = TELinear(hidden_dim, hidden_dim * 2, bias=True)
-        self.fc2 = TELinear(hidden_dim * 2, hidden_dim, bias=True)
+        te_linear, _, _ = _load_transformer_engine()
+        self.fc1 = te_linear(hidden_dim, hidden_dim * 2, bias=True)
+        self.fc2 = te_linear(hidden_dim * 2, hidden_dim, bias=True)
         self.activation = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -97,17 +89,13 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def setup(self) -> None:
-        if not TE_AVAILABLE:
-            raise RuntimeError(
-                "SKIPPED: Transformer Engine is required for optimized_precisionfp8_te. "
-                f"(import error: {TE_IMPORT_ERROR})"
-            )
+        _, _, te_recipe_module = _load_transformer_engine()
         # Optimized FP8 recipe with best practices:
         # - HYBRID format: E4M3 for forward (more precision), E5M2 for backward (wider range)
         # - Larger amax_history_len for stable scaling over more iterations
         # - Hysteresis algorithm prevents scale oscillation
         # - margin=0 is aggressive but maximizes dynamic range utilization
-        self.fp8_recipe = te_recipe.DelayedScaling(
+        self.fp8_recipe = te_recipe_module.DelayedScaling(
             margin=0,  # Aggressive margin for max precision
             interval=1,  # Update scales every iteration for stable training
             amax_history_len=1024,  # Longer history for smoother scaling
@@ -162,8 +150,9 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         assert self.optimizer and self.criterion
         if self.fp8_recipe is None:
             raise RuntimeError("FP8 recipe not initialized")
+        _, fp8_autocast_fn, _ = _load_transformer_engine()
         self.optimizer.zero_grad(set_to_none=True)
-        with fp8_autocast(enabled=True, fp8_recipe=self.fp8_recipe):
+        with fp8_autocast_fn(enabled=True, fp8_recipe=self.fp8_recipe):
             outputs = self.model(batch)
             loss = self.criterion(outputs, target)
         loss.backward()
@@ -223,11 +212,11 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
+        """Return truthful precision metrics for the current FP8 TE run."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=None,
+            reduced_precision_time_ms=getattr(self, "_last_elapsed_ms", None),
             precision_type="fp8",
         )
 
@@ -245,16 +234,3 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTEFP8Benchmark()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode
-
-    benchmark = get_benchmark()
-    harness = BenchmarkHarness(
-        mode=BenchmarkMode.CUSTOM,
-        config=benchmark.get_config(),
-    )
-    result = harness.benchmark(benchmark)
-    timing = result.timing.mean_ms if result.timing else 0.0
-    print(f"\nOptimized Precision FP8 (Transformer Engine): {timing:.3f} ms")

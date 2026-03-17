@@ -36,8 +36,11 @@ class BaselineDynamicParallelismDeviceBenchmark(CudaBinaryBenchmark):
         self.register_workload_metadata(bytes_per_iteration=1024 * 1024)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics."""
-        return None
+        """Expose the child-grid launch granularity for reporting."""
+        return {
+            "dynamic_parallelism.segment_size": float(self._workload_params["segment_size"]),
+            "dynamic_parallelism.launch_granularity": float(self._workload_params["segment_size"]),
+        }
 
     def get_input_signature(self) -> dict:
         return simple_signature(
@@ -54,8 +57,3 @@ class BaselineDynamicParallelismDeviceBenchmark(CudaBinaryBenchmark):
 def get_benchmark() -> CudaBinaryBenchmark:
     return BaselineDynamicParallelismDeviceBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

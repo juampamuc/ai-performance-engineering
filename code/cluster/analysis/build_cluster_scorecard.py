@@ -181,6 +181,34 @@ def _mlperf_metrics(path: Path) -> Dict[str, Any]:
     }
 
 
+def _fabric_metrics(path: Path) -> Dict[str, Any]:
+    base: Dict[str, Any] = {
+        "status": "",
+        "completeness": "",
+        "configured_management_planes": 0,
+        "runtime_verified_families": 0,
+        "full_stack_verified_families": 0,
+        "families_present": [],
+        "families_full_stack_verified": [],
+    }
+    if not path.exists():
+        return base
+    payload = _load_json(path)
+    families = payload.get("families") or {}
+    summary = payload.get("summary") or {}
+    return {
+        "status": str(payload.get("status") or ""),
+        "completeness": str(payload.get("completeness") or ""),
+        "configured_management_planes": int(_float(summary.get("configured_management_planes"), 0.0)),
+        "runtime_verified_families": int(_float(summary.get("runtime_verified_families"), 0.0)),
+        "full_stack_verified_families": int(_float(summary.get("full_stack_verified_families"), 0.0)),
+        "families_present": [name for name, values in families.items() if bool((values or {}).get("present"))],
+        "families_full_stack_verified": [
+            name for name, values in families.items() if str((values or {}).get("completeness") or "") == "full_stack_verified"
+        ],
+    }
+
+
 def _canonical_gates(
     coverage_score_pct: int | None,
     advanced_coverage_score_pct: int | None,
@@ -623,6 +651,14 @@ def _build_markdown(payload: Dict[str, Any]) -> str:
     lines.append(
         f"| Communication | Control-plane fastest latency ms | `{_fmt(summary.get('allgather_fastest_latency_ms'), 4)}` |"
     )
+    lines.append(f"| Fabric | Fabric scorecard status | `{_fmt_text(summary.get('fabric_status'))}` |")
+    lines.append(f"| Fabric | Fabric completeness | `{_fmt_text(summary.get('fabric_completeness'))}` |")
+    lines.append(
+        f"| Fabric | Fabric runtime/full-stack families | `{_fmt(summary.get('fabric_runtime_verified_families'), 0)}` / `{_fmt(summary.get('fabric_full_stack_verified_families'), 0)}` |"
+    )
+    lines.append(
+        f"| Fabric | Fabric management planes configured | `{_fmt(summary.get('fabric_management_planes_configured'), 0)}` |"
+    )
     lines.append(f"| Host transfer | nvbandwidth H2D GB/s | `{_fmt(summary.get('nvbandwidth_pcie_h2d_gbps'), 1)}` |")
     lines.append(f"| Workload | vLLM throughput gain ratio | `{_fmt(summary.get('vllm_throughput_gain_ratio'), 2)}` |")
     lines.append(f"| Workload | vLLM p99 TTFT ratio | `{_fmt(summary.get('vllm_p99_ttft_ratio'), 2)}` |")
@@ -646,6 +682,18 @@ def _build_markdown(payload: Dict[str, Any]) -> str:
     lines.append(f"| Workload Stability | vLLM rate tok/s CV p95 % | `{_fmt(summary.get('vllm_rate_total_tok_cv_pct_p95'), 2)}` |")
     lines.append(f"| Storage Stability | fio seq-read BW CV % | `{_fmt(summary.get('fio_seq_read_bw_cv_pct'), 2)}` |")
     lines.append(f"| Storage Stability | fio seq-write BW CV % | `{_fmt(summary.get('fio_seq_write_bw_cv_pct'), 2)}` |")
+    lines.append("")
+    lines.append("## Fabric Summary")
+    lines.append("")
+    lines.append("| Field | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| Fabric status | `{_fmt_text(summary.get('fabric_status'))}` |")
+    lines.append(f"| Fabric completeness | `{_fmt_text(summary.get('fabric_completeness'))}` |")
+    lines.append(f"| Management planes configured | `{_fmt(summary.get('fabric_management_planes_configured'), 0)}` |")
+    lines.append(f"| Runtime-verified families | `{_fmt(summary.get('fabric_runtime_verified_families'), 0)}` |")
+    lines.append(f"| Full-stack-verified families | `{_fmt(summary.get('fabric_full_stack_verified_families'), 0)}` |")
+    lines.append(f"| Families present | `{_fmt_text(summary.get('fabric_families_present_csv'))}` |")
+    lines.append(f"| Full-stack families | `{_fmt_text(summary.get('fabric_families_full_stack_csv'))}` |")
     lines.append("")
     lines.append("## Bottleneck Classification")
     lines.append("")
@@ -717,6 +765,7 @@ def main() -> int:
     nccl_algo = _nccl_algo_metrics(structured_dir / f"{run_id}_nccl_algo_comparison.json")
     coverage = _coverage_metrics(structured_dir / f"{run_id}_benchmark_coverage_analysis.json")
     mlperf = _mlperf_metrics(structured_dir / f"{run_id}_mlperf_alignment.json")
+    fabric = _fabric_metrics(structured_dir / f"{run_id}_fabric_scorecard.json")
     canonical_gates = _canonical_gates(
         coverage_score_pct=coverage.get("coverage_score_pct"),
         advanced_coverage_score_pct=coverage.get("advanced_coverage_score_pct"),
@@ -778,6 +827,13 @@ def main() -> int:
         "allgather_obj_vs_allreduce_speedup": allgather_control_plane.get("allgather_obj_vs_allreduce_speedup"),
         "allgather_fastest_method": allgather_control_plane.get("allgather_fastest_method"),
         "allgather_fastest_latency_ms": allgather_control_plane.get("allgather_fastest_latency_ms"),
+        "fabric_status": fabric.get("status"),
+        "fabric_completeness": fabric.get("completeness"),
+        "fabric_management_planes_configured": fabric.get("configured_management_planes"),
+        "fabric_runtime_verified_families": fabric.get("runtime_verified_families"),
+        "fabric_full_stack_verified_families": fabric.get("full_stack_verified_families"),
+        "fabric_families_present_csv": ",".join(fabric.get("families_present") or []),
+        "fabric_families_full_stack_csv": ",".join(fabric.get("families_full_stack_verified") or []),
         "nccl_algo_applicable": bool(nccl_algo.get("nccl_algo_applicable")),
         "nccl_algo_best": nccl_algo.get("nccl_algo_best"),
         "nccl_algo_peak_busbw_gbps": nccl_algo.get("nccl_algo_peak_busbw_gbps"),
@@ -858,6 +914,15 @@ def main() -> int:
         "resolved_primary_label": resolved_primary_label,
         "per_label_metrics": per_label,
         "summary": summary,
+        "fabric": {
+            "overall_status": fabric.get("status"),
+            "overall_completeness": fabric.get("completeness"),
+            "configured_management_planes": fabric.get("configured_management_planes"),
+            "runtime_verified_families": fabric.get("runtime_verified_families"),
+            "full_stack_verified_families": fabric.get("full_stack_verified_families"),
+            "families_present": fabric.get("families_present"),
+            "families_full_stack_verified": fabric.get("families_full_stack_verified"),
+        },
         "bottleneck": bottleneck,
     }
 

@@ -37,6 +37,24 @@ Management endpoints that are missing or inaccessible produce structured `not_co
 - Are the runtime collectives and connectivity probes healthy?
 - Do train-step or vLLM results show a knee or collapse that matches the fabric evidence?
 
+## Scenario Reading Order
+
+Read the fabric families in this order:
+
+1. NVLink / NMX
+   - topology capacity planning
+   - tenant partition readiness
+   - switch and cable telemetry
+2. InfiniBand
+   - capacity and path visibility
+   - routing and counter verification
+   - runtime correlation against NCCL and all-to-all
+3. Spectrum-X / RoCE
+   - fabric readiness (RoCE QoS, adaptive routing, BGP)
+   - runtime correlation against NCCL and all-to-all
+
+The point is not to keep three disconnected networking playbooks. The point is to answer the same operator questions regardless of fabric family.
+
 ## Artifact Reading Order
 
 1. `<run_id>_fabric_capability_matrix.json`
@@ -46,3 +64,10 @@ Management endpoints that are missing or inaccessible produce structured `not_co
 5. `<run_id>_cluster_scorecard.json`
 
 That sequence moves from "what is present" to "what was verified" to "what it means for AI workloads".
+
+## How To Interpret Weak Scaling
+
+- NVLink weak scaling with strong NMX topology/telemetry usually pushes suspicion toward placement, host runtime, or the workload itself.
+- InfiniBand weak scaling with weak `ibdiagnet`, `saquery`, `ibtracert`, or `perfquery` signals points toward routing, subnet health, or counter-visible congestion.
+- Spectrum-X weak scaling with weak QoS, adaptive-routing, or BGP route visibility points toward Ethernet/RDMA fabric readiness before model tuning.
+- When a family is only `runtime_verified`, treat the workload as "working but not fully explained" until the management plane is visible too.

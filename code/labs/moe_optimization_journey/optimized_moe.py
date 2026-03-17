@@ -8,8 +8,4 @@ def get_benchmark() -> Level7Compiled:
     return Level7Compiled()
 
 
-if __name__ == "__main__":
-    run_level(7)
-
-
 __all__ = ["Level7Compiled", "get_benchmark"]

@@ -15,7 +15,7 @@ import torch.nn as nn
 
 from core.benchmark.gpu_requirements import skip_if_insufficient_gpus, require_peer_access
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 def _enable_peer_access() -> None:
@@ -167,7 +167,7 @@ class OptimizedDdpNvlinkOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
             bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             transfer_type="hbm",
         )
 
@@ -193,6 +193,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedDdpNvlinkOverlapBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(OptimizedDdpNvlinkOverlapBenchmark)

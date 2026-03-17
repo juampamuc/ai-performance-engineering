@@ -26,7 +26,3 @@ def get_benchmark() -> BaseBenchmark:
     return attach_benchmark_metadata(bench, __file__)
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

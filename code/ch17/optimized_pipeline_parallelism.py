@@ -13,8 +13,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
@@ -238,7 +236,7 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=12,
+            iterations=20,
             warmup=5,
         )
 
@@ -296,7 +294,3 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

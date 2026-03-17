@@ -19,7 +19,7 @@ from core.harness.benchmark_harness import (  # noqa: E402
     BenchmarkConfig,
     WorkloadMetadata,
 )
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class OptimizedNcclBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -38,6 +38,7 @@ class OptimizedNcclBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.output: Optional[torch.Tensor] = None
         self._output_buffer: Optional[torch.Tensor] = None
         self._reduction_buffer: Optional[torch.Tensor] = None
+        self._bytes_transferred: float = 0.0
         
         tokens = self.batch_size * self.hidden_dim
         self._workload = WorkloadMetadata(
@@ -61,6 +62,7 @@ class OptimizedNcclBenchmark(VerificationPayloadMixin, BaseBenchmark):
         shard_size = self.batch_size // self.num_shards
         self._output_buffer = torch.zeros(shard_size, self.hidden_dim, device=self.device)
         self._reduction_buffer = torch.zeros(shard_size, self.hidden_dim, device=self.device)
+        self._bytes_transferred = 0.0
         torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
@@ -88,6 +90,11 @@ class OptimizedNcclBenchmark(VerificationPayloadMixin, BaseBenchmark):
             self._output_buffer.copy_(self._reduction_buffer)
             self._output_buffer.div_(self.num_shards)
             self.output = self._output_buffer
+            self._bytes_transferred = float(
+                out.numel() * out.element_size()
+                + self._reduction_buffer.numel() * self._reduction_buffer.element_size()
+                + self._output_buffer.numel() * self._output_buffer.element_size()
+            )
         
 
     def capture_verification_payload(self) -> None:
@@ -129,8 +136,8 @@ class OptimizedNcclBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
-            bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            bytes_transferred=self._bytes_transferred,
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             transfer_type="hbm",
         )
 
@@ -161,8 +168,3 @@ class OptimizedNcclBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedNcclBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

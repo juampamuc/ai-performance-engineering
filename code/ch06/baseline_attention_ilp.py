@@ -1,116 +1,140 @@
-"""baseline_attention_ilp.py - Baseline attention with low ILP."""
+"""Baseline attention-score ILP benchmark with one dependent chain per thread."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 import torch
-import torch.nn as nn
 
+from ch06.cuda_extensions import load_ilp_extension
+from ch06.workload_config import WORKLOAD
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch06.workload_config import WORKLOAD
 
 
 class BaselineAttentionILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: sequential attention limiting instruction-level parallelism."""
-    
-    def __init__(self):
+    """Baseline attention-score preprocessing with minimal per-thread ILP.
+
+    This is intentionally narrower than a full attention implementation. The
+    workload builds an attention-shaped tensor of score terms in `setup()` and
+    then benchmarks the inner per-element transform with a single dependent
+    chain per thread.
+    """
+
+    def __init__(self) -> None:
         super().__init__()
-        self.model: Optional[nn.MultiheadAttention] = None
-        self.input: Optional[torch.Tensor] = None
+        self._extension = None
+        self.attention_terms: Optional[torch.Tensor] = None
+        self._buf0: Optional[torch.Tensor] = None
+        self._buf1: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.workload = WORKLOAD
         self.batch = self.workload.attention_batch
         self.embed_dim = self.workload.attention_embed_dim
+        self.num_heads = self.workload.attention_heads
+        self.head_dim = self.embed_dim // self.num_heads
         self.tokens = self.workload.attention_tokens
-        self.query_chunk = self.workload.attention_chunk_tokens
-        token_count = self.batch * self.tokens
+        self.repeats = 8
+        self.score_terms = self.batch * self.tokens * self.num_heads * self.head_dim
         self._workload = WorkloadMetadata(
-            requests_per_iteration=1.0,
-            tokens_per_iteration=float(token_count),
+            requests_per_iteration=float(self.batch),
+            tokens_per_iteration=float(self.batch * self.tokens),
         )
-        self._last_sum: Optional[torch.Tensor] = None
-        self._sum_buffer: Optional[torch.Tensor] = None
-        # ILP benchmark: fixed dimensions for measurement
 
     def setup(self) -> None:
-        """Setup: Initialize attention model."""
+        """Build attention-shaped score terms and the CUDA ILP buffers."""
+        self._extension = load_ilp_extension()
         torch.manual_seed(42)
-        self.model = nn.MultiheadAttention(
-            self.embed_dim,
-            self.workload.attention_heads,
-            batch_first=True,
-        ).to(self.device).eval().half()
-        self.input = torch.randn(
+        torch.cuda.manual_seed_all(42)
+        query = torch.randn(
             self.batch,
             self.tokens,
-            self.embed_dim,
+            self.num_heads,
+            self.head_dim,
             device=self.device,
-            dtype=torch.float16,
+            dtype=torch.float32,
         )
-        self._sum_buffer = torch.zeros(1, device=self.device, dtype=torch.float16)
+        key = torch.randn_like(query)
+        # Keep magnitudes in the same stable range as the GEMM ILP pair so the
+        # repeated square chain measures ILP rather than overflow behavior.
+        self.attention_terms = (query * key * 0.1).contiguous().reshape(-1)
+        self._buf0 = torch.empty_like(self.attention_terms)
+        self._buf1 = torch.empty_like(self.attention_terms)
+        self.output = None
         self._synchronize()
-    
+
     def benchmark_fn(self) -> None:
-        """Benchmark: Attention with low ILP."""
-        assert self.model is not None and self.input is not None
-        assert self._sum_buffer is not None
+        """Run the low-ILP dependent transform over attention-score terms."""
+        assert self._extension is not None
+        assert self.attention_terms is not None
+        assert self._buf0 is not None and self._buf1 is not None
         with self._nvtx_range("baseline_attention_ilp"):
-            with torch.no_grad():
-                accum = self._sum_buffer
-                accum.zero_()
-                for query in self.input.split(self.query_chunk, dim=1):
-                    out = self.model(query, self.input, self.input)[0]
-                    accum += out.sum()
-                self._last_sum = accum
-        self._payload_accum = accum
+            src: torch.Tensor = self.attention_terms
+            buf0: torch.Tensor = self._buf0
+            buf1: torch.Tensor = self._buf1
+            dst: torch.Tensor = buf0
+            for _ in range(self.repeats):
+                self._extension.sequential_ops(dst, src)
+                src, dst = dst, (buf1 if dst is buf0 else buf0)
+        self.output = src[:4096].detach().clone()
 
     def capture_verification_payload(self) -> None:
-        accum = self._payload_accum
         self._set_verification_payload(
-            inputs={"input": self.input},
-            output=(self._last_sum if self._last_sum is not None else accum).float().detach(),
+            inputs={"attention_terms": self.attention_terms},
+            output=self.output.detach(),
             batch_size=self.batch,
-            parameter_count=sum(p.numel() for p in self.model.parameters()) if self.model is not None else 0,
-            output_tolerance=(1e-2, 100.0),
-            precision_flags={"fp16": True, "bf16": False, "fp8": False, "tf32": False},
+            parameter_count=0,
+            output_tolerance=(1e-5, 1e-5),
+            precision_flags={"fp16": False, "bf16": False, "fp8": False, "tf32": False},
         )
-    
+
     def teardown(self) -> None:
-        """Teardown: Clean up resources."""
-        self.model = None
-        self.input = None
-        self._sum_buffer = None
+        self._extension = None
+        self.attention_terms = None
+        self._buf0 = None
+        self._buf1 = None
+        self.output = None
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        """Return benchmark configuration."""
         return BenchmarkConfig(
             iterations=self.workload.ilp_iterations,
             warmup=self.workload.ilp_warmup,
+            enable_memory_tracking=False,
+            enable_profiling=False,
+            setup_timeout_seconds=120,
         )
-    
+
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_kernel_fundamentals_metrics
-        return compute_kernel_fundamentals_metrics(
-            num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            num_iterations=1,
+
+        metrics = compute_kernel_fundamentals_metrics(
+            num_elements=self.score_terms,
+            num_iterations=self.repeats,
         )
+        metrics.update(
+            {
+                "attention_ilp.batch": float(self.batch),
+                "attention_ilp.tokens": float(self.tokens),
+                "attention_ilp.heads": float(self.num_heads),
+                "attention_ilp.head_dim": float(self.head_dim),
+                "attention_ilp.independent_chains_per_thread": 1.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
-        """Validate benchmark result."""
-        if self.model is None:
-            return "Model not initialized"
-        if self._last_sum is None:
-            return "Output sum not computed"
+        if self.output is None:
+            return "Output tensor not initialized"
+        if self.output.shape[0] != 4096:
+            return f"Output shape mismatch: expected 4096, got {self.output.shape[0]}"
+        if not torch.isfinite(self.output).all():
+            return "Output contains non-finite values"
         return None
 
 
-
 def get_benchmark() -> BaseBenchmark:
-    """Factory function for benchmark discovery."""
     return BaselineAttentionILPBenchmark()

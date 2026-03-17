@@ -193,6 +193,8 @@ These are repo helpers for cluster evaluations under `cluster/` (field report wo
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
 | `run_cluster_eval_suite(...)` | Run cluster eval suite (full) or a safe local smoke run | `aisp cluster eval-suite` | `cluster_eval_suite` |
+| `run_cluster_common_eval(...)` | Run a preset cluster evaluation bundle | `aisp cluster common-eval` | `cluster_common_eval` |
+| `run_cluster_fabric_eval(...)` | Run the canonical fabric evaluation bundle | `aisp cluster fabric-eval` | `cluster_fabric_eval` |
 | `validate_field_report_requirements(...)` | Validate `cluster/field-report*.md` requirements + artifact hygiene | `aisp cluster validate-field-report` | `cluster_validate_field_report` |
 
 ---

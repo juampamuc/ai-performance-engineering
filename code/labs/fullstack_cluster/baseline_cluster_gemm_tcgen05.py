@@ -28,6 +28,3 @@ def get_benchmark() -> BaselineCapstoneGemmTCGen05Benchmark:
     return BaselineCapstoneGemmTCGen05Benchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

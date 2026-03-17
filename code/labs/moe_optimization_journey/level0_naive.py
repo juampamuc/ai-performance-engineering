@@ -19,5 +19,3 @@ def get_benchmark() -> Level0Naive:
     return Level0Naive()
 
 
-if __name__ == "__main__":
-    run_level(0)

@@ -10,6 +10,50 @@ CODE_ROOT = Path(__file__).parent.parent.parent
 from core.discovery import get_bench_roots
 
 
+def _best_optimization_entry(bench: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the best succeeded optimization entry when available."""
+    optimizations = bench.get("optimizations", [])
+    if not isinstance(optimizations, list):
+        return {}
+
+    succeeded = [
+        opt
+        for opt in optimizations
+        if isinstance(opt, dict) and str(opt.get("status", "")).lower() == "succeeded"
+    ]
+    candidates = succeeded or [opt for opt in optimizations if isinstance(opt, dict)]
+    if not candidates:
+        return {}
+    return max(candidates, key=lambda opt: float(opt.get("speedup") or 0.0))
+
+
+def _story_note(story_metadata: Dict[str, Any]) -> str:
+    """Build a concise audit/report note from structured story metadata."""
+    if not story_metadata:
+        return ""
+
+    parts: List[str] = []
+    pair_role = str(story_metadata.get("pair_role") or "").strip().lower()
+    chapter_alignment = str(story_metadata.get("chapter_alignment") or "").strip().lower()
+    control_reason = str(story_metadata.get("control_reason") or "").strip()
+    chapter_native_targets = story_metadata.get("chapter_native_targets") or []
+
+    if pair_role == "control" and chapter_alignment == "supplementary":
+        parts.append("Supplementary control pair.")
+    elif pair_role:
+        parts.append(f"{pair_role.title()} pair.")
+
+    if control_reason:
+        parts.append(control_reason.rstrip(".") + ".")
+
+    if isinstance(chapter_native_targets, list):
+        targets = [str(target).strip() for target in chapter_native_targets if str(target).strip()]
+        if targets:
+            parts.append(f"Chapter-native targets: {', '.join(targets)}.")
+
+    return " ".join(part for part in parts if part).strip()
+
+
 def _transform_aggregated_data(all_benchmarks: dict, timestamp: str) -> dict:
     """Transform aggregated benchmark data to dashboard format."""
     benchmarks: List[Dict[str, Any]] = []
@@ -33,15 +77,32 @@ def _transform_aggregated_data(all_benchmarks: dict, timestamp: str) -> dict:
 
         optimized_time = baseline_time / best_speedup if best_speedup and best_speedup > 0 else baseline_time
         gpu_metrics = bench.get("baseline_gpu_metrics", {})
+        baseline_story_metadata = bench.get("baseline_story_metadata")
+        if not isinstance(baseline_story_metadata, dict):
+            baseline_story_metadata = {}
+        best_optimization = _best_optimization_entry(bench)
+        best_optimization_story_metadata = best_optimization.get("story_metadata")
+        if not isinstance(best_optimization_story_metadata, dict):
+            best_optimization_story_metadata = {}
+        pair_story_metadata = dict(baseline_story_metadata)
+        for key, value in best_optimization_story_metadata.items():
+            if key not in pair_story_metadata and value is not None:
+                pair_story_metadata[key] = value
+        story_note = _story_note(pair_story_metadata)
 
         optimizations = []
         for opt in bench.get("optimizations", []):
+            opt_story_metadata = opt.get("story_metadata")
+            if not isinstance(opt_story_metadata, dict):
+                opt_story_metadata = {}
             optimizations.append(
                 {
                     "technique": opt.get("technique", ""),
                     "speedup": opt.get("speedup", 1.0),
                     "time_ms": opt.get("time_ms", 0),
                     "file": opt.get("file", ""),
+                    "story_metadata": opt_story_metadata,
+                    "story_note": _story_note(opt_story_metadata),
                 }
             )
 
@@ -77,6 +138,15 @@ def _transform_aggregated_data(all_benchmarks: dict, timestamp: str) -> dict:
                 "optimizations": optimizations,
                 "error": bench.get("error"),
                 "p75_ms": bench.get("baseline_p75_ms"),
+                "baseline_story_metadata": baseline_story_metadata,
+                "best_optimization_story_metadata": best_optimization_story_metadata,
+                "story_metadata": pair_story_metadata,
+                "pair_role": pair_story_metadata.get("pair_role"),
+                "chapter_alignment": pair_story_metadata.get("chapter_alignment"),
+                "chapter_native_exemplar": pair_story_metadata.get("chapter_native_exemplar"),
+                "control_reason": pair_story_metadata.get("control_reason"),
+                "chapter_native_targets": pair_story_metadata.get("chapter_native_targets"),
+                "story_note": story_note,
             }
         )
 

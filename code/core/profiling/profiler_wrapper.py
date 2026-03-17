@@ -5,10 +5,10 @@ Generates wrapper scripts for nsys/ncu profiling that import and run benchmarks.
 
 from __future__ import annotations
 
-import inspect
+from contextlib import contextmanager
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 if TYPE_CHECKING:
     from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
@@ -28,6 +28,299 @@ def _resolve_wrapper_loop_budget(config: BenchmarkConfig) -> tuple[int, int]:
         profiling_iterations = min(getattr(config, "iterations", 1), 10)
 
     return max(int(profiling_warmup), 0), max(int(profiling_iterations), 1)
+
+
+@contextmanager
+def temporary_python_profile_wrapper(wrapper_source: str) -> Iterator[Path]:
+    """Materialize a temporary Python wrapper script and clean it up on exit."""
+
+    wrapper_script = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".py",
+        delete=False,
+        dir=tempfile.gettempdir(),
+    )
+    wrapper_path = Path(wrapper_script.name)
+    try:
+        wrapper_script.write(wrapper_source)
+        wrapper_script.close()
+        yield wrapper_path
+    finally:
+        wrapper_path.unlink(missing_ok=True)
+
+
+def render_nsys_python_profile_wrapper(
+    *,
+    benchmark_path: Path,
+    nvtx_includes: Optional[list[str]],
+    validity_profile: str,
+    lock_gpu_clocks_flag: bool,
+    gpu_sm_clock_mhz: Optional[int],
+    gpu_mem_clock_mhz: Optional[int],
+) -> str:
+    """Render the nsys-specific Python benchmark wrapper."""
+
+    return f"""
+from pathlib import Path
+from contextlib import nullcontext
+
+_BENCHMARK_PATH = Path(r"{benchmark_path}")
+from core.utils.python_entrypoints import load_module_from_path
+
+_BENCHMARK_MODULE = load_module_from_path("profile_benchmark_module", _BENCHMARK_PATH)
+get_benchmark = _BENCHMARK_MODULE.get_benchmark
+
+from core.harness.benchmark_harness import (
+    BenchmarkConfig,
+    ReadOnlyBenchmarkConfigView,
+    lock_gpu_clocks,
+    ramp_gpu_clocks,
+)
+from core.profiling.nvtx_helper import nvtx_range
+
+def _run_profile() -> None:
+    import sys
+    benchmark = get_benchmark()
+    _profiling_config = BenchmarkConfig(
+        enable_profiling=True,
+        enable_nvtx=True,
+        nsys_nvtx_include={nvtx_includes!r},
+        validity_profile={validity_profile!r},
+        lock_gpu_clocks={lock_gpu_clocks_flag!r},
+        gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
+        gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
+    )
+    benchmark._config = ReadOnlyBenchmarkConfigView.from_config(_profiling_config)
+    lock_ctx = (
+        lock_gpu_clocks(
+            device=0,
+            sm_clock_mhz=getattr(_profiling_config, "gpu_sm_clock_mhz", None),
+            mem_clock_mhz=getattr(_profiling_config, "gpu_mem_clock_mhz", None),
+        )
+        if getattr(_profiling_config, "lock_gpu_clocks", False)
+        else nullcontext()
+    )
+    with lock_ctx:
+        # Best-effort clock ramp before capture.
+        try:
+            ramp_gpu_clocks(device=0)
+        except Exception as exc:
+            print(f"[profile_warning] Failed to ramp GPU clocks before nsys capture: {{exc}}", file=sys.stderr)
+        benchmark.setup()
+
+        # Warmup (keep short; profiling is not a timing run)
+        benchmark.benchmark_fn()
+
+        # Profile execution
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        with nvtx_range("compute_kernel:profile", enable=True):
+            benchmark.benchmark_fn()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        # Some benchmarks launch worker processes (e.g., vLLM) and need
+        # graceful teardown so Nsight can exit cleanly. Others prefer hard-exit
+        # to avoid teardown crashes under Nsight.
+        if getattr(benchmark, "profile_require_teardown", False):
+            try:
+                benchmark.teardown()
+            except Exception as exc:
+                print(f"[profile_warning] Benchmark teardown failed after nsys capture: {{exc}}", file=sys.stderr)
+            raise SystemExit(0)
+        import os as _os
+        _os._exit(0)
+
+
+if __name__ == "__main__":
+    _run_profile()
+"""
+
+
+def render_ncu_python_profile_wrapper(
+    *,
+    benchmark_path: Path,
+    configured_nvtx_includes: Optional[list[str]],
+    profile_type: Optional[str],
+    ncu_metric_set: Optional[str],
+    pm_sampling_interval: Optional[int],
+    ncu_replay_mode: Optional[str],
+    validity_profile: str,
+    lock_gpu_clocks_flag: bool,
+    gpu_sm_clock_mhz: Optional[int],
+    gpu_mem_clock_mhz: Optional[int],
+    profile_nvtx_label: str,
+) -> str:
+    """Render the ncu-specific Python benchmark wrapper."""
+
+    return f"""
+from pathlib import Path
+from contextlib import nullcontext
+
+_BENCHMARK_PATH = Path(r"{benchmark_path}")
+from core.utils.python_entrypoints import load_module_from_path
+
+_BENCHMARK_MODULE = load_module_from_path("profile_benchmark_module", _BENCHMARK_PATH)
+get_benchmark = _BENCHMARK_MODULE.get_benchmark
+
+from core.harness.benchmark_harness import (
+    BenchmarkConfig,
+    ReadOnlyBenchmarkConfigView,
+    lock_gpu_clocks,
+    ramp_gpu_clocks,
+)
+from core.profiling.nvtx_helper import nvtx_range
+
+def _run_profile() -> None:
+    import sys
+    benchmark = get_benchmark()
+    _profiling_config = BenchmarkConfig(
+        enable_profiling=True,
+        enable_nsys=True,
+        enable_ncu=True,
+        enable_nvtx=True,
+        nsys_nvtx_include={configured_nvtx_includes!r},
+        profile_type={profile_type!r},
+        ncu_metric_set={ncu_metric_set!r},
+        pm_sampling_interval={pm_sampling_interval!r},
+        ncu_replay_mode={ncu_replay_mode!r},
+        validity_profile={validity_profile!r},
+        lock_gpu_clocks={lock_gpu_clocks_flag!r},
+        gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
+        gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
+    )
+    benchmark._config = ReadOnlyBenchmarkConfigView.from_config(_profiling_config)
+    lock_ctx = (
+        lock_gpu_clocks(
+            device=0,
+            sm_clock_mhz=getattr(_profiling_config, "gpu_sm_clock_mhz", None),
+            mem_clock_mhz=getattr(_profiling_config, "gpu_mem_clock_mhz", None),
+        )
+        if getattr(_profiling_config, "lock_gpu_clocks", False)
+        else nullcontext()
+    )
+    with lock_ctx:
+        try:
+            ramp_gpu_clocks(device=0)
+        except Exception as exc:
+            print(f"[profile_warning] Failed to ramp GPU clocks before ncu capture: {{exc}}", file=sys.stderr)
+        benchmark.setup()
+
+        # Warmup (keep short; profiling is not a timing run)
+        benchmark.benchmark_fn()
+
+        # Profile execution
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        with nvtx_range({profile_nvtx_label!r}, enable=True):
+            benchmark.benchmark_fn()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        # Some benchmarks launch worker processes (e.g., vLLM) and need
+        # graceful teardown so Nsight can exit cleanly. Others prefer hard-exit
+        # to avoid teardown crashes under Nsight.
+        if getattr(benchmark, "profile_require_teardown", False):
+            try:
+                benchmark.teardown()
+            except Exception as exc:
+                print(f"[profile_warning] Benchmark teardown failed after ncu capture: {{exc}}", file=sys.stderr)
+            raise SystemExit(0)
+        import os as _os
+        _os._exit(0)
+
+
+if __name__ == "__main__":
+    _run_profile()
+"""
+
+
+def render_torch_python_profile_wrapper(
+    *,
+    benchmark_path: Path,
+    torch_output: Path,
+    validity_profile: str,
+    lock_gpu_clocks_flag: bool,
+    gpu_sm_clock_mhz: Optional[int],
+    gpu_mem_clock_mhz: Optional[int],
+) -> str:
+    """Render the torch.profiler-specific Python benchmark wrapper."""
+
+    return f"""
+from pathlib import Path
+from contextlib import nullcontext
+
+_BENCHMARK_PATH = Path(r"{benchmark_path}")
+from core.utils.python_entrypoints import load_module_from_path
+
+_BENCHMARK_MODULE = load_module_from_path("profile_benchmark_module", _BENCHMARK_PATH)
+get_benchmark = _BENCHMARK_MODULE.get_benchmark
+from core.harness.benchmark_harness import (
+    BenchmarkConfig,
+    ReadOnlyBenchmarkConfigView,
+    lock_gpu_clocks,
+    ramp_gpu_clocks,
+)
+import torch
+import torch.profiler
+
+
+def _run_profile() -> None:
+    benchmark = get_benchmark()
+    profiling_config = BenchmarkConfig(
+        enable_profiling=True,
+        enable_nvtx=True,
+        validity_profile={validity_profile!r},
+        lock_gpu_clocks={lock_gpu_clocks_flag!r},
+        gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
+        gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
+    )
+    benchmark._config = ReadOnlyBenchmarkConfigView.from_config(profiling_config)
+
+    lock_ctx = (
+        lock_gpu_clocks(
+            device=0,
+            sm_clock_mhz=getattr(profiling_config, "gpu_sm_clock_mhz", None),
+            mem_clock_mhz=getattr(profiling_config, "gpu_mem_clock_mhz", None),
+        )
+        if getattr(profiling_config, "lock_gpu_clocks", False) and torch.cuda.is_available()
+        else nullcontext()
+    )
+
+    with lock_ctx:
+        if torch.cuda.is_available():
+            ramp_gpu_clocks(device=0)
+        benchmark.setup()
+        benchmark.benchmark_fn()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if torch.cuda.is_available():
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
+        with torch.profiler.profile(
+            activities=activities,
+            record_shapes=False,
+            profile_memory=False,
+            with_stack=False,
+            with_flops=False,
+            with_modules=False,
+        ) as prof:
+            benchmark.benchmark_fn()
+            prof.step()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        benchmark.teardown()
+    prof.export_chrome_trace(r"{torch_output}")
+    print(r"{torch_output}")
+
+
+if __name__ == "__main__":
+    _run_profile()
+"""
 
 
 def create_benchmark_wrapper(

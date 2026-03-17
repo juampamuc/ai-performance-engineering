@@ -8,6 +8,7 @@ Implements BaseBenchmark for harness integration.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 import torch
@@ -16,20 +17,14 @@ import torch.nn as nn
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
-
-def resolve_device() -> torch.device:
-    """Return CUDA device if available."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch13")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for ch13")
 
 
 class SimpleModel(nn.Module):
@@ -156,8 +151,8 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=getattr(self, '_last_elapsed_ms', None),
+            reduced_precision_time_ms=None,
             precision_type="fp8",
         )
 
@@ -171,8 +166,3 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselinePrecisionFP8Benchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

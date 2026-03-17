@@ -214,7 +214,7 @@ export AUTO_OPTIMIZER_LOG_LEVEL="INFO"
 
 ## Examples
 
-See [`examples/optimize_examples.py`](../../examples/optimize_examples.py) for more usage examples.
+See [`examples/optimize_examples.py`](../../../examples/optimize_examples.py) for more usage examples.
 
 ## Troubleshooting
 

@@ -17,7 +17,7 @@ from typing import Optional
 import torch
 
 from ch10.matmul_extension_tcgen05 import load_matmul_tcgen05_module
-from ch10.optimized_matmul import resolve_device
+from core.common.device_utils import require_cuda_device
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.tcgen05_requirements import check_tcgen05_support
@@ -34,7 +34,7 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
         )
         self._tcgen05_available = available
         self._skip_reason = reason or "SKIPPED: tcgen05 matmul unavailable"
-        self.device = resolve_device()
+        self.device = require_cuda_device("CUDA required for ch10")
         self.dtype = torch.float16
         # Increase workload to reduce CPU overhead in timing cross-validation.
         self.n = 12288
@@ -88,13 +88,20 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
         return BenchmarkConfig(iterations=20, warmup=5)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics."""
-        flops = 2 * self.size ** 3
-        return {
-            "matrix_size": self.size,
-            "theoretical_flops": flops,
-            "library": "cuBLAS",
-        }
+        """Report the actual tcgen05 GEMM workload for the single-stage variant."""
+        from core.benchmark.metrics import compute_gemm_metrics
+
+        metrics = compute_gemm_metrics(
+            m=self.size,
+            n=self.size,
+            k=self.size,
+            precision="fp16",
+            bytes_per_element=2,
+        )
+        metrics["gemm.uses_tcgen05"] = 1.0
+        metrics["gemm.pipeline_stages"] = 1.0
+        metrics["gemm.no_wait_pipeline"] = 0.0
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if not self._tcgen05_available:
@@ -106,8 +113,3 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
 
 def get_benchmark() -> BaselineMatmulTCGen05PipelinedBenchmark:
     return BaselineMatmulTCGen05PipelinedBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

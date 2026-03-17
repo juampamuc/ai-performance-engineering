@@ -79,8 +79,8 @@ python -m cli.aisp bench run --targets ch09 --profile minimal
 - Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.
 
 ## Validation Checklist
-- `python -m ch09.baseline_compute_bound --summaries` reports much higher arithmetic intensity than `python -m ch09.baseline_memory_bound --summaries`, matching the roofline plots.
-- `python -m ch09.optimized_cublaslt_gemm` improves throughput relative to `python -m ch09.baseline_cublaslt_gemm` on the same device.
+- `python -m cli.aisp bench run --targets ch09:compute_bound ch09:memory_bound --profile minimal` reports much higher arithmetic intensity for the compute-bound path than the memory-bound path, matching the roofline plots.
+- `python -m cli.aisp bench run --targets ch09:cublaslt_gemm --profile minimal` confirms the optimized path improving throughput over the baseline on the same device.
 - `python -m ch09.compare --examples fused_l2norm` confirms numerically identical outputs before and after fusion.
 
 ## Notes

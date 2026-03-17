@@ -107,6 +107,16 @@ def _collect_params(request: Request, body: Dict[str, Any] | None) -> Dict[str, 
     return params
 
 
+def _exception_type_name(exc: BaseException) -> str:
+    name = type(exc).__name__
+    chars: list[str] = []
+    for index, char in enumerate(name):
+        if index and char.isupper() and (not name[index - 1].isupper()):
+            chars.append("_")
+        chars.append(char.lower())
+    return "".join(chars)
+
+
 def _make_endpoint(route: ApiRoute):
     async def _endpoint(request: Request) -> JSONResponse:
         started = time.time()
@@ -129,7 +139,11 @@ def _make_endpoint(route: ApiRoute):
             result = route.handler(params)
         except Exception as exc:
             had_exception = True
-            result = {"error": str(exc)}
+            result = {
+                "success": False,
+                "error": str(exc),
+                "error_type": _exception_type_name(exc),
+            }
         duration_ms = int((time.time() - started) * 1000)
         payload = build_response(
             route.name,

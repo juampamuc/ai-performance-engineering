@@ -12,7 +12,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 
 
 class OptimizedAdaptiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: Adaptive runtime optimization."""
+    """Optimized: adaptive chunk sizing without redundant device staging."""
     
     def __init__(self):
         super().__init__()
@@ -21,8 +21,7 @@ class OptimizedAdaptiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._output_buffer: Optional[torch.Tensor] = None
         self.N = 4_000_000
         self.adaptive_chunk: Optional[int] = None
-        self.prefetch_stream: Optional[torch.cuda.Stream] = None
-        self.stage_buffers: list[torch.Tensor] = []
+        self.chunk_plan: list[tuple[int, int]] = []
         # Chunked processing benchmark - fixed input size
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -36,15 +35,19 @@ class OptimizedAdaptiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.output = None
         self._output_buffer = torch.empty_like(self.input)
         props = torch.cuda.get_device_properties(self.device)
-        sm_count = props.multi_processor_count
-        warp_allocation = props.warp_size * sm_count
-        # Choose a chunk that keeps at least two CTAs per SM resident but still fits L2.
-        self.adaptive_chunk = min(self.N, warp_allocation * 256)
-        self.prefetch_stream = torch.cuda.Stream()
-        self.stage_buffers = [
-            torch.empty(self.adaptive_chunk, device=self.device, dtype=torch.float32)
-            for _ in range(2)
-        ]
+        sm_parallelism = props.multi_processor_count * props.warp_size * 64
+        # PyTorch exposes the L2 size with a capitalized name on current CUDA builds.
+        l2_cache_bytes = int(
+            getattr(props, "L2_cache_size", getattr(props, "l2_cache_size", 0))
+        )
+        l2_budget = max(8_192, l2_cache_bytes // (4 * 4))
+        self.adaptive_chunk = min(self.N, max(8_192, min(l2_budget, sm_parallelism)))
+        self.chunk_plan = []
+        start = 0
+        while start < self.N:
+            end = min(start + self.adaptive_chunk, self.N)
+            self.chunk_plan.append((start, end))
+            start = end
         self._synchronize()
 
     def _transform(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -54,26 +57,14 @@ class OptimizedAdaptiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def benchmark_fn(self) -> None:
         """Benchmark: Adaptive optimization operations."""
-        assert self.prefetch_stream is not None
         assert self.input is not None
         assert self.adaptive_chunk is not None
         assert self._output_buffer is not None and self._output_buffer.shape == self.input.shape
         with self._nvtx_range("optimized_adaptive"):
-            chunk_plan = []
-            start = 0
-            while start < self.N:
-                span = min(self.adaptive_chunk, self.N - start)
-                chunk_plan.append((start, span))
-                start += span
-            for idx, (start, span) in enumerate(chunk_plan):
-                buf = self.stage_buffers[idx % len(self.stage_buffers)]
-                slice_buf = buf[:span]
-                next_slice = self.input[start : start + span]
-                with torch.cuda.stream(self.prefetch_stream):
-                    slice_buf.copy_(next_slice, non_blocking=True)
-                torch.cuda.current_stream().wait_stream(self.prefetch_stream)
-                transformed = self._transform(slice_buf)
-                self._output_buffer[start : start + span].copy_(transformed, non_blocking=True)
+            for start, end in self.chunk_plan:
+                window = self.input[start:end]
+                transformed = self._transform(window)
+                self._output_buffer[start:end].copy_(transformed)
             self.output = self._output_buffer
 
     def capture_verification_payload(self) -> None:
@@ -90,8 +81,7 @@ class OptimizedAdaptiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.input = None
         self.output = None
         self._output_buffer = None
-        self.stage_buffers = []
-        self.prefetch_stream = None
+        self.chunk_plan = []
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -107,10 +97,17 @@ class OptimizedAdaptiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_kernel_fundamentals_metrics
-        return compute_kernel_fundamentals_metrics(
+        metrics = compute_kernel_fundamentals_metrics(
             num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
             num_iterations=1,
         )
+        metrics.update(
+            {
+                "adaptive.chunk_size": float(self.adaptive_chunk or 0),
+                "adaptive.chunk_count": float(len(self.chunk_plan)),
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""

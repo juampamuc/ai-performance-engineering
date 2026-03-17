@@ -543,9 +543,9 @@ def _ensure_dir(path: Path) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
         else:
             path.mkdir(parents=True, exist_ok=True)
-    except Exception:
+    except OSError:
         # best-effort; let downstream errors surface
-        pass
+        return None
 
 
 def _build_context(level: str):
@@ -615,7 +615,16 @@ def make_error(
     Returns:
         A normalized error dict with success=False and optional context.
     """
-    result: Dict[str, Any] = {"error": msg, "success": False, **extra}
+    error_type = extra.pop("error_type", None)
+    if error_type is None:
+        lowered = msg.lower()
+        if "required" in lowered or "must be" in lowered or "invalid" in lowered:
+            error_type = "value_error"
+        elif "not found" in lowered:
+            error_type = "file_not_found"
+        else:
+            error_type = "runtime_error"
+    result: Dict[str, Any] = {"error": msg, "error_type": error_type, "success": False, **extra}
     return attach_context_if_requested(result, include_context, context_level)
 
 
@@ -637,6 +646,14 @@ def ensure_result(
     normalized = dict(result)
     if "success" not in normalized:
         normalized["success"] = not bool(normalized.get("error"))
+    if normalized.get("error") and "error_type" not in normalized:
+        message = str(normalized["error"]).lower()
+        if "required" in message or "must be" in message or "invalid" in message:
+            normalized["error_type"] = "value_error"
+        elif "not found" in message:
+            normalized["error_type"] = "file_not_found"
+        else:
+            normalized["error_type"] = "runtime_error"
     return attach_context_if_requested(normalized, include_context, context_level)
 
 
@@ -1401,8 +1418,10 @@ def _emit_progress_safe(recorder: Optional[ProgressRecorder], event: ProgressEve
                 ),
                 file=sys.stderr,
             )
-        except Exception:
-            pass
+        except Exception as fallback_exc:
+            sys.__stderr__.write(
+                f"progress_emit_warning_fallback path={recorder_key} error={fallback_exc}\n"
+            )
 
 
 def _trim_value(value: Any, max_length: int = _PREVIEW_MAX_LENGTH, max_items: int = _PREVIEW_MAX_ITEMS) -> Any:
@@ -1441,8 +1460,8 @@ def _argument_details(arguments: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         info: Dict[str, Any] = {"type": type(v).__name__}
         try:
             info["length"] = len(v)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        except TypeError:
+            info["length"] = None
         info["preview"] = _trim_value(v)
         details[k] = info
     return details
@@ -1459,8 +1478,8 @@ def _result_metadata(result: Any) -> Dict[str, Any]:
             meta["size"] = len(result)
         elif isinstance(result, (str, bytes)):
             meta["length"] = len(result)
-    except Exception:
-        pass
+    except TypeError as exc:
+        meta["metadata_warning"] = f"length unavailable: {exc}"
     return meta
 
 
@@ -1506,6 +1525,14 @@ def _normalize_result(result: Any) -> Any:
         normalized = dict(result)
         if "success" not in normalized:
             normalized["success"] = not bool(normalized.get("error"))
+        if normalized.get("error") and "error_type" not in normalized:
+            message = str(normalized["error"]).lower()
+            if "required" in message or "must be" in message or "invalid" in message:
+                normalized["error_type"] = "value_error"
+            elif "not found" in message:
+                normalized["error_type"] = "file_not_found"
+            else:
+                normalized["error_type"] = "runtime_error"
         return normalized
     return result
 
@@ -1571,8 +1598,10 @@ def _emit_queue_warning_once(kind: str, path: Optional[Path], message: str) -> N
         payload["path"] = path_text
     try:
         print(json.dumps(payload), file=sys.stderr)
-    except Exception:
-        pass
+    except Exception as exc:
+        sys.__stderr__.write(
+            f"queue_artifact_warning_fallback kind={kind} path={path_text} error={exc}\n"
+        )
 
 
 def _queue_max_overlap_retries() -> int:
@@ -1693,13 +1722,17 @@ def _queue_runner_lock(queue_id: str, tool_name: str, queue_label: Optional[str]
         if acquired:
             try:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
+            except OSError as exc:
+                _log_queue_event(
+                    f"RUNNER_LOCK_RELEASE_WARN id={queue_id} tool={tool_name} label={queue_label} error={exc}"
+                )
             _log_queue_event(f"RUNNER_LOCK_RELEASED id={queue_id} tool={tool_name} label={queue_label}")
         try:
             lock_handle.close()
-        except Exception:
-            pass
+        except OSError as exc:
+            _log_queue_event(
+                f"RUNNER_LOCK_CLOSE_WARN id={queue_id} tool={tool_name} label={queue_label} error={exc}"
+            )
 
 
 def _append_queue_script(entry: Dict[str, Any]) -> None:
@@ -4849,8 +4882,13 @@ def tool_benchmark_report(params: Dict[str, Any]) -> Dict[str, Any]:
         args.extend(["--output", params["output"]])
         try:
             _ensure_dir(Path(params["output"]))
-        except Exception:
-            pass
+        except Exception as exc:
+            return make_error(
+                f"Failed to prepare output path for benchmark report {params['output']}: {exc}",
+                include_context,
+                context_level,
+                output=params["output"],
+            )
     if params.get("format"):
         args.extend(["--format", params["format"]])
     if params.get("title"):
@@ -6211,8 +6249,10 @@ def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
                     result["nsys_comparison"] = metric_comparison["nsys_comparison"]
                 if "recommendations" in metric_comparison:
                     result["recommendations"] = metric_comparison["recommendations"]
-        except Exception:
-            pass  # Best effort - don't fail if metric analysis unavailable
+        except Exception as exc:
+            result.setdefault("warnings", []).append(
+                f"Metric analysis unavailable for profile_compare chapter={chapter}: {exc}"
+            )
 
     side_by_side_report = profile_insights.generate_side_by_side_report(
         profiles_dir,
@@ -8596,11 +8636,11 @@ def tool_cluster_eval_suite(params: Dict[str, Any]) -> Dict[str, Any]:
     "cluster_common_eval",
     "Tags: cluster, eval, preset, llm, system-validation, reproducibility. "
     "Run a preset benchmark bundle that answers the common system-evaluation questions people usually ask. "
-    "Presets: common-answer-fast, core-system, modern-llm, multinode-readiness. "
+    "Presets: common-answer-fast, core-system, modern-llm, fabric-systems, multinode-readiness. "
     "Returns: {success, preset, artifact_roles, run_id, stdout/stderr}. "
     "🕐 MEDIUM (varies). USE when: You want one obvious entrypoint for standard evaluation output instead of composing suite flags manually.",
     {"type": "object", "properties": with_context_params({
-        "preset": {"type": "string", "enum": ["common-answer-fast", "core-system", "modern-llm", "multinode-readiness"], "default": "core-system", "description": "Preset evaluation bundle"},
+        "preset": {"type": "string", "enum": ["common-answer-fast", "core-system", "modern-llm", "fabric-systems", "multinode-readiness"], "default": "core-system", "description": "Preset evaluation bundle"},
         "run_id": {"type": "string", "description": "RUN_ID prefix (default: YYYY-MM-DD)"},
         "hosts": {"type": "array", "items": {"type": "string"}, "description": "Host list"},
         "labels": {"type": "array", "items": {"type": "string"}, "description": "Optional labels (must match hosts count)"},
@@ -8609,6 +8649,14 @@ def tool_cluster_eval_suite(params: Dict[str, Any]) -> Dict[str, Any]:
         "oob_if": {"type": "string", "description": "Out-of-band interface for multi-node readiness and network-heavy presets"},
         "socket_ifname": {"type": "string", "description": "NCCL socket interface"},
         "nccl_ib_hca": {"type": "string", "description": "NCCL_IB_HCA allowlist"},
+        "nmx_url": {"type": "string", "description": "NMX base URL for fabric/NVLink management-plane checks"},
+        "nmx_token": {"type": "string", "description": "Optional NMX bearer token"},
+        "ib_mgmt_host": {"type": "string", "description": "InfiniBand management host for IB CLI verification"},
+        "ib_mgmt_user": {"type": "string", "description": "SSH user for the InfiniBand management host"},
+        "ib_mgmt_ssh_key": {"type": "string", "description": "SSH key path for the InfiniBand management host"},
+        "cumulus_hosts": {"type": "array", "items": {"type": "string"}, "description": "Cumulus/Spectrum-X switch hosts"},
+        "cumulus_user": {"type": "string", "description": "SSH user for Cumulus/Spectrum-X switches"},
+        "cumulus_ssh_key": {"type": "string", "description": "SSH key path for Cumulus/Spectrum-X switches"},
         "primary_label": {"type": "string", "description": "Label for single-node/local steps"},
         "coverage_baseline_run_id": {"type": "string", "description": "Optional baseline run id for coverage delta artifacts"},
         "extra_args": {"type": "array", "items": {"type": "string"}, "description": "Extra args appended after preset flags"},
@@ -8630,6 +8678,14 @@ def tool_cluster_common_eval(params: Dict[str, Any]) -> Dict[str, Any]:
             oob_if=params.get("oob_if"),
             socket_ifname=params.get("socket_ifname"),
             nccl_ib_hca=params.get("nccl_ib_hca"),
+            nmx_url=params.get("nmx_url"),
+            nmx_token=params.get("nmx_token"),
+            ib_mgmt_host=params.get("ib_mgmt_host"),
+            ib_mgmt_user=params.get("ib_mgmt_user"),
+            ib_mgmt_ssh_key=params.get("ib_mgmt_ssh_key"),
+            cumulus_hosts=params.get("cumulus_hosts") if isinstance(params.get("cumulus_hosts"), list) else None,
+            cumulus_user=params.get("cumulus_user"),
+            cumulus_ssh_key=params.get("cumulus_ssh_key"),
             primary_label=params.get("primary_label"),
             coverage_baseline_run_id=params.get("coverage_baseline_run_id"),
             extra_args=params.get("extra_args") if isinstance(params.get("extra_args"), list) else None,
@@ -8638,6 +8694,103 @@ def tool_cluster_common_eval(params: Dict[str, Any]) -> Dict[str, Any]:
         return attach_context_if_requested(result, include_context, context_level)
     except Exception as e:
         return make_error(f"common cluster eval failed: {e}", include_context, context_level)
+
+
+@register_tool(
+    "cluster_fabric_eval",
+    "Tags: cluster, fabric, nvlink, infiniband, spectrum-x, roce, verification, reproducibility. "
+    "Run the canonical AI fabric evaluation bundle with a structured capability matrix, verification ledger, "
+    "AI-workload correlation, and fabric scorecard. "
+    "Returns: {success, entrypoint, artifact_roles, run_id, stdout/stderr}. "
+    "🕐 MEDIUM (varies). USE when: You want the go-to cluster run for NVLink, InfiniBand, and Spectrum-X / RoCE characterization.",
+    {"type": "object", "properties": with_context_params({
+        "run_id": {"type": "string", "description": "RUN_ID prefix (default: YYYY-MM-DD)"},
+        "hosts": {"type": "array", "items": {"type": "string"}, "description": "Host list"},
+        "labels": {"type": "array", "items": {"type": "string"}, "description": "Optional labels (must match hosts count)"},
+        "ssh_user": {"type": "string", "description": "SSH user"},
+        "ssh_key": {"type": "string", "description": "SSH key path"},
+        "oob_if": {"type": "string", "description": "Out-of-band interface for multi-node fabric studies"},
+        "socket_ifname": {"type": "string", "description": "NCCL socket interface"},
+        "nccl_ib_hca": {"type": "string", "description": "NCCL_IB_HCA allowlist"},
+        "nmx_url": {"type": "string", "description": "NMX base URL for NVLink management-plane checks"},
+        "nmx_token": {"type": "string", "description": "Optional NMX bearer token"},
+        "ib_mgmt_host": {"type": "string", "description": "InfiniBand management host for IB CLI verification"},
+        "ib_mgmt_user": {"type": "string", "description": "SSH user for the InfiniBand management host"},
+        "ib_mgmt_ssh_key": {"type": "string", "description": "SSH key path for the InfiniBand management host"},
+        "cumulus_hosts": {"type": "array", "items": {"type": "string"}, "description": "Cumulus/Spectrum-X switch hosts"},
+        "cumulus_user": {"type": "string", "description": "SSH user for Cumulus/Spectrum-X switches"},
+        "cumulus_ssh_key": {"type": "string", "description": "SSH key path for Cumulus/Spectrum-X switches"},
+        "primary_label": {"type": "string", "description": "Label for single-node/local steps"},
+        "coverage_baseline_run_id": {"type": "string", "description": "Optional baseline run id for coverage delta artifacts"},
+        "extra_args": {"type": "array", "items": {"type": "string"}, "description": "Extra args appended after the fabric preset flags"},
+        "require_management_plane": {"type": "boolean", "default": False, "description": "Require configured management-plane endpoints for publish-grade fabric completeness"},
+        "timeout_seconds": {"type": "integer", "description": "Optional timeout in seconds (0/null = no timeout)"},
+    })},
+)
+def tool_cluster_fabric_eval(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.cluster import run_cluster_fabric_eval
+
+    include_context, context_level = extract_context_opts(params)
+    try:
+        result = run_cluster_fabric_eval(
+            run_id=params.get("run_id"),
+            hosts=params.get("hosts") if isinstance(params.get("hosts"), list) else None,
+            labels=params.get("labels") if isinstance(params.get("labels"), list) else None,
+            ssh_user=params.get("ssh_user"),
+            ssh_key=params.get("ssh_key"),
+            oob_if=params.get("oob_if"),
+            socket_ifname=params.get("socket_ifname"),
+            nccl_ib_hca=params.get("nccl_ib_hca"),
+            nmx_url=params.get("nmx_url"),
+            nmx_token=params.get("nmx_token"),
+            ib_mgmt_host=params.get("ib_mgmt_host"),
+            ib_mgmt_user=params.get("ib_mgmt_user"),
+            ib_mgmt_ssh_key=params.get("ib_mgmt_ssh_key"),
+            cumulus_hosts=params.get("cumulus_hosts") if isinstance(params.get("cumulus_hosts"), list) else None,
+            cumulus_user=params.get("cumulus_user"),
+            cumulus_ssh_key=params.get("cumulus_ssh_key"),
+            primary_label=params.get("primary_label"),
+            coverage_baseline_run_id=params.get("coverage_baseline_run_id"),
+            extra_args=params.get("extra_args") if isinstance(params.get("extra_args"), list) else None,
+            require_management_plane=bool(params.get("require_management_plane", False)),
+            timeout_seconds=params.get("timeout_seconds"),
+        )
+        return attach_context_if_requested(result, include_context, context_level)
+    except Exception as e:
+        return make_error(f"fabric cluster eval failed: {e}", include_context, context_level)
+
+
+@register_tool(
+    "cluster_nmx_partition_lab",
+    "Tags: cluster, nmx, nvlink, partitioning, lab, management-plane, tenancy. "
+    "Build a lab-only NVLink/NMX partition workflow guide from live inventory. "
+    "Returns: {success, entrypoint, commands, topology, partitions, recommendations}. "
+    "⚡ FAST (~1-5s). USE when: You want exact create/update/delete/poll commands and Alpha/Beta partition seed locations without mutating the fabric.",
+    {"type": "object", "properties": with_context_params({
+        "nmx_url": {"type": "string", "description": "NMX base URL (for example https://<host> or https://<host>/nmx/v1)"},
+        "nmx_token": {"type": "string", "description": "Optional NMX token"},
+        "alpha_name": {"type": "string", "default": "AlphaPartition", "description": "Alpha partition name"},
+        "beta_name": {"type": "string", "default": "BetaPartition", "description": "Beta partition name"},
+        "alpha_size": {"type": "integer", "default": 4, "description": "Alpha partition GPU count"},
+        "beta_size": {"type": "integer", "default": 4, "description": "Beta partition GPU count"},
+    })},
+)
+def tool_cluster_nmx_partition_lab(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.cluster import build_cluster_nmx_partition_lab
+
+    include_context, context_level = extract_context_opts(params)
+    try:
+        result = build_cluster_nmx_partition_lab(
+            nmx_url=params.get("nmx_url"),
+            nmx_token=params.get("nmx_token"),
+            alpha_name=str(params.get("alpha_name") or "AlphaPartition"),
+            beta_name=str(params.get("beta_name") or "BetaPartition"),
+            alpha_size=int(params.get("alpha_size", 4) or 4),
+            beta_size=int(params.get("beta_size", 4) or 4),
+        )
+        return attach_context_if_requested(result, include_context, context_level)
+    except Exception as e:
+        return make_error(f"nmx partition lab helper failed: {e}", include_context, context_level)
 
 
 @register_tool(
@@ -9403,6 +9556,21 @@ class MCPServer:
             self._pending_requests.pop(msg_id, None)
             self._request_timeouts.pop(msg_id, None)
 
+    @staticmethod
+    def _write_stdio_warning(message: str) -> None:
+        """Emit a best-effort transport warning to stderr."""
+        sys.stderr.write(f"{message}\n")
+        sys.stderr.flush()
+
+    def _emit_stdio_json(self, payload: Dict[str, Any], *, failure_context: str) -> bool:
+        """Emit a JSON-RPC payload to stdout and report transport failures visibly."""
+        try:
+            print(json.dumps(payload), flush=True)
+            return True
+        except Exception as exc:
+            self._write_stdio_warning(f"Failed to emit {failure_context}: {exc}")
+            return False
+
     async def handle_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle an MCP message. Returns None for notifications (messages without an id)."""
         method = message.get("method")
@@ -9556,7 +9724,10 @@ class MCPServer:
                                 "message": "Invalid Request: jsonrpc must be '2.0'"
                             }
                         }
-                        print(json.dumps(error_response), flush=True)
+                        self._emit_stdio_json(
+                            error_response,
+                            failure_context=f"invalid request response for id {msg_id!r}",
+                        )
                     continue
 
                 response = await self.handle_message(message)
@@ -9585,22 +9756,11 @@ class MCPServer:
 
             except json.JSONDecodeError as e:
                 print(f"JSON decode error: {e}", file=sys.stderr)
-                # Try to send error response if we can extract an ID
-                try:
-                    partial_msg = json.loads(line) if 'line' in locals() else {}
-                    msg_id = partial_msg.get("id")
-                    if msg_id is not None:
-                        error_response = {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {
-                                "code": -32700,
-                                "message": f"Parse error: {str(e)}"
-                            }
-                        }
-                        print(json.dumps(error_response), flush=True)
-                except Exception:
-                    pass  # Can't recover from parse error
+                line_preview = line[:200] if 'line' in locals() else "<unavailable>"
+                self._write_stdio_warning(
+                    "Unable to recover request id from malformed JSON input; "
+                    f"no parse error response emitted. line_preview={line_preview!r}"
+                )
             except Exception as e:
                 print(f"Error handling message: {e}", file=sys.stderr)
                 import traceback
@@ -9620,11 +9780,16 @@ class MCPServer:
                                         "message": f"Internal error: {str(e)}"
                                     }
                                 }
-                                print(json.dumps(error_response), flush=True)
-                                # Complete request after sending error response
-                                self._complete_request(msg_id)
-                except Exception:
-                    pass  # Can't send error response
+                                if self._emit_stdio_json(
+                                    error_response,
+                                    failure_context=f"internal error response for id {msg_id!r}",
+                                ):
+                                    # Complete request after sending error response
+                                    self._complete_request(msg_id)
+                except Exception as response_exc:
+                    self._write_stdio_warning(
+                        f"Failed to prepare internal error response for request {msg_id!r}: {response_exc}"
+                    )
 
 
 def main():

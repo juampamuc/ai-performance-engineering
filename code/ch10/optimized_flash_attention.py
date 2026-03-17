@@ -28,6 +28,7 @@ from core.harness.benchmark_harness import (
     WorkloadMetadata,
 )
 from ch10.flash_attention_common import (
+    FLASH_ATTENTION_OUTPUT_TOLERANCE,
     compute_attention_backend_metrics,
     compute_attention_workload_metrics,
 )
@@ -200,12 +201,25 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if not _NEW_SDPA_API or sdpa_kernel is None or SDPBackend is None:
             return []
         candidates: list[list[SDPBackend]] = []
+        major = 0
         if torch.cuda.is_available():
+            major, _minor = torch.cuda.get_device_capability()
+        if major >= 8:
             candidates.append([SDPBackend.FLASH_ATTENTION])
+        elif torch.cuda.is_available():
             candidates.append([SDPBackend.EFFICIENT_ATTENTION])
         if hasattr(SDPBackend, "MATH"):
             candidates.append([SDPBackend.MATH])
         return candidates
+
+    def _try_sdpa_backend(self, candidate: list[SDPBackend]) -> bool:
+        if self.model is None or self.input is None:
+            raise RuntimeError("setup() must initialize model and input before selecting SDPA backends")
+        with torch.no_grad(), sdpa_backend_context(candidate):
+            _ = self.model(self.input[:1], is_causal=self.use_causal)
+        self._sdpa_backends = candidate
+        self._selected_backend_name = candidate[0].name.lower()
+        return True
 
     def _resolve_sdpa_backends(self) -> None:
         if self.model is None or self.input is None:
@@ -213,10 +227,7 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         last_error: Optional[Exception] = None
         for candidate in self._candidate_backends():
             try:
-                with torch.no_grad(), sdpa_backend_context(candidate):
-                    _ = self.model(self.input[:1], is_causal=self.use_causal)
-                self._sdpa_backends = candidate
-                self._selected_backend_name = candidate[0].name.lower()
+                self._try_sdpa_backend(candidate)
                 return
             except Exception as exc:  # pragma: no cover - CUDA/PyTorch dependent
                 last_error = exc
@@ -265,6 +276,22 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             raise RuntimeError("setup() must initialize model and input before selecting the attention engine")
         if self._resolve_external_flash():
             return
+        if torch.cuda.is_available():
+            major, _minor = torch.cuda.get_device_capability()
+            if major >= 10:
+                if not _NEW_SDPA_API or SDPBackend is None:
+                    raise RuntimeError(
+                        "FAIL FAST: FlashAttention required for ch10 but no FlashAttention backend available on SM100. Install flash-attn>=2.7 or flash-attn-3."
+                    )
+                try:
+                    self._try_sdpa_backend([SDPBackend.FLASH_ATTENTION])
+                except Exception as exc:
+                    raise RuntimeError(
+                        "FAIL FAST: FlashAttention required for ch10 but no FlashAttention backend available on SM100. Install flash-attn>=2.7 or flash-attn-3."
+                    ) from exc
+                self._selected_engine_name = "sdpa"
+                self._attention_runner = lambda x: self.model(x, is_causal=self.use_causal)
+                return
         self._resolve_sdpa_backends()
         self._selected_engine_name = "sdpa"
         self._attention_runner = lambda x: self.model(x, is_causal=self.use_causal)
@@ -322,7 +349,7 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
             },
-            output_tolerance=(5e-2, 5e-2),
+            output_tolerance=FLASH_ATTENTION_OUTPUT_TOLERANCE,
         )
     
     def teardown(self) -> None:
@@ -388,8 +415,3 @@ class OptimizedFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return OptimizedFlashAttentionBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

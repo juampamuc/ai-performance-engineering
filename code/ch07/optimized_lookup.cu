@@ -1,5 +1,6 @@
-// optimized_lookup.cu -- precomputed scatter sums with Float8 vectorization.
-// CUDA 13 + Blackwell: Uses Float8 (32-byte aligned) for 256-bit loads
+// optimized_lookup.cu -- pretranspose the lookup path table, then read the same
+// 64 values per output in a coalesced layout. This is a data-layout
+// transformation, not precomputation of the final reduction.
 
 #include <cuda_runtime.h>
 #include <cstdio>
@@ -9,27 +10,22 @@
 #include "../core/common/headers/cuda_verify.cuh"
 #include "../core/common/nvtx_utils.cuh"
 
-// CUDA 13 + Blackwell: 32-byte aligned type for 256-bit loads
-struct alignas(32) Float8 {
-    float elems[8];
-};
-static_assert(sizeof(Float8) == 32, "Float8 must be 32 bytes");
-static_assert(alignof(Float8) == 32, "Float8 must be 32-byte aligned");
-
 constexpr int N = 1 << 20;
 constexpr int ITERATIONS = 200;
 constexpr int RANDOM_STEPS = 64;
 
-// Optimized lookup using Float8 (256-bit loads)
-__global__ void lookupOptimized(const float* __restrict__ precomputed,
+__global__ void lookupOptimized(const float* __restrict__ paths,
                                 float* __restrict__ out,
                                 int n) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n) return;
-  
-  const Float8* table = reinterpret_cast<const Float8*>(precomputed);
-  Float8 vec = table[idx >> 3];  // 256-bit load
-  out[idx] = vec.elems[idx & 7];
+
+  float val = 0.0f;
+  #pragma unroll 8
+  for (int step = 0; step < RANDOM_STEPS; ++step) {
+    val += paths[step * n + idx];
+  }
+  out[idx] = val;
 }
 
 __host__ int advance_lcg(int idx) {
@@ -50,24 +46,20 @@ int main() {
     h_indices[i] = (i * 3) % N;
   }
 
-  std::vector<float> precomputed(N);
+  std::vector<float> paths(static_cast<std::size_t>(N) * RANDOM_STEPS);
   for (int i = 0; i < N; ++i) {
-      NVTX_RANGE("setup");
     int idx = h_indices[i];
-    float acc = 0.0f;
     for (int step = 0; step < RANDOM_STEPS; ++step) {
-        NVTX_RANGE("setup");
-      acc += h_table[idx];
+      paths[static_cast<std::size_t>(step) * N + i] = h_table[idx];
       idx = advance_lcg(idx);
     }
-    precomputed[i] = acc;
   }
 
-  float *d_precomputed = nullptr;
+  float *d_paths = nullptr;
   float *d_out = nullptr;
-  CUDA_CHECK(cudaMalloc(&d_precomputed, N * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&d_paths, paths.size() * sizeof(float)));
   CUDA_CHECK(cudaMalloc(&d_out, N * sizeof(float)));
-  CUDA_CHECK(cudaMemcpy(d_precomputed, precomputed.data(), N * sizeof(float), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_paths, paths.data(), paths.size() * sizeof(float), cudaMemcpyHostToDevice));
 
   dim3 block(256);
   dim3 grid((N + block.x - 1) / block.x);
@@ -79,7 +71,7 @@ int main() {
   CUDA_CHECK(cudaEventRecord(start));
   for (int iter = 0; iter < ITERATIONS; ++iter) {
       NVTX_RANGE("compute_kernel:lookupOptimized");
-    lookupOptimized<<<grid, block>>>(d_precomputed, d_out, N);
+    lookupOptimized<<<grid, block>>>(d_paths, d_out, N);
   }
   CUDA_CHECK(cudaEventRecord(stop));
   CUDA_CHECK(cudaEventSynchronize(stop));
@@ -89,7 +81,7 @@ int main() {
   float avg_ms = elapsed_ms / ITERATIONS;
 
   CUDA_CHECK(cudaMemcpy(h_out, d_out, N * sizeof(float), cudaMemcpyDeviceToHost));
-  printf("Lookup (Float8, 256-bit): %.4f ms\n", avg_ms);
+  printf("Lookup (layout-optimized): %.4f ms\n", avg_ms);
   printf("TIME_MS: %.4f\n", avg_ms);
   printf("out[0]=%.1f\n", h_out[0]);
 #ifdef VERIFY
@@ -100,7 +92,7 @@ int main() {
 
   CUDA_CHECK(cudaEventDestroy(start));
   CUDA_CHECK(cudaEventDestroy(stop));
-  CUDA_CHECK(cudaFree(d_precomputed));
+  CUDA_CHECK(cudaFree(d_paths));
   CUDA_CHECK(cudaFree(d_out));
   CUDA_CHECK(cudaFreeHost(h_table));
   CUDA_CHECK(cudaFreeHost(h_indices));

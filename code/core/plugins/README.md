@@ -37,3 +37,4 @@ When installed, `aisp` will auto-attach the plugin’s Typer app under the given
 - Additional capabilities are free-form (`dashboard`, `optimization_search`, etc.).
 
 If a plugin fails to load, core CLI continues to function with only the core commands. Plugins should be defensive and avoid raising during import.***
+If a plugin fails to load, core CLI continues to function with only the core commands. Plugins should be defensive and avoid raising during import.

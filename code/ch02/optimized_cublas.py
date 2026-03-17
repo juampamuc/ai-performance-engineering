@@ -1,4 +1,4 @@
-"""optimized_cublas.py - Pure cuBLAS matmul with TF32 tensor-core acceleration."""
+"""optimized_cublas.py - Pure cuBLAS matmul with TF32 via backend policy."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
     Optimized: pure cuBLAS GEMM with TF32 and warmed-up heuristics.
 
     This keeps the math in FP32 but lets cuBLAS route workloads through tensor cores
-    (TF32) while running a few warmup matmuls so Lt heuristics cache the best kernel.
+    (TF32) via the harness `backend_policy="performance"` path while running a
+    few warmup matmuls so Lt heuristics cache the best kernel.
     """
 
     def __init__(self):
@@ -38,7 +39,7 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def setup(self) -> None:
-        """Enable TF32, allocate FP32 matrices, compute verification output, and warm up cuBLAS."""
+        """Allocate FP32 matrices and warm the TF32-enabled cuBLAS path."""
         # Seed FIRST for deterministic verification
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
@@ -99,7 +100,7 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=50, warmup=5)
+        return BenchmarkConfig(iterations=50, warmup=5, backend_policy="performance")
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
@@ -125,7 +126,3 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return OptimizedCublasBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

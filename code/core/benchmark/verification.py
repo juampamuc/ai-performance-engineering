@@ -249,7 +249,11 @@ class InputSignature:
                                     errors.append("pipeline_stage_boundaries must start at layer 0")
                                     break
                             else:
-                                assert prev_end is not None
+                                if prev_end is None:
+                                    errors.append(
+                                        "pipeline_stage_boundaries internal validation state missing previous boundary"
+                                    )
+                                    break
                                 if start != prev_end + 1:
                                     errors.append("pipeline_stage_boundaries must be contiguous and non-overlapping")
                                     break

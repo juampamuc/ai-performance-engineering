@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from inspect import signature
 import os
 from pathlib import Path
+import sys
 
 from core.benchmark.defaults import BenchmarkDefaults
 from core.harness.benchmark_harness import BenchmarkConfig, LaunchVia
@@ -82,6 +83,26 @@ def test_merge_locks_runner_protections_when_enabled() -> None:
 
     assert merged.enable_memory_tracking is True
     assert merged.detect_setup_precomputation is True
+
+
+def test_merge_preserves_allow_foreign_gpu_processes_from_run_level_policy() -> None:
+    base = _base_config(allow_foreign_gpu_processes=True)
+    locked = _compute_locked_fields(
+        base_config=base,
+        cli_iterations_provided=False,
+        cli_warmup_provided=False,
+        enable_profiling=False,
+    )
+    override = BenchmarkConfig(allow_foreign_gpu_processes=False, timeout_multiplier=1.0)
+
+    merged = _merge_benchmark_config(
+        base_config=base,
+        benchmark_obj=_DummyBenchmark(override),
+        defaults_obj=BenchmarkDefaults(),
+        locked_fields=locked,
+    )
+
+    assert merged.allow_foreign_gpu_processes is True
 
 
 def test_merge_locks_profiling_knobs_when_cli_enabled() -> None:
@@ -280,6 +301,67 @@ def test_harden_profile_env_prepends_startup_stub() -> None:
     assert pythonpath_entries[0].endswith("aisp_profile_python_startup")
     assert (Path(pythonpath_entries[0]) / "sitecustomize.py").exists()
     assert (Path(pythonpath_entries[0]) / "usercustomize.py").exists()
+
+
+def test_run_repo_python_module_uses_module_entrypoint_from_repo_root(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(run_benchmarks_mod.subprocess, "run", _fake_run)
+
+    run_benchmarks_mod._run_repo_python_module(
+        "core.scripts.utilities.dump_hardware_capabilities",
+        "--fast",
+        timeout=15,
+    )
+
+    assert captured["cmd"] == [
+        sys.executable,
+        "-m",
+        "core.scripts.utilities.dump_hardware_capabilities",
+        "--fast",
+    ]
+    kwargs = captured["kwargs"]
+    assert kwargs["cwd"] == str(run_benchmarks_mod.repo_root)
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 15
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    pythonpath_entries = [entry for entry in kwargs["env"]["PYTHONPATH"].split(os.pathsep) if entry]
+    assert pythonpath_entries
+    assert Path(pythonpath_entries[0]) == run_benchmarks_mod.repo_root.resolve()
+
+
+def test_reset_parent_execution_state_uses_launch_mode_guards(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def _fake_reset_cuda_state(*, allow_cuda_context: bool) -> None:
+        calls.append(("cuda", allow_cuda_context))
+
+    def _fake_reset_gpu_state() -> None:
+        calls.append(("gpu", None))
+
+    monkeypatch.setattr(run_benchmarks_mod, "reset_cuda_state", _fake_reset_cuda_state)
+    monkeypatch.setattr(run_benchmarks_mod, "reset_gpu_state", _fake_reset_gpu_state)
+
+    run_benchmarks_mod._reset_parent_execution_state(
+        launch_via="python",
+        cold_start=False,
+        include_gpu_state=True,
+    )
+    assert calls == [("cuda", False)]
+
+    calls.clear()
+    run_benchmarks_mod._reset_parent_execution_state(
+        launch_via="torchrun",
+        cold_start=True,
+        include_gpu_state=True,
+    )
+    assert calls == [("cuda", True), ("gpu", None), ("gpu", None)]
 
 
 def test_repo_relative_path_handles_relative_artifact_paths() -> None:

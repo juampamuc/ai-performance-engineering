@@ -647,6 +647,8 @@ class RunManifest(BaseModel):
             "MKL_NUM_THREADS",
             "TORCH_COMPILE_DEBUG",
             "TRITON_CACHE_DIR",
+            "TRITON_OVERRIDE_DIR",
+            "TRITON_DUMP_DIR",
         ]
         for var in relevant_vars:
             value = os.environ.get(var)

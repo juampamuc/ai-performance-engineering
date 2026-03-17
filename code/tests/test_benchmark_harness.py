@@ -34,6 +34,12 @@ pytestmark = [
 ]
 
 
+def _make_config(**kwargs) -> BenchmarkConfig:
+    kwargs.setdefault("allow_foreign_gpu_processes", True)
+    kwargs.setdefault("enforce_environment_validation", False)
+    return BenchmarkConfig(**kwargs)
+
+
 class SimpleBenchmark(BaseBenchmark):
     """Simple benchmark for testing."""
     
@@ -177,7 +183,7 @@ class TestSubprocessTimeoutKill:
     def test_timeout_kills_subprocess(self):
         """Test that subprocess is killed when timeout is exceeded."""
         benchmark = SlowBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=100,  # Enough iterations to exceed timeout
             warmup=5,
             measurement_timeout_seconds=1,  # Very short timeout (1 second)
@@ -205,7 +211,7 @@ class TestSubprocessTimeoutKill:
     def test_error_propagation_from_subprocess(self):
         """Test that errors from subprocess are properly propagated."""
         benchmark = FailingBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=5,
             warmup=5,
             enable_profiling=False,
@@ -221,7 +227,7 @@ class TestSubprocessTimeoutKill:
     def test_subprocess_stderr_capture(self, tmp_path):
         """Ensure subprocess stderr is persisted when a benchmark fails."""
         benchmark = StderrFailingBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=5,
             warmup=5,
             enable_profiling=False,
@@ -241,7 +247,7 @@ class TestSubprocessTimeoutKill:
     def test_subprocess_stderr_capture_on_success(self, tmp_path):
         """Ensure subprocess stderr is persisted even when the benchmark succeeds."""
         benchmark = StderrSuccessBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=2,
             warmup=5,
             enable_profiling=False,
@@ -275,7 +281,7 @@ class TestPyTorchTimerCorrectness:
                 super().benchmark_fn()
 
         benchmark = CountingBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -309,7 +315,7 @@ def test_thread_mode_captures_custom_metrics_before_teardown():
             super().teardown()
 
     benchmark = CustomMetricBenchmark()
-    config = BenchmarkConfig(
+    config = _make_config(
         iterations=5,
         warmup=5,
         enable_profiling=False,
@@ -328,7 +334,7 @@ class TestTimeoutMultiplierPropagation:
     """Ensure timeout multipliers behave correctly inside the harness."""
     
     def test_harness_preserves_explicit_timeouts_when_cloning_config(self):
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=1,
             warmup=5,
             measurement_timeout_seconds=2,
@@ -372,7 +378,7 @@ class TestEventSyncTimingLoop:
                 return {"shape": tuple(self.x.shape), "dtype": str(self.x.dtype)}
 
         benchmark = DefaultStreamNoSyncBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -389,7 +395,7 @@ class TestEventSyncTimingLoop:
     def test_timing_loop_produces_valid_results(self):
         """Test that timing loop produces valid timing statistics."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=20,
             warmup=5,
             enable_profiling=False,
@@ -419,7 +425,7 @@ class TestMemoryTracking:
     def test_memory_tracking_enabled(self):
         """Test that memory tracking captures peak and allocated memory."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -438,7 +444,7 @@ class TestMemoryTracking:
     def test_memory_tracking_disabled(self):
         """Test that memory tracking can be disabled."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -457,7 +463,7 @@ class TestMemoryTracking:
     def test_memory_tracking_values_are_reasonable(self):
         """Test that memory tracking values are reasonable (not negative, etc.)."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -482,7 +488,7 @@ class TestBenchmarkModes:
     def test_custom_mode(self):
         """Test CUSTOM mode works."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -496,7 +502,7 @@ class TestBenchmarkModes:
     def test_pytorch_mode(self):
         """Test PYTORCH mode works."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=10,
             warmup=5,
             enable_profiling=False,
@@ -510,7 +516,7 @@ class TestBenchmarkModes:
     def test_triton_mode(self):
         """Test TRITON mode either runs through Triton or fails explicitly."""
         benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=3,
             warmup=1,
             enable_profiling=False,
@@ -548,7 +554,7 @@ class TestErrorHandling:
                 return (1e-5, 1e-8)
 
         benchmark = NoSetupBenchmark()
-        config = BenchmarkConfig(
+        config = _make_config(
             iterations=5,
             warmup=5,
             enable_profiling=False,
@@ -581,7 +587,7 @@ class TestErrorHandling:
                 return (1e-5, 1e-8)
         
         benchmark = InvalidBenchmark()
-        config = BenchmarkConfig(iterations=5, warmup=5, enable_profiling=False, use_subprocess=False)
+        config = _make_config(iterations=5, warmup=5, enable_profiling=False, use_subprocess=False)
         harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
         
         result = harness.benchmark(benchmark)

@@ -9,6 +9,7 @@ from core.scripts.refresh_readmes import (
     REPO_ROOT,
     _format_markdown,
     _render_current_representative_deltas_body,
+    main,
 )
 
 
@@ -321,3 +322,47 @@ def test_current_representative_deltas_surface_summary_shape_warnings_when_falli
     assert "fall back to stored representative rows" in body
     assert "Expected targets list in tier-1 summary artifact" in body
     assert str(summary_path) in body
+
+
+def test_refresh_readmes_requires_explicit_write_scope(capsys) -> None:
+    try:
+        main(["--write"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("main(['--write']) should reject implicit full-repo writes")
+
+    captured = capsys.readouterr()
+    assert "Refusing to write without an explicit scope" in captured.err
+
+
+def test_refresh_readmes_help_mode_is_read_only(capsys) -> None:
+    rc = main([])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "usage:" in captured.out.lower()
+    assert "Wrote " not in captured.out
+
+
+def test_refresh_readmes_write_target_only_updates_selected_readme(tmp_path: Path, capsys) -> None:
+    rc = main(["--write", "--target", "ch03", "--repo-root", str(tmp_path)])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Wrote ch03/README.md" in captured.out
+    assert (tmp_path / "ch03" / "README.md").exists()
+    assert not (tmp_path / "ch10" / "README.md").exists()
+
+
+def test_refresh_readmes_check_reports_selected_mismatch(tmp_path: Path, capsys) -> None:
+    readme_path = tmp_path / "ch03" / "README.md"
+    readme_path.parent.mkdir(parents=True)
+    readme_path.write_text("stale\n", encoding="utf-8")
+
+    rc = main(["--check", "--target", "ch03", "--repo-root", str(tmp_path)])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "README targets out of sync:" in captured.out
+    assert "out_of_sync: ch03/README.md" in captured.out

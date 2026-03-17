@@ -158,6 +158,7 @@ Options:
                                      (default: 2.10.0a0+a36e1d39eb.nv26.01.42222806)
 
   --fio-test-dir <path>    fio directory (default: /tmp)
+  --fio-file-size <size>   fio size per job (default: 8G)
   --fio-runtime <sec>      fio runtime per test (default: 30)
   --fio-repeats <n>        fio repetitions per host (default: 1)
   --fio-max-seq-bw-cv-pct <pct>  Optional fail threshold for fio seq read/write BW CV
@@ -213,6 +214,17 @@ Options:
   --enable-nccl-algo-comparison  Run NCCL Ring/Tree/NVLS/auto comparison (default: off)
   --disable-nccl-algo-comparison Force-disable NCCL algo comparison (overrides modern profile)
   --nccl-algos <list>            NCCL algorithms for comparison (default: Ring,Tree,NVLS,auto)
+  --run-fabric-eval              Run the fabric verification ladder and scorecard (default: off)
+  --skip-fabric-eval             Skip the fabric verification ladder
+  --nmx-url <url>                NMX base URL for fabric/NVLink management-plane checks
+  --nmx-token <token>            Optional NMX bearer token for management-plane checks
+  --ib-mgmt-host <host>          InfiniBand management host for fabric CLI verification
+  --ib-mgmt-user <user>          SSH user for the InfiniBand management host
+  --ib-mgmt-ssh-key <path>       SSH key path for the InfiniBand management host
+  --cumulus-hosts <hosts>        Comma-separated Cumulus/Spectrum-X switch hosts
+  --cumulus-user <user>          SSH user for Cumulus/Spectrum-X switches
+  --cumulus-ssh-key <path>       SSH key path for Cumulus/Spectrum-X switches
+  --require-management-plane     Require IB/NMX/Cumulus management-plane coverage for publish-grade fabric runs
   --modern-llm-profile           Enable a modern high-signal LLM profile:
                                  request-rate sweep on, nvbandwidth on,
                                  allreduce stability on, NCCL all-to-all on, NCCL algo comparison on,
@@ -441,6 +453,7 @@ BOOTSTRAP_TORCH_VERSION="2.10.0a0+a36e1d39eb.nv26.01.42222806"
 RENDER_LOCALHOST_REPORT_MODE="auto"
 
 FIO_TEST_DIR="/tmp"
+FIO_FILE_SIZE="8G"
 FIO_RUNTIME="30"
 FIO_REPEATS="1"
 FIO_MAX_SEQ_BW_CV_PCT=""
@@ -528,6 +541,16 @@ NCCL_ALLTOALL_WARMUP="5"
 NCCL_ALLTOALL_ITERS="20"
 ENABLE_NCCL_ALGO_COMPARISON=0
 NCCL_ALGOS="Ring,Tree,NVLS,auto"
+RUN_FABRIC_EVAL=0
+REQUIRE_MANAGEMENT_PLANE=0
+FABRIC_NMX_URL=""
+FABRIC_NMX_TOKEN=""
+FABRIC_IB_MGMT_HOST=""
+FABRIC_IB_MGMT_USER=""
+FABRIC_IB_MGMT_SSH_KEY=""
+FABRIC_CUMULUS_HOSTS=""
+FABRIC_CUMULUS_USER=""
+FABRIC_CUMULUS_SSH_KEY=""
 MODERN_LLM_PROFILE=0
 GPU_HOURLY_COST_USD=""
 COVERAGE_BASELINE_RUN_ID=""
@@ -542,6 +565,8 @@ RESUME_RUN=0
 FORCE_DISABLE_ALLREDUCE_STABILITY=0
 FORCE_DISABLE_NCCL_ALLTOALL=0
 FORCE_DISABLE_NCCL_ALGO_COMPARISON=0
+FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=0
+FORCE_DISABLE_STRICT_CANONICAL_COMPLETENESS=0
 RUN_TRAIN_STEP_EXPLICIT=0
 VLLM_REPEATS_EXPLICIT=0
 VLLM_REQUEST_RATE_REPEATS_EXPLICIT=0
@@ -602,8 +627,8 @@ while [[ $# -gt 0 ]]; do
     --concurrency-range) CONCURRENCY_RANGE="$2"; shift 2 ;;
     --vllm-repeats) VLLM_REPEATS="$2"; VLLM_REPEATS_EXPLICIT=1; shift 2 ;;
     --vllm-max-points-per-run) VLLM_MAX_POINTS_PER_RUN="$2"; shift 2 ;;
-    --run-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=1; shift ;;
-    --skip-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=0; shift ;;
+    --run-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=1; FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=0; shift ;;
+    --skip-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=0; FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=1; shift ;;
     --vllm-request-rate-range) VLLM_REQUEST_RATE_RANGE="$2"; shift 2 ;;
     --vllm-request-rate-repeats) VLLM_REQUEST_RATE_REPEATS="$2"; VLLM_REQUEST_RATE_REPEATS_EXPLICIT=1; shift 2 ;;
     --vllm-request-rate-max-concurrency) VLLM_REQUEST_RATE_MAX_CONCURRENCY="$2"; shift 2 ;;
@@ -653,6 +678,7 @@ while [[ $# -gt 0 ]]; do
     --bootstrap-torch-version) BOOTSTRAP_TORCH_VERSION="$2"; shift 2 ;;
 
     --fio-test-dir) FIO_TEST_DIR="$2"; shift 2 ;;
+    --fio-file-size) FIO_FILE_SIZE="$2"; shift 2 ;;
     --fio-runtime) FIO_RUNTIME="$2"; shift 2 ;;
     --fio-repeats) FIO_REPEATS="$2"; FIO_REPEATS_EXPLICIT=1; shift 2 ;;
     --fio-max-seq-bw-cv-pct) FIO_MAX_SEQ_BW_CV_PCT="$2"; shift 2 ;;
@@ -700,14 +726,25 @@ while [[ $# -gt 0 ]]; do
     --enable-nccl-algo-comparison) ENABLE_NCCL_ALGO_COMPARISON=1; shift ;;
     --disable-nccl-algo-comparison) ENABLE_NCCL_ALGO_COMPARISON=0; FORCE_DISABLE_NCCL_ALGO_COMPARISON=1; shift ;;
     --nccl-algos) NCCL_ALGOS="$2"; shift 2 ;;
+    --run-fabric-eval) RUN_FABRIC_EVAL=1; shift ;;
+    --skip-fabric-eval) RUN_FABRIC_EVAL=0; shift ;;
+    --nmx-url) FABRIC_NMX_URL="$2"; shift 2 ;;
+    --nmx-token) FABRIC_NMX_TOKEN="$2"; shift 2 ;;
+    --ib-mgmt-host) FABRIC_IB_MGMT_HOST="$2"; shift 2 ;;
+    --ib-mgmt-user) FABRIC_IB_MGMT_USER="$2"; shift 2 ;;
+    --ib-mgmt-ssh-key) FABRIC_IB_MGMT_SSH_KEY="$2"; shift 2 ;;
+    --cumulus-hosts) FABRIC_CUMULUS_HOSTS="$2"; shift 2 ;;
+    --cumulus-user) FABRIC_CUMULUS_USER="$2"; shift 2 ;;
+    --cumulus-ssh-key) FABRIC_CUMULUS_SSH_KEY="$2"; shift 2 ;;
+    --require-management-plane) REQUIRE_MANAGEMENT_PLANE=1; shift ;;
     --modern-llm-profile) MODERN_LLM_PROFILE=1; shift ;;
     --gpu-hourly-cost-usd) GPU_HOURLY_COST_USD="$2"; shift 2 ;;
     --coverage-baseline-run-id) COVERAGE_BASELINE_RUN_ID="$2"; shift 2 ;;
     --strict-multinode-readiness) STRICT_MULTINODE_READINESS=1; shift ;;
     --no-strict-multinode-readiness) STRICT_MULTINODE_READINESS=0; shift ;;
     --multinode-readiness-check-only) MULTINODE_READINESS_CHECK_ONLY=1; shift ;;
-    --strict-canonical-completeness) STRICT_CANONICAL_COMPLETENESS=1; shift ;;
-    --no-strict-canonical-completeness) STRICT_CANONICAL_COMPLETENESS=0; shift ;;
+    --strict-canonical-completeness) STRICT_CANONICAL_COMPLETENESS=1; FORCE_DISABLE_STRICT_CANONICAL_COMPLETENESS=0; shift ;;
+    --no-strict-canonical-completeness) STRICT_CANONICAL_COMPLETENESS=0; FORCE_DISABLE_STRICT_CANONICAL_COMPLETENESS=1; shift ;;
     --canonical-min-coverage-pct) CANONICAL_MIN_COVERAGE_PCT="$2"; shift 2 ;;
     --canonical-min-advanced-coverage-pct) CANONICAL_MIN_ADVANCED_COVERAGE_PCT="$2"; shift 2 ;;
     --partial-resume-max-attempts) PARTIAL_RESUME_MAX_ATTEMPTS="$2"; shift 2 ;;
@@ -1110,6 +1147,12 @@ fi
 if (( FORCE_DISABLE_NCCL_ALGO_COMPARISON == 1 )); then
   ENABLE_NCCL_ALGO_COMPARISON=0
 fi
+if (( FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP == 1 )); then
+  RUN_VLLM_REQUEST_RATE_SWEEP=0
+fi
+if (( FORCE_DISABLE_STRICT_CANONICAL_COMPLETENESS == 1 )); then
+  STRICT_CANONICAL_COMPLETENESS=0
+fi
 
 if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
   if [[ -z "${VLLM_REQUEST_RATE_RANGE// }" ]]; then
@@ -1274,7 +1317,7 @@ emit_multinode_readiness_artifact() {
   shift || true
   local out_path="${STRUCTURED_DIR}/${RUN_ID}_multinode_readiness.json"
   mkdir -p "${STRUCTURED_DIR}"
-  python3 - "$out_path" "$RUN_ID" "$HOSTS" "$LABELS" "$STRICT_MULTINODE_READINESS" "$MODERN_LLM_PROFILE" "$RUN_VLLM_MULTINODE" "$RUN_TRAIN_STEP" "$TRAIN_STEP_MULTI_NODE" "${OOB_IF:-}" "${SOCKET_IFNAME:-}" "${NCCL_IB_HCA:-}" "$status" "$@" <<'PY'
+  python3 - "$out_path" "$RUN_ID" "$HOSTS" "$LABELS" "$STRICT_MULTINODE_READINESS" "$MODERN_LLM_PROFILE" "$RUN_VLLM_REQUEST_RATE_SWEEP" "$RUN_VLLM_MULTINODE" "$RUN_TRAIN_STEP" "$TRAIN_STEP_MULTI_NODE" "$STRICT_CANONICAL_COMPLETENESS" "$FIO_FILE_SIZE" "${OOB_IF:-}" "${SOCKET_IFNAME:-}" "${NCCL_IB_HCA:-}" "$status" "$@" <<'PY'
 import datetime as dt
 import json
 import sys
@@ -1286,14 +1329,17 @@ hosts_raw = sys.argv[3]
 labels_raw = sys.argv[4]
 strict = bool(int(sys.argv[5]))
 modern = bool(int(sys.argv[6]))
-run_vllm_multinode = bool(int(sys.argv[7]))
-run_train_step = bool(int(sys.argv[8]))
-train_step_multi_node = bool(int(sys.argv[9]))
-oob_if = sys.argv[10]
-socket_ifname = sys.argv[11]
-nccl_ib_hca = sys.argv[12]
-status = sys.argv[13]
-messages = [m for m in sys.argv[14:] if m]
+run_vllm_request_rate_sweep = bool(int(sys.argv[7]))
+run_vllm_multinode = bool(int(sys.argv[8]))
+run_train_step = bool(int(sys.argv[9]))
+train_step_multi_node = bool(int(sys.argv[10]))
+strict_canonical_completeness = bool(int(sys.argv[11]))
+fio_file_size = sys.argv[12]
+oob_if = sys.argv[13]
+socket_ifname = sys.argv[14]
+nccl_ib_hca = sys.argv[15]
+status = sys.argv[16]
+messages = [m for m in sys.argv[17:] if m]
 
 hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
 labels = [l.strip() for l in labels_raw.split(",") if l.strip()]
@@ -1310,9 +1356,12 @@ payload = {
         "host_count": len(hosts),
         "label_count": len(labels),
         "modern_llm_profile": modern,
+        "run_vllm_request_rate_sweep": run_vllm_request_rate_sweep,
         "run_vllm_multinode": run_vllm_multinode,
         "run_train_step": run_train_step,
         "train_step_multi_node": train_step_multi_node,
+        "strict_canonical_completeness": strict_canonical_completeness,
+        "fio_file_size": fio_file_size,
         "oob_if": oob_if or None,
         "socket_ifname": socket_ifname or None,
         "nccl_ib_hca": nccl_ib_hca or None,
@@ -2256,6 +2305,16 @@ PY
     fi
   fi
 
+  if [[ "$RUN_FABRIC_EVAL" -eq 1 ]]; then
+    for suffix in "_fabric_command_catalog.json" "_fabric_capability_matrix.json" "_fabric_verification.json" "_fabric_ai_correlation.json" "_fabric_scorecard.json" "_fabric_scorecard.md"; do
+      path="${STRUCTURED_DIR}/${RUN_ID}${suffix}"
+      if [[ ! -f "$path" ]]; then
+        echo "ERROR: missing required fabric artifact: ${path}" >&2
+        missing=1
+      fi
+    done
+  fi
+
   path="${STRUCTURED_DIR}/${RUN_ID}_cluster_scorecard.json"
   if [[ ! -f "$path" ]]; then
     echo "ERROR: missing required scorecard artifact: ${path}" >&2
@@ -2377,6 +2436,7 @@ echo "connectivity_probe: master_port=${CONNECTIVITY_PROBE_MASTER_PORT} barrier_
 echo "nccl_env_sensitivity: enabled=${RUN_NCCL_ENV_SENSITIVITY} min=${NCCL_ENV_MIN_BYTES} max=${NCCL_ENV_MAX_BYTES} warmup=${NCCL_ENV_WARMUP} iters=${NCCL_ENV_ITERS}"
 echo "quick_friction: enabled=${RUN_QUICK_FRICTION} strict=${QUICK_FRICTION_STRICT} checks='${QUICK_FRICTION_CHECKS}' timeout_sec=${QUICK_FRICTION_TIMEOUT_SEC} torch=${QUICK_FRICTION_TORCH_VERSION} hf_model=${QUICK_FRICTION_HF_MODEL} allow_failed='${QUICK_FRICTION_ALLOW_FAILED_CHECKS:-<none>}'"
 echo "monitoring_expectations: enabled=${RUN_MONITORING_EXPECTATIONS} strict=${MONITORING_EXPECTATIONS_STRICT} k8s_mode=${MONITORING_K8S_MODE} checks='${MONITORING_CHECKS}' sample_count=${MONITORING_SAMPLE_COUNT} dmesg_lines=${MONITORING_DMESG_LINES} timeout_sec=${MONITORING_TIMEOUT_SEC}"
+echo "fabric_eval: enabled=${RUN_FABRIC_EVAL} require_management_plane=${REQUIRE_MANAGEMENT_PLANE}"
 echo "render_localhost_report: mode=${RENDER_LOCALHOST_REPORT_MODE} detected_localhost=${IS_LOCALHOST_PACKAGE}"
 if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
   echo "OOB_IF: ${OOB_IF:-<unset>}"
@@ -2399,7 +2459,7 @@ if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
 else
   echo "vLLM(multinode): disabled mode=${RUN_VLLM_MULTINODE_MODE}"
 fi
-echo "fio: test_dir=${FIO_TEST_DIR} runtime_s=${FIO_RUNTIME} repeats=${FIO_REPEATS}"
+echo "fio: test_dir=${FIO_TEST_DIR} file_size=${FIO_FILE_SIZE} runtime_s=${FIO_RUNTIME} repeats=${FIO_REPEATS}"
 echo "fio(stability threshold): seq_bw_cv<=${FIO_MAX_SEQ_BW_CV_PCT:-<disabled>}"
 if [[ "$RUN_NVBANDWIDTH" -eq 1 ]]; then
   echo "nvbandwidth: enabled mode=${RUN_NVBANDWIDTH_MODE} runtime=${NVBANDWIDTH_RUNTIME} quick=${NVBANDWIDTH_QUICK}"
@@ -3167,6 +3227,7 @@ fio_args=(
   --hosts "$HOSTS"
   --ssh-user "$SSH_USER"
   --test-dir "$FIO_TEST_DIR"
+  --file-size "$FIO_FILE_SIZE"
   --runtime "$FIO_RUNTIME"
   --repeats "$FIO_REPEATS"
 )
@@ -3494,6 +3555,51 @@ if [[ "$RUN_QUICK_FRICTION" -eq 1 || "$RUN_MONITORING_EXPECTATIONS" -eq 1 ]]; th
     --node-labels "${operator_node_labels_csv}" \
     --fig-out "${FIGURES_DIR}/${RUN_ID}_operator_checks_dashboard.png" \
     --summary-out "${STRUCTURED_DIR}/${RUN_ID}_operator_checks_dashboard.json"
+fi
+
+if [[ "$RUN_FABRIC_EVAL" -eq 1 ]]; then
+  fabric_args=(
+    --run-id "${RUN_ID}"
+    --run-dir "${RUN_DIR}"
+    --primary-label "${PRIMARY_LABEL}"
+  )
+  if [[ -n "$LABELS" ]]; then
+    fabric_args+=(--labels "${LABELS}")
+  fi
+  if [[ -n "$SSH_USER" ]]; then
+    fabric_args+=(--ssh-user "${SSH_USER}")
+  fi
+  if [[ -n "$SSH_KEY" ]]; then
+    fabric_args+=(--ssh-key "${SSH_KEY}")
+  fi
+  if [[ -n "$FABRIC_NMX_URL" ]]; then
+    fabric_args+=(--nmx-url "${FABRIC_NMX_URL}")
+  fi
+  if [[ -n "$FABRIC_NMX_TOKEN" ]]; then
+    fabric_args+=(--nmx-token "${FABRIC_NMX_TOKEN}")
+  fi
+  if [[ -n "$FABRIC_IB_MGMT_HOST" ]]; then
+    fabric_args+=(--ib-mgmt-host "${FABRIC_IB_MGMT_HOST}")
+  fi
+  if [[ -n "$FABRIC_IB_MGMT_USER" ]]; then
+    fabric_args+=(--ib-mgmt-user "${FABRIC_IB_MGMT_USER}")
+  fi
+  if [[ -n "$FABRIC_IB_MGMT_SSH_KEY" ]]; then
+    fabric_args+=(--ib-mgmt-ssh-key "${FABRIC_IB_MGMT_SSH_KEY}")
+  fi
+  if [[ -n "$FABRIC_CUMULUS_HOSTS" ]]; then
+    fabric_args+=(--cumulus-hosts "${FABRIC_CUMULUS_HOSTS}")
+  fi
+  if [[ -n "$FABRIC_CUMULUS_USER" ]]; then
+    fabric_args+=(--cumulus-user "${FABRIC_CUMULUS_USER}")
+  fi
+  if [[ -n "$FABRIC_CUMULUS_SSH_KEY" ]]; then
+    fabric_args+=(--cumulus-ssh-key "${FABRIC_CUMULUS_SSH_KEY}")
+  fi
+  if [[ "$REQUIRE_MANAGEMENT_PLANE" -eq 1 ]]; then
+    fabric_args+=(--require-management-plane)
+  fi
+  run_step "build_fabric_eval" python3 "${ROOT_DIR}/scripts/build_fabric_eval.py" "${fabric_args[@]}"
 fi
 
 scorecard_args=(

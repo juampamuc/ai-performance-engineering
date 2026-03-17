@@ -1,4 +1,4 @@
-"""Rack baseline: pageable staging buffers and topology-unaware workers."""
+"""Rack-prep baseline: topology-unaware pageable staging."""
 
 from __future__ import annotations
 
@@ -12,8 +12,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
@@ -22,7 +20,7 @@ from ch03.grace_blackwell_topology import NICInfo, discover_nics, format_cpulist
 
 
 class BaselineRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Simulates a NIC→CPU→GPU path without NUMA or IRQ steering."""
+    """Stages a NIC-style batch without locality hints or overlap."""
 
     def __init__(self):
         super().__init__()
@@ -98,8 +96,3 @@ class BaselineRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineRackPrepBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

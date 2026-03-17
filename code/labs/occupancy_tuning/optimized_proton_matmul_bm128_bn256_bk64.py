@@ -6,7 +6,7 @@ Uses 128x256x64 blocks with more warps for high throughput.
 
 from __future__ import annotations
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark
 from labs.occupancy_tuning.triton_matmul_schedules import (
     MatmulSchedule,
     TritonMatmulProtonBenchmark,
@@ -41,6 +41,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedProtonMatmulWideN()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

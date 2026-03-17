@@ -128,6 +128,10 @@ constexpr int AlignmentD = 128 / cutlass::sizeof_bits<ElementD>::value;
 using ElementAccumulator = float;
 using ArchTag = cutlass::arch::Sm100;
 using OperatorClass = cutlass::arch::OpClassBlockScaledTensorOp;
+// Known opportunity: this benchmark already folds per-column scaling into the
+// epilogue, but a richer EVT-style epilogue visitor tree could fuse additional
+// postprocessing work and eliminate follow-on kernels entirely. That is beyond
+// the chapter scope, so it is documented here rather than implemented.
 using FusionOperation =
     cutlass::epilogue::fusion::PerColLinCombPerColBiasEltAct<
         cutlass::epilogue::thread::Identity,

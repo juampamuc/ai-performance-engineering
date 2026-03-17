@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import math
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,7 @@ from typing import Optional
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.utils.extension_loader_template import load_cuda_extension
 
@@ -16,10 +18,10 @@ _KERNEL_SOURCE = Path(__file__).with_name("loop_unrolling_kernels.cu")
 _EXTENSION_NAME = "ch08_loop_unrolling_kernels"
 
 
-def resolve_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for Chapter 8 loop-unrolling benchmarks")
-    return torch.device("cuda")
+resolve_device = partial(
+    require_cuda_device,
+    "CUDA required for Chapter 8 loop-unrolling benchmarks",
+)
 
 
 class LoopUnrollingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):

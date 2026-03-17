@@ -56,6 +56,7 @@ python -m cli.aisp bench run --targets ch18:flexdecoding --profile deep_dive --s
 | Path | Description |
 | --- | --- |
 | `baseline_flexdecoding.py`, `optimized_flexdecoding.py`, `optimized_flexdecoding_graphs.py`, `v1_engine_loop.py`, `v1_engine_loop_common.py` | FlexDecoding benchmarks plus a V1 polling-loop correctness tool (not a benchmark pair). |
+| `baseline_paged_attn_backend.py`, `optimized_paged_attn_backend.py`, `baseline_paged_attn_layout.py`, `optimized_paged_attn_layout.py`, `paged_attn_split_common.py` | Split paged-attention comparisons: dense math-versus-flash backend selection and dense masked decode versus block-table-driven FlexAttention sparse kernels. |
 | `baseline_tensor_cores.py`, `optimized_tensor_cores.py`, `flashmla_kernel.cu`, `warp_specialized_triton.py` | Tensor-core attention kernels plus Triton equivalents for rapid validation. |
 | `flex_attention_native.py`, `flex_attention_enhanced.py`, `flex_attention_large_model.py`, `kv_cache_integration_example.py` | FlexAttention examples ranging from toy sizes to large models with KV-cache reuse. |
 | `baseline_vllm_v1_integration.py`, `optimized_vllm_v1_integration.py`, `baseline_vllm_decode_graphs.py`, `optimized_vllm_decode_graphs.py`, `configs/`, `spec_configs/`, `workload_config.py` | Serving integrations and config presets for pushing workloads through vLLM or custom harnesses. |
@@ -75,9 +76,10 @@ python -m cli.aisp bench run --targets ch18 --profile minimal
 
 ## Validation Checklist
 - `python -m ch18.compare` runs the chapter baseline/optimized sweep through the shared harness.
-- `python -m ch18.run_vllm_decoder --spec-config spec_configs/draft_and_verify.json` completes with accuracy parity vs the native FlexAttention path.
+- `python -m cli.aisp bench run --targets ch18:vllm_v1_integration --profile minimal` completes with accuracy parity vs the native FlexAttention path.
 - `python -m pytest -q ch18/test_flex_attention.py` passes locally, confirming mask/score-mod helpers are wired correctly.
 
 ## Notes
 - `flex_attention` scripts accept env vars like `BLOCK_SIZE`, `DOC_SPAN`, and `SEQ_LEN` so you can sweep shapes without editing code.
 - `flashmla_kernel.cu` includes the Blackwell-specific tensor memory guard to keep compilation healthy on SM121 hardware.
+- `paged_attn_backend` isolates SDPA backend choice on a dense layout, while `paged_attn_layout` converts a real per-batch block table into both a dense reference mask and a fused FlexAttention block-mask kernel.

@@ -1,16 +1,15 @@
-"""Python harness wrapper for ch07's optimized_lookup.cu."""
+"""Python harness wrapper for ch07's layout-transformed lookup kernel."""
 
 from __future__ import annotations
 from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
 class OptimizedLookupBenchmark(CudaBinaryBenchmark):
-    """Wraps the coalesced lookup kernel."""
+    """Wrap the lookup kernel after path-table layout transformation."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -21,7 +20,7 @@ class OptimizedLookupBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_lookup",
-            friendly_name="Optimized Lookup",
+            friendly_name="Optimized Lookup (Pretransposed Paths)",
             iterations=3,
             warmup=5,
             timeout_seconds=90,
@@ -38,8 +37,12 @@ class OptimizedLookupBenchmark(CudaBinaryBenchmark):
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return memory access metrics."""
-        return None
+        """Expose the layout transformation so reports do not hide it."""
+        return {
+            "reads_per_output": 64.0,
+            "layout_pretransposed": 1.0,
+            "pointer_chase_in_kernel": 0.0,
+        }
 
 def get_benchmark() -> OptimizedLookupBenchmark:
     """Factory for discover_benchmarks()."""
@@ -48,4 +51,5 @@ def get_benchmark() -> OptimizedLookupBenchmark:
 
 if __name__ == "__main__":
     from core.harness.benchmark_harness import benchmark_main
+
     benchmark_main(get_benchmark)

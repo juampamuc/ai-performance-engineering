@@ -1,4 +1,8 @@
-"""baseline_inference_full.py - Full-depth inference without early exit."""
+"""baseline_inference_full.py - Full-depth control inference benchmark.
+
+This workload is a control pair for model-side work reduction. It is not the
+chapter's native disaggregated prefill/decode optimization example.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +32,31 @@ class FullDepthModel(nn.Module):
 
 
 class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Always executes every layer (no early exit)."""
+    """Control pair that always executes every layer.
+
+    This benchmark is a model-side control workload. The chapter-native
+    disaggregated prefill/decode story lives in the prefill_decode_disagg*
+    targets, so this pair should be read as a work-reduction control only.
+    """
+
+    story_metadata = {
+        "pair_role": "control",
+        "variant_role": "baseline",
+        "chapter_alignment": "supplementary",
+        "chapter_native_exemplar": False,
+        "control_reason": (
+            "This pair measures model-side work reduction; the chapter-native "
+            "disaggregated serving story lives in the prefill_decode_disagg targets."
+        ),
+        "comparison_axis": "full_depth_vs_early_exit",
+        "execution_pattern": "full_depth_inference",
+        "chapter_native_targets": [
+            "prefill_decode_disagg_ttft",
+            "prefill_decode_disagg_overlap",
+            "prefill_decode_disagg_batched",
+            "prefill_decode_disagg_tpot_long",
+        ],
+    }
 
     def __init__(self):
         super().__init__()
@@ -75,7 +103,7 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.inputs is not None
 
-        with self._nvtx_range("inference_full"):
+        with self._nvtx_range("inference_full_control_full_depth"):
             with torch.no_grad():
                 self.output = self.model(self.inputs)
         if self.output is None or self.inputs is None:
@@ -111,16 +139,27 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
+        """Return inference metrics plus explicit control-pair work shape."""
         from core.benchmark.metrics import compute_inference_metrics
-        return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+        metrics = compute_inference_metrics(
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),
             max_batch_size=getattr(self, 'max_batch_size', 32),
         )
+        metrics.update(
+            {
+                "configured_layers": float(self.num_layers),
+                "active_layers": float(self.num_layers),
+                "identity_tail_layers": float(self.num_layers - self.identity_start_layer),
+                "identity_layers_skipped": 0.0,
+                "story.control_pair": 1.0,
+                "story.chapter_native_exemplar": 0.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.model is None or self.inputs is None:

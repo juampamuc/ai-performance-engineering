@@ -137,15 +137,17 @@ class BaselineCUDAGraphBucketingBenchmark(VerificationPayloadMixin, BaseBenchmar
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return speculative decoding metrics for cudagraph_bucketing."""
-        from core.benchmark.metrics import compute_speculative_decoding_metrics
-        return compute_speculative_decoding_metrics(
-            draft_tokens=getattr(self, '_draft_tokens', 10),
-            accepted_tokens=getattr(self, '_accepted_tokens', 8),
-            draft_time_ms=getattr(self, '_draft_ms', 1.0),
-            verify_time_ms=getattr(self, '_verify_ms', 1.0),
-            num_rounds=getattr(self, '_num_rounds', 1),
-        )
+        """Return simulator-derived graph bucketing metrics."""
+        if self._last is None:
+            return None
+        summary = self._last.summary()
+        return {
+            "graph_tree.captures": float(summary["captures"]),
+            "graph_tree.prewarm_captures": float(summary["prewarm_captures"]),
+            "graph_tree.replays": float(summary["replays"]),
+            "graph_tree.skipped": float(summary["skipped"]),
+            "graph_tree.unique_keys": float(summary["unique_keys"]),
+        }
 
     def get_config(self) -> Optional[BenchmarkConfig]:
         return BenchmarkConfig(iterations=1, warmup=5, enable_profiling=False)
@@ -154,6 +156,3 @@ class BaselineCUDAGraphBucketingBenchmark(VerificationPayloadMixin, BaseBenchmar
 def get_benchmark() -> BaseBenchmark:
     return BaselineCUDAGraphBucketingBenchmark()
 
-
-if __name__ == "__main__":
-    main()

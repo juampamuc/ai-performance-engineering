@@ -50,7 +50,8 @@ def load_compile_analysis(code_root: Path = CODE_ROOT, benchmarks: List[Dict[str
             data, warning = _read_json_object(latest_compile, label="compile analysis")
             if warning is not None:
                 raise ValueError(warning)
-            assert data is not None
+            if data is None:
+                raise ValueError(f"compile analysis reader returned no payload for {latest_compile}")
             compile_data.update(data)
             compile_data["has_real_data"] = True
         except Exception as exc:
@@ -67,7 +68,7 @@ def load_compile_analysis(code_root: Path = CODE_ROOT, benchmarks: List[Dict[str
             is_compile = any(
                 [
                     "compile" in name,
-                    "model_eager" in name,
+                    "model_compile_bf16" in name,
                     "torch_compile" in techniques,
                     "inductor" in techniques,
                     chapter == "ch14" and ("model" in name or "eager" in name),

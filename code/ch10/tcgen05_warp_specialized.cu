@@ -25,7 +25,6 @@ namespace warp_specialized_impl {
 
 using TypeA = cutlass::half_t;
 using TypeB = cutlass::half_t;
-using TypeC = float;
 using TypeD = float;
 using Accumulator = float;
 
@@ -53,15 +52,15 @@ struct WarpSpecializedSharedStorage {
 };
 
 using MmaTag =
-    SM100_MMA_F16BF16_SS<TypeA, TypeB, TypeC, 128, 256,
+    SM100_MMA_F16BF16_SS<TypeA, TypeB, TypeD, 128, 256,
                          UMMA::Major::K, UMMA::Major::K>;
 
 template <class SharedStorageT,
-          class ATensor, class BTensor, class CTensor, class DTensor,
+          class ATensor, class BTensor, class DTensor,
           class MmaTiler_MNK, class TiledMMA,
           class TmaAtomA, class TmaAtomB>
 __global__ void __launch_bounds__(kBlockThreads, 1)
-gemm_warp_specialized(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
+gemm_warp_specialized(ATensor mA, BTensor mB, DTensor mD,
                       MmaTiler_MNK mma_tiler, TiledMMA tiled_mma,
                       int grid_m, int grid_n,
                       CUTE_GRID_CONSTANT TmaAtomA const tma_atom_A,
@@ -88,7 +87,6 @@ gemm_warp_specialized(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
 
   Tensor gA = local_tile(mA, mma_tiler, mma_coord, Step<_1, X, _1>{});
   Tensor gB = local_tile(mB, mma_tiler, mma_coord, Step<X, _1, _1>{});
-  Tensor gC = local_tile(mC, mma_tiler, mma_coord, Step<_1, _1, X>{});
   Tensor gD = local_tile(mD, mma_tiler, mma_coord, Step<_1, _1, X>{});
 
   extern __shared__ char shared_memory[];
@@ -97,7 +95,6 @@ gemm_warp_specialized(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
   auto cta_mma = tiled_mma.get_slice(Int<0>{});
   Tensor tCgA = cta_mma.partition_A(gA);
   Tensor tCgB = cta_mma.partition_B(gB);
-  Tensor tCgC = cta_mma.partition_C(gC);
   Tensor tCgD = cta_mma.partition_C(gD);
 
   cute::TMEM::Allocator1Sm tmem_allocator{};
@@ -109,7 +106,7 @@ gemm_warp_specialized(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
   __syncthreads();
   uint32_t tmem_base = storage.tmem_base_ptr;
 
-  Tensor tCtAcc = cta_mma.make_fragment_C(tCgC);
+  Tensor tCtAcc = cta_mma.make_fragment_C(tCgD);
   tCtAcc.data() = tmem_base;
 
   // TMA setup
@@ -252,17 +249,11 @@ gemm_warp_specialized(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
   auto tiled_t2r_copy = make_tmem_copy(SM100_TMEM_LOAD_32dp32b1x{}, tCtAcc);
   auto thr_t2r_copy = tiled_t2r_copy.get_slice(threadIdx.x);
 
-  Tensor tDgC = thr_t2r_copy.partition_D(tCgC);
-  Tensor tDrC = make_fragment_like(tDgC);
-  copy(tDgC, tDrC);
-
   Tensor tDtAcc = thr_t2r_copy.partition_S(tCtAcc);
   Tensor tDgD = thr_t2r_copy.partition_D(tCgD);
   Tensor tDrAcc = make_tensor<Accumulator>(shape(tDgD));
   copy(tiled_t2r_copy, tDtAcc, tDrAcc);
-
-  axpby(1.0f, tDrAcc, 0.0f, tDrC);
-  copy(tDrC, tDgD);
+  copy(tDrAcc, tDgD);
 
   __syncthreads();
   if (is_consumer) {
@@ -287,8 +278,7 @@ torch::Tensor run_warp_specialized_matmul(torch::Tensor a, torch::Tensor b) {
               "Size must be divisible by tcgen05 tile");
 
   auto options = a.options().dtype(torch::kFloat32);
-  auto c_buffer = torch::zeros({m, n}, options);
-  auto d_buffer = torch::empty_like(c_buffer);
+  auto d_buffer = torch::empty({m, n}, options);
 
   auto tiled_mma = make_tiled_mma(MmaTag{});
   auto bM = tile_size<0>(tiled_mma);
@@ -308,8 +298,6 @@ torch::Tensor run_warp_specialized_matmul(torch::Tensor a, torch::Tensor b) {
       make_layout(make_shape(m, k), make_stride(k, Int<1>{})));
   Tensor mB = make_tensor(make_gmem_ptr(reinterpret_cast<TypeB const*>(b_contig.data_ptr<at::Half>())),
       make_layout(make_shape(n, k), make_stride(k, Int<1>{})));
-  Tensor mC = make_tensor(make_gmem_ptr(c_buffer.data_ptr<TypeC>()),
-      make_layout(make_shape(m, n), make_stride(n, Int<1>{})));
   Tensor mD = make_tensor(make_gmem_ptr(d_buffer.data_ptr<TypeD>()),
       make_layout(make_shape(m, n), make_stride(n, Int<1>{})));
 
@@ -324,16 +312,16 @@ torch::Tensor run_warp_specialized_matmul(torch::Tensor a, torch::Tensor b) {
   int smem_bytes = sizeof(SharedStorageT);
 
   auto* kernel_ptr = &gemm_warp_specialized<
-      SharedStorageT, decltype(mA), decltype(mB), decltype(mC), decltype(mD),
+      SharedStorageT, decltype(mA), decltype(mB), decltype(mD),
       decltype(mma_tiler), decltype(tiled_mma), decltype(tma_atom_A), decltype(tma_atom_B)>;
 
   AT_CUDA_CHECK(cudaFuncSetAttribute(kernel_ptr, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_bytes));
 
   gemm_warp_specialized<
-      SharedStorageT, decltype(mA), decltype(mB), decltype(mC), decltype(mD),
+      SharedStorageT, decltype(mA), decltype(mB), decltype(mD),
       decltype(mma_tiler), decltype(tiled_mma), decltype(tma_atom_A), decltype(tma_atom_B)>
       <<<dimGrid, dimBlock, smem_bytes, at::cuda::getCurrentCUDAStream()>>>(
-          mA, mB, mC, mD, mma_tiler, tiled_mma, grid_m, grid_n, tma_atom_A, tma_atom_B);
+          mA, mB, mD, mma_tiler, tiled_mma, grid_m, grid_n, tma_atom_A, tma_atom_B);
   AT_CUDA_CHECK(cudaGetLastError());
 
   return d_buffer.to(torch::kFloat16);

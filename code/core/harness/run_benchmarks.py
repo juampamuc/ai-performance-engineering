@@ -19,7 +19,7 @@ import json
 import shutil
 import argparse
 import shlex
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set, Tuple, Iterator, Sequence
 from datetime import datetime
 from collections import defaultdict
 import statistics
@@ -29,7 +29,7 @@ from dataclasses import dataclass, fields, replace
 import threading
 from contextlib import ExitStack, contextmanager
 import copy
-
+ 
 # Force NVCC line info so Nsight/torch traces carry file/line metadata
 os.environ["NVCCFLAGS"] = f"-lineinfo {os.environ.get('NVCCFLAGS', '')}".strip()
 
@@ -49,7 +49,6 @@ apply_env_defaults()
 import torch
 import subprocess
 import time
-import os
 import tempfile
 import signal
 from core.harness.hardware_capabilities import detect_capabilities
@@ -58,15 +57,22 @@ from core.utils.chapter_compare_template import (
     load_benchmark,
     get_last_load_error,
 )
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode, BenchmarkConfig
+from core.harness.benchmark_harness import (
+    BaseBenchmark,
+    BenchmarkHarness,
+    BenchmarkMode,
+    BenchmarkConfig,
+    TorchrunLaunchSpec,
+)
 from core.harness.validity_profile import (
     VALIDITY_PROFILE_CHOICES,
     VALIDITY_PROFILE_HELP_TEXT,
     PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT,
     normalize_validity_profile,
 )
-from core.harness.validity_checks import detect_execution_environment
+from core.harness.validity_checks import detect_execution_environment, _collect_process_lineage_pids
 from core.harness.progress import ProgressEvent, ProgressRecorder
+from core.harness.triton_cache_utils import reset_triton_runtime_cache
 from core.benchmark.defaults import BenchmarkDefaults, set_defaults, get_defaults
 from core.benchmark.run_manifest import get_gpu_state
 from core.benchmark.run_manifest import reset_gpu_state, get_git_info
@@ -75,6 +81,12 @@ from core.harness.serving_stack import get_serving_stack_pins
 from core.profiling.profiler_config import (
     build_profiler_config_from_benchmark,
     resolve_ncu_metrics,
+)
+from core.profiling.profiler_wrapper import (
+    render_ncu_python_profile_wrapper,
+    render_nsys_python_profile_wrapper,
+    render_torch_python_profile_wrapper,
+    temporary_python_profile_wrapper,
 )
 try:
     from core.benchmark.cuda_binary_benchmark import detect_supported_arch
@@ -92,7 +104,7 @@ from core.benchmark.expectations import (
     compute_speedup,
 )
 from core.discovery import chapter_slug, resolve_target_chapters, is_cuda_binary_benchmark_file
-from core.utils.python_entrypoints import build_repo_python_env
+from core.utils.python_entrypoints import build_python_entry_command, build_repo_python_env
 
 # Import verification system for mandatory correctness checks
 try:
@@ -131,6 +143,26 @@ TORCH_PROFILER_AVAILABLE = hasattr(torch, 'profiler') and hasattr(torch.profiler
 
 # Generous timeout so deep NCU profiling can finish (pulled from benchmark defaults)
 NCU_TIMEOUT_SECONDS = get_defaults().ncu_timeout_seconds
+
+
+def _run_repo_python_module(
+    module_name: str,
+    *argv: str,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    """Run a repo Python module with repo-root package resolution."""
+    env = build_repo_python_env(repo_root, base_env=os.environ.copy())
+    cmd = build_python_entry_command(module_name=module_name, argv=list(argv))
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=True,
+        cwd=str(repo_root),
+        env=env,
+    )
+
 
 PROGRESS_PHASES = {
     "discovery": 1,
@@ -410,18 +442,14 @@ def extract_from_pytorch_trace(trace_path: Path) -> Dict[str, float]:
 # Examples that demonstrate techniques but may not show speedup (educational demos, analysis tools)
 # These are valuable for showing HOW to implement something, even if not faster for this workload
 INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
-    # Ch3: NUMA awareness demo shows the technique (outcome depends on system topology)
-    "ch03": {"numa_unaware"},
     # Ch4: DataParallel demo shows basic parallelism pattern (requires multi-GPU)
     "ch04": {"dataparallel_basic"},
     # Ch12: Graph CUDA demos show graph capture patterns
     "ch12": {"graph_cuda"},
-    # Ch14: Sliding window bench uses FlexAttention which may not have full Blackwell support
-    "ch14": {"sliding_window_bench"},
     # Ch15: Inference placement demo shows architecture patterns (multi-GPU)
     "ch15": {"inference_placement"},
-    # Ch16: Paged attention demos show memory management technique (value is memory efficiency)
-    "ch16": {"paged_attention", "paged_attention_blackwell", "piece_graphs"},
+    # Ch16: The baseline paged-attention demo and piece-graphs example remain informational.
+    "ch16": {"paged_attention", "piece_graphs"},
     # Ch17: Pipeline parallelism and routing demos (multi-GPU)
     "ch17": {"pipeline_parallelism", "prefill_decode_disagg"},
     # Ch18: Speculative decoding demos show technique patterns
@@ -558,6 +586,21 @@ def _safe_read_text_with_warning(
         if warnings_list is not None and warning not in warnings_list:
             warnings_list.append(warning)
         return None
+
+
+def _emit_run_benchmark_warning(
+    message: str,
+    *,
+    exc: Optional[BaseException] = None,
+    warnings_list: Optional[List[str]] = None,
+    logger_obj: Any = None,
+) -> str:
+    warning = f"{message}: {exc}" if exc is not None else message
+    target_logger = logger_obj if logger_obj is not None else logger
+    target_logger.warning(warning)
+    if warnings_list is not None and warning not in warnings_list:
+        warnings_list.append(warning)
+    return warning
 
 
 def _append_profile_warning(log_path: Path, message: str) -> None:
@@ -1157,8 +1200,12 @@ class BenchmarkEventLogger:
     def close(self) -> None:
         try:
             self._fh.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _emit_run_benchmark_warning(
+                f"Failed to close benchmark event log {self.path}",
+                exc=exc,
+                logger_obj=self.logger,
+            )
 
 
 def emit_event(
@@ -1173,7 +1220,7 @@ def emit_event(
     logger.info("EVENT %s %s", event_type, json.dumps(payload, default=_json_default))
 
 
-def reset_cuda_state():
+def reset_cuda_state(*, allow_cuda_context: bool = True):
     """Reset CUDA state to prevent cascading failures.
     
     Performs thorough cleanup:
@@ -1189,75 +1236,94 @@ def reset_cuda_state():
     
     # Force garbage collection first to release Python references to CUDA tensors
     gc.collect()
-    
-    try:
-        if torch.cuda.is_available():
-            # Synchronize first to complete pending operations
-            torch.cuda.synchronize()
-            
-            # Empty cache to free all unreferenced memory
-            torch.cuda.empty_cache()
-            
-            # Reset memory tracking stats
-            torch.cuda.reset_peak_memory_stats()
-            torch.cuda.reset_accumulated_memory_stats()
-            
-            # Trim CUDA graph memory pool - critical for TMA kernel stability
-            # This prevents stale graph state from affecting TMA tensor map encoding
-            try:
-                # This is the correct API to release CUDA graph memory
-                if hasattr(torch.cuda, 'graph_pool_trim'):
-                    torch.cuda.graph_pool_trim()
-            except Exception:
-                pass  # May not be available on older PyTorch versions
-            
-            # CRITICAL: Reset CUDA random number generator state
-            # CUDA graphs capture the RNG offset, which causes "Offset increment 
-            # outside graph capture" errors when subsequent benchmarks use torch.randn
-            try:
-                device_idx = torch.cuda.current_device()
-                gen = torch.cuda.default_generators[device_idx]
-                # set_offset(0) properly resets the graph capture state
-                # manual_seed alone is not sufficient
-                gen.set_offset(0)
-                gen.manual_seed(torch.initial_seed() % (2**63))
-            except Exception:
-                pass
-            
-            # Reset default CUDA stream to clear any pending operations
-            try:
-                default_stream = torch.cuda.current_stream()
-                default_stream.synchronize()
-            except Exception:
-                pass
-            
-            # Another sync to ensure cleanup is complete
-            torch.cuda.synchronize()
-    except RuntimeError:
-        pass  # CUDA not initialized or error
+
+    if allow_cuda_context:
+        try:
+            if torch.cuda.is_available():
+                # Synchronize first to complete pending operations
+                torch.cuda.synchronize()
+                
+                # Empty cache to free all unreferenced memory
+                torch.cuda.empty_cache()
+                
+                # Reset memory tracking stats
+                torch.cuda.reset_peak_memory_stats()
+                torch.cuda.reset_accumulated_memory_stats()
+                
+                # Trim CUDA graph memory pool - critical for TMA kernel stability
+                # This prevents stale graph state from affecting TMA tensor map encoding
+                try:
+                    # This is the correct API to release CUDA graph memory
+                    if hasattr(torch.cuda, 'graph_pool_trim'):
+                        torch.cuda.graph_pool_trim()
+                except Exception as exc:
+                    _emit_run_benchmark_warning("Failed to reset CUDA graph pool", exc=exc)
+                
+                # CRITICAL: Reset CUDA random number generator state
+                # CUDA graphs capture the RNG offset, which causes "Offset increment 
+                # outside graph capture" errors when subsequent benchmarks use torch.randn
+                try:
+                    device_idx = torch.cuda.current_device()
+                    gen = torch.cuda.default_generators[device_idx]
+                    # set_offset(0) properly resets the graph capture state
+                    # manual_seed alone is not sufficient
+                    gen.set_offset(0)
+                    gen.manual_seed(torch.initial_seed() % (2**63))
+                except Exception as exc:
+                    _emit_run_benchmark_warning("Failed to reset CUDA RNG state", exc=exc)
+                
+                # Reset default CUDA stream to clear any pending operations
+                try:
+                    default_stream = torch.cuda.current_stream()
+                    default_stream.synchronize()
+                except Exception as exc:
+                    _emit_run_benchmark_warning("Failed to synchronize default CUDA stream", exc=exc)
+                
+                # Another sync to ensure cleanup is complete
+                torch.cuda.synchronize()
+        except RuntimeError:
+            pass  # CUDA not initialized or error
     
     # Clear torch.compile caches to prevent stale compiled code
-    try:
-        torch._dynamo.reset()
-    except Exception:
-        pass  # May not be available in all versions
-    
+    dynamo = getattr(torch, "_dynamo", None)
+    dynamo_reset = getattr(dynamo, "reset", None)
+    if callable(dynamo_reset):
+        try:
+            dynamo_reset()
+        except Exception as exc:
+            _emit_run_benchmark_warning("Failed to reset torch._dynamo state", exc=exc)
+
     # Clear torch inductor caches as well
-    try:
-        torch._inductor.cudagraph_trees.reset_cudagraph_trees()
-    except Exception:
-        pass  # May not be available in all versions
-    
-    # Clear Triton JIT caches to ensure fresh kernel compilation
-    try:
-        import triton
-        if hasattr(triton, 'runtime') and hasattr(triton.runtime, 'cache'):
-            triton.runtime.cache.clear()
-    except Exception:
-        pass
+    inductor = getattr(torch, "_inductor", None)
+    cudagraph_trees = getattr(inductor, "cudagraph_trees", None)
+    reset_cudagraph_trees = getattr(cudagraph_trees, "reset_cudagraph_trees", None)
+    if callable(reset_cudagraph_trees):
+        try:
+            reset_cudagraph_trees()
+        except Exception as exc:
+            _emit_run_benchmark_warning("Failed to reset torch._inductor cudagraph trees", exc=exc)
+
+    reset_triton_runtime_cache(
+        lambda message, exc: _emit_run_benchmark_warning(message, exc=exc)
+    )
     
     # Second GC pass to clean up any CUDA objects freed above
     gc.collect()
+
+
+def _reset_parent_execution_state(
+    *,
+    launch_via: Any = "python",
+    cold_start: bool = False,
+    include_gpu_state: bool = False,
+) -> None:
+    """Reset parent-process state between benchmark phases and chapters."""
+    allow_cuda_context = str(launch_via).strip().lower() == "torchrun"
+    reset_cuda_state(allow_cuda_context=allow_cuda_context)
+    if include_gpu_state and allow_cuda_context:
+        reset_gpu_state()
+    if cold_start and allow_cuda_context:
+        reset_gpu_state()
 
 
 def clean_build_directories(chapter_dir: Path) -> None:
@@ -1296,8 +1362,11 @@ def clean_build_directories(chapter_dir: Path) -> None:
         candidates: list[Path] = [build_root]
         try:
             candidates.extend([p for p in build_root.iterdir() if p.is_dir()])
-        except Exception:
-            pass
+        except Exception as exc:
+            _emit_run_benchmark_warning(
+                f"Failed to inspect build directory children under {build_root}",
+                exc=exc,
+            )
 
         for build_dir in candidates:
             try:
@@ -1752,9 +1821,6 @@ def benchmark_cuda_executable(executable: Path, iterations: int = 3, warmup: int
         CudaBenchmarkResult with statistical measures (kernel time from stdout
         as primary metric, process wall-clock time as diagnostic), or None if failed
     """
-    import os
-    import signal
-    
     kernel_times_ms = []  # Parsed from stdout (primary metric)
     process_times_ms = []  # Wall-clock time (for diagnostics)
     skip_reason: Optional[str] = None
@@ -2026,38 +2092,214 @@ def _resolve_expected_cuda_seed(config: Optional[BenchmarkConfig]) -> int:
     return int(torch.cuda.initial_seed())
 
 
+def _should_profile_launch_torchrun_direct(config: BenchmarkConfig) -> bool:
+    """Bypass the external torchrun launcher for single-process profile runs.
+
+    Nsight tools are more reliable when they attach directly to the wrapper
+    process instead of a short-lived torchrun parent that immediately spawns a
+    single worker and exits after rendezvous setup.
+    """
+    nproc_per_node = int(getattr(config, "nproc_per_node", None) or torch.cuda.device_count() or 1)
+    nnodes = int(getattr(config, "nnodes", None) or 1)
+    return nproc_per_node == 1 and nnodes == 1
+
+
+def _command_uses_external_torchrun(command: Sequence[str]) -> bool:
+    if not command:
+        return False
+    head = os.path.basename(str(command[0]))
+    if head == "torchrun":
+        return True
+    return (
+        len(command) >= 3
+        and str(command[0]) == sys.executable
+        and str(command[1]) == "-m"
+        and str(command[2]) == "torch.distributed.run"
+    )
+
+
+def _command_is_direct_torchrun_wrapper(command: Sequence[str]) -> bool:
+    return (
+        len(command) >= 3
+        and str(command[0]) == sys.executable
+        and str(command[1]) == "-m"
+        and str(command[2]) == "core.harness.torchrun_wrapper"
+    )
+
+
+def _retry_nsys_in_clean_helper(
+    *,
+    output_dir: Path,
+    output_name: str,
+    target_command: Sequence[str],
+    trace_forks: bool,
+    profile_preset: str,
+    full_timeline: bool,
+    timeout: Optional[float],
+    wait_mode: str,
+    env: Dict[str, str],
+) -> Optional[Path]:
+    payload = {
+        "output_dir": str(output_dir),
+        "output_name": output_name,
+        "command": list(target_command),
+        "trace_forks": bool(trace_forks),
+        "preset": profile_preset,
+        "full_timeline": bool(full_timeline),
+        "timeout_seconds": float(timeout) if timeout and timeout > 0 else None,
+        "wait_mode": wait_mode,
+        "extra_env": env,
+        "sanitize_python_startup": True,
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as payload_handle:
+        payload_handle.write(json.dumps(payload))
+        payload_path = Path(payload_handle.name)
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as result_handle:
+        result_path = Path(result_handle.name)
+    helper_env = build_repo_python_env(repo_root, base_env=os.environ.copy())
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.profiling.nsys_capture_helper",
+                "--payload",
+                str(payload_path),
+                "--result",
+                str(result_path),
+            ],
+            cwd=str(repo_root),
+            env=helper_env,
+            capture_output=True,
+            text=True,
+            timeout=(float(timeout) if timeout and timeout > 0 else 120.0) + 60.0,
+            check=False,
+        )
+        if proc.returncode != 0 and LOGGER_AVAILABLE:
+            logger.warning(
+                "  Clean helper NSYS retry exited with code %s. stdout=%s stderr=%s",
+                proc.returncode,
+                (proc.stdout or "").strip()[-400:],
+                (proc.stderr or "").strip()[-400:],
+            )
+        if not result_path.exists():
+            return None
+        result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+        report = result_payload.get("report")
+        if not report:
+            return None
+        report_path = Path(report)
+        if report_path.exists():
+            return report_path
+        return None
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        if LOGGER_AVAILABLE:
+            logger.warning("  Clean helper NSYS retry failed: %s", exc, exc_info=True)
+        return None
+    finally:
+        payload_path.unlink(missing_ok=True)
+        result_path.unlink(missing_ok=True)
+
+
 def _build_torchrun_profile_command(
     config: BenchmarkConfig,
-    wrapper_script_path: str,
+    wrapper_script_path: Optional[str] = None,
+    *,
+    spec: Optional[TorchrunLaunchSpec] = None,
 ) -> Tuple[List[str], Dict[str, str]]:
+    if spec is None and not wrapper_script_path:
+        raise ValueError("Torchrun profile launch requires wrapper_script_path or spec")
     nproc_per_node = getattr(config, "nproc_per_node", None) or torch.cuda.device_count() or 1
-    torchrun_cmd = [
-        "torchrun",
-        "--nproc_per_node",
-        str(nproc_per_node),
-    ]
-    if getattr(config, "nnodes", None):
-        torchrun_cmd.extend(["--nnodes", str(config.nnodes)])
+    nnodes = int(getattr(config, "nnodes", None) or 1)
+    use_direct_wrapper = _should_profile_launch_torchrun_direct(config)
+    if use_direct_wrapper:
+        torchrun_cmd = [sys.executable]
+    else:
+        torchrun_path = shutil.which("torchrun")
+        if torchrun_path:
+            torchrun_cmd = [
+                torchrun_path,
+                "--nproc_per_node",
+                str(nproc_per_node),
+            ]
+        else:
+            torchrun_cmd = [
+                sys.executable,
+                "-m",
+                "torch.distributed.run",
+                "--nproc_per_node",
+                str(nproc_per_node),
+            ]
+        if getattr(config, "nnodes", None):
+            torchrun_cmd.extend(["--nnodes", str(config.nnodes)])
 
-    rdzv_endpoint = getattr(config, "rdzv_endpoint", None)
-    if not rdzv_endpoint:
-        rdzv_endpoint = f"127.0.0.1:{_pick_free_port()}"
-    rdzv_backend = getattr(config, "rdzv_backend", None) or "c10d"
-    torchrun_cmd.extend(["--rdzv_backend", str(rdzv_backend), "--rdzv_endpoint", str(rdzv_endpoint)])
+        rdzv_endpoint = getattr(config, "rdzv_endpoint", None)
+        if not rdzv_endpoint:
+            rdzv_endpoint = f"127.0.0.1:{_pick_free_port()}"
+        rdzv_backend = getattr(config, "rdzv_backend", None) or "c10d"
+        torchrun_cmd.extend(["--rdzv_backend", str(rdzv_backend), "--rdzv_endpoint", str(rdzv_endpoint)])
 
     expected_seed = _resolve_expected_seed(config)
-    wrapper_args: List[str] = [
-        "--aisp-target-script",
-        wrapper_script_path,
-        "--aisp-expected-torch-seed",
-        str(expected_seed),
-    ]
+    if spec is None:
+        wrapper_args: List[str] = [
+            "--aisp-target-script",
+            str(wrapper_script_path),
+            "--aisp-expected-torch-seed",
+            str(expected_seed),
+        ]
+        script_args: List[str] = []
+        spec_env: Dict[str, str] = {}
+    else:
+        script_path = Path(spec.script_path).resolve() if spec.script_path is not None else None
+        module_name = spec.module_name
+        if bool(script_path) == bool(module_name):
+            raise RuntimeError("Torchrun profiling spec requires exactly one of script_path or module_name.")
+        wrapper_args = ["--aisp-expected-torch-seed", str(expected_seed)]
+        if script_path is not None:
+            wrapper_args[0:0] = ["--aisp-target-script", str(script_path)]
+        else:
+            wrapper_args[0:0] = ["--aisp-target-module", str(module_name)]
+
+        def _config_args_from_map() -> List[str]:
+            args: List[str] = []
+            for key, flag in spec.config_arg_map.items():
+                if not flag or not hasattr(config, key):
+                    continue
+                value = getattr(config, key)
+                if value is None:
+                    continue
+                if isinstance(value, bool):
+                    if value:
+                        args.append(flag)
+                else:
+                    args.extend([flag, str(value)])
+            return args
+
+        extra_args: List[str] = []
+        target_label = getattr(config, "target_label", None)
+        if target_label:
+            target_overrides = (getattr(config, "target_extra_args", {}) or {}).get(target_label)
+            if target_overrides:
+                if isinstance(target_overrides, str):
+                    extra_args.extend(shlex.split(target_overrides))
+                else:
+                    extra_args.extend(list(target_overrides))
+        script_args = list(spec.script_args)
+        script_args.extend(_config_args_from_map())
+        script_args.extend(extra_args)
+        spec_env = dict(spec.env)
+
     if getattr(config, "deterministic", False):
         wrapper_args.append("--aisp-deterministic")
     if torch.cuda.is_available():
         wrapper_args.extend(["--aisp-expected-cuda-seed", str(_resolve_expected_cuda_seed(config))])
 
-    torchrun_cmd.extend(["-m", "core.harness.torchrun_wrapper", *wrapper_args])
+    if use_direct_wrapper:
+        torchrun_cmd.extend(["-m", "core.harness.torchrun_wrapper", *wrapper_args, *script_args])
+    else:
+        torchrun_cmd.extend(["-m", "core.harness.torchrun_wrapper", *wrapper_args])
+        if spec is not None:
+            torchrun_cmd.extend(script_args)
 
     env = build_repo_python_env(repo_root, base_env=os.environ.copy())
     if getattr(config, "single_gpu", False):
@@ -2069,8 +2311,39 @@ def _build_torchrun_profile_command(
         if getattr(config, "gpu_mem_clock_mhz", None) is not None:
             env["AISP_GPU_MEM_CLOCK_MHZ"] = str(config.gpu_mem_clock_mhz)
         env["AISP_RAMP_GPU_CLOCKS"] = "1"
+    if spec is not None:
+        env.update(spec_env)
+    if use_direct_wrapper:
+        env.setdefault("RANK", "0")
+        env.setdefault("LOCAL_RANK", "0")
+        env.setdefault("WORLD_SIZE", "1")
+        env.setdefault("LOCAL_WORLD_SIZE", "1")
+        env.setdefault("GROUP_RANK", "0")
+        env.setdefault("ROLE_RANK", "0")
+        env.setdefault("ROLE_NAME", "default")
+        env.setdefault("MASTER_ADDR", "127.0.0.1")
+        env.setdefault("MASTER_PORT", "29500")
 
     return torchrun_cmd, env
+
+
+def _resolve_profile_torchrun_spec(
+    benchmark: Any,
+    *,
+    profiler: str,
+    config: Optional[BenchmarkConfig],
+    output_path: Optional[Path] = None,
+) -> Optional[TorchrunLaunchSpec]:
+    getter = getattr(benchmark, "get_profile_torchrun_spec", None)
+    if callable(getter):
+        spec = getter(profiler=profiler, config=config, output_path=output_path)
+        if spec is not None:
+            return spec
+    if profiler in {"nsys", "ncu"}:
+        base_getter = getattr(benchmark, "get_torchrun_spec", None)
+        if callable(base_getter):
+            return base_getter(config)
+    return None
 
 
 def _harden_profile_env(
@@ -2127,8 +2400,11 @@ def _harden_profile_env(
         for site_path in site.getsitepackages():
             if site_path:
                 pythonpath_entries.append(site_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        _emit_run_benchmark_warning(
+            "Failed to discover Python site-packages while hardening profiler environment",
+            exc=exc,
+        )
     existing = env.get("PYTHONPATH")
     if existing:
         for entry in existing.split(os.pathsep):
@@ -2157,6 +2433,31 @@ def _harden_profile_env(
     # PyTorch itself recommends this when Module.cpp symbolization warnings appear.
     env.setdefault("TORCH_DISABLE_ADDR2LINE", "1")
     return env
+
+
+@contextmanager
+def _temporary_python_profile_launch(
+    wrapper_source: str,
+    *,
+    chapter_dir: Path,
+    repo_root: Path,
+    config: Optional[BenchmarkConfig],
+    benchmark: Any,
+    allow_torchrun: bool = True,
+) -> Iterator[Tuple[Path, List[str], Dict[str, str], bool]]:
+    with temporary_python_profile_wrapper(wrapper_source) as wrapper_path:
+        use_torchrun = bool(allow_torchrun and _is_torchrun_launch(config))
+        if use_torchrun and config is not None:
+            command, base_env = _build_torchrun_profile_command(config, str(wrapper_path))
+        else:
+            command = [sys.executable, str(wrapper_path)]
+            base_env = None
+        env = _apply_profile_env_overrides(
+            _harden_profile_env(base_env, repo_root=repo_root, chapter_dir=chapter_dir),
+            config=config,
+            benchmark=benchmark,
+        )
+        yield wrapper_path, command, env, use_torchrun
 
 
 def _apply_profile_env_overrides(
@@ -2244,138 +2545,143 @@ def profile_python_benchmark(
     
     bench_config = config
     if bench_config is None and hasattr(benchmark, "get_config"):
-        try:
-            bench_config = benchmark.get_config()
-        except Exception:
-            bench_config = None
-    nvtx_includes = getattr(bench_config, "nsys_nvtx_include", None) if bench_config else None
-    validity_profile = str(getattr(bench_config, "validity_profile", "strict")).strip().lower() if bench_config else "strict"
-    lock_gpu_clocks_flag = bool(getattr(bench_config, "lock_gpu_clocks", False)) if bench_config else False
+        bench_config = benchmark.get_config()
+    profiling_view = bench_config.profiling if bench_config else None
+    validity_view = bench_config.validity if bench_config else None
+    timing_view = bench_config.timing if bench_config else None
+    nvtx_includes = profiling_view.nsys_nvtx_include if profiling_view else None
+    validity_profile = validity_view.validity_profile if validity_view else "strict"
+    lock_gpu_clocks_flag = validity_view.lock_gpu_clocks if validity_view else False
     if validity_profile != "strict":
         lock_gpu_clocks_flag = False
-    gpu_sm_clock_mhz = getattr(bench_config, "gpu_sm_clock_mhz", None) if bench_config else None
-    gpu_mem_clock_mhz = getattr(bench_config, "gpu_mem_clock_mhz", None) if bench_config else None
+    gpu_sm_clock_mhz = validity_view.gpu_sm_clock_mhz if validity_view else None
+    gpu_mem_clock_mhz = validity_view.gpu_mem_clock_mhz if validity_view else None
     # chapter_dir points to e.g. <repo>/ch10 or <repo>/labs/<lab>; use global
     # repository root for package imports like `labs.*` and `core.*`.
     repo_root = Path(__file__).resolve().parents[2]
 
-    # Create a temporary wrapper script that runs the benchmark
-    wrapper_script = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
-    
     try:
         from core.profiling.nsight_automation import NsightAutomation
-
-        wrapper_script.write(f"""
-from pathlib import Path
-from contextlib import nullcontext
-
-_BENCHMARK_PATH = Path(r"{benchmark_path}")
-from core.utils.python_entrypoints import load_module_from_path
-
-_BENCHMARK_MODULE = load_module_from_path("profile_benchmark_module", _BENCHMARK_PATH)
-get_benchmark = _BENCHMARK_MODULE.get_benchmark
-
-from core.harness.benchmark_harness import (
-    BenchmarkConfig,
-    ReadOnlyBenchmarkConfigView,
-    lock_gpu_clocks,
-    ramp_gpu_clocks,
-)
-from core.profiling.nvtx_helper import nvtx_range
-
-def _run_profile() -> None:
-    import sys
-    benchmark = get_benchmark()
-    _profiling_config = BenchmarkConfig(
-        enable_profiling=True,
-        enable_nvtx=True,
-        nsys_nvtx_include={nvtx_includes!r},
-        validity_profile={validity_profile!r},
-        lock_gpu_clocks={lock_gpu_clocks_flag!r},
-        gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
-        gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
-    )
-    benchmark._config = ReadOnlyBenchmarkConfigView.from_config(_profiling_config)
-    lock_ctx = (
-        lock_gpu_clocks(
-            device=0,
-            sm_clock_mhz=getattr(_profiling_config, "gpu_sm_clock_mhz", None),
-            mem_clock_mhz=getattr(_profiling_config, "gpu_mem_clock_mhz", None),
-        )
-        if getattr(_profiling_config, "lock_gpu_clocks", False)
-        else nullcontext()
-    )
-    with lock_ctx:
-        # Best-effort clock ramp before capture.
-        try:
-            ramp_gpu_clocks(device=0)
-        except Exception as exc:
-            print(f"[profile_warning] Failed to ramp GPU clocks before nsys capture: {{exc}}", file=sys.stderr)
-        benchmark.setup()
-
-        # Warmup (keep short; profiling is not a timing run)
-        benchmark.benchmark_fn()
-
-        # Profile execution
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-
-        with nvtx_range("compute_kernel:profile", enable=True):
-            benchmark.benchmark_fn()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-
-        # Some benchmarks launch worker processes (e.g., vLLM) and need
-        # graceful teardown so Nsight can exit cleanly. Others prefer hard-exit
-        # to avoid teardown crashes under Nsight.
-        if getattr(benchmark, "profile_require_teardown", False):
-            try:
-                benchmark.teardown()
-            except Exception as exc:
-                print(f"[profile_warning] Benchmark teardown failed after nsys capture: {{exc}}", file=sys.stderr)
-            raise SystemExit(0)
-        import os as _os
-        _os._exit(0)
-
-
-if __name__ == "__main__":
-    _run_profile()
-""")
-        wrapper_script.close()
-        
-        use_torchrun = _is_torchrun_launch(bench_config)
-        if use_torchrun and bench_config is not None:
-            target_command, env = _build_torchrun_profile_command(bench_config, wrapper_script.name)
-        else:
-            target_command = [sys.executable, wrapper_script.name]
-            env = None
-        profile_preset, full_timeline = _resolve_nsys_profile_mode(bench_config)
-        trace_forks = bool(use_torchrun)
-        timeout = 120
-        if bench_config is not None and hasattr(bench_config, "get_effective_timeout"):
-            timeout = bench_config.get_effective_timeout("nsys") or timeout
-        automation = NsightAutomation(output_dir)
-        nsys_report = automation.profile_nsys(
-            command=target_command,
-            output_name=f"{benchmark_name}__{variant}",
-            trace_cuda=True,
-            trace_nvtx=True,
-            trace_osrt=True,
-            full_timeline=full_timeline,
-            trace_forks=trace_forks,
-            preset=profile_preset,
-            timeout_seconds=float(timeout) if timeout and timeout > 0 else None,
-            wait_mode="primary",
-            finalize_grace_seconds=20.0,
-            force_lineinfo=True,
-            extra_env=_apply_profile_env_overrides(
-                _harden_profile_env(env, repo_root=repo_root, chapter_dir=chapter_dir),
+        torchrun_profile_spec = None
+        target_command: List[str]
+        env: Dict[str, str]
+        use_torchrun = bool(_is_torchrun_launch(bench_config))
+        if use_torchrun:
+            torchrun_profile_spec = _resolve_profile_torchrun_spec(
+                benchmark,
+                profiler="nsys",
+                config=bench_config,
+            )
+        if torchrun_profile_spec is not None and bench_config is not None:
+            target_command, base_env = _build_torchrun_profile_command(
+                bench_config,
+                spec=torchrun_profile_spec,
+            )
+            env = _apply_profile_env_overrides(
+                _harden_profile_env(base_env, repo_root=repo_root, chapter_dir=chapter_dir),
                 config=bench_config,
                 benchmark=benchmark,
-            ),
-            sanitize_python_startup=True,
-        )
+            )
+        else:
+            wrapper_source = render_nsys_python_profile_wrapper(
+                benchmark_path=benchmark_path,
+                nvtx_includes=nvtx_includes,
+                validity_profile=validity_profile,
+                lock_gpu_clocks_flag=lock_gpu_clocks_flag,
+                gpu_sm_clock_mhz=gpu_sm_clock_mhz,
+                gpu_mem_clock_mhz=gpu_mem_clock_mhz,
+            )
+            with _temporary_python_profile_launch(
+                wrapper_source,
+                chapter_dir=chapter_dir,
+                repo_root=repo_root,
+                config=bench_config,
+                benchmark=benchmark,
+            ) as (_wrapper_path, target_command, env, use_torchrun):
+                trace_forks = _command_uses_external_torchrun(target_command)
+                profile_preset, full_timeline = _resolve_nsys_profile_mode(bench_config)
+                timeout = timing_view.timeout_for("nsys") if timing_view else None
+                timeout = timeout or 120
+                automation = NsightAutomation(output_dir)
+                nsys_report = automation.profile_nsys(
+                    command=target_command,
+                    output_name=f"{benchmark_name}__{variant}",
+                    trace_cuda=True,
+                    trace_nvtx=True,
+                    trace_osrt=True,
+                    full_timeline=full_timeline,
+                    trace_forks=trace_forks,
+                    preset=profile_preset,
+                    timeout_seconds=float(timeout) if timeout and timeout > 0 else None,
+                    wait_mode="primary",
+                    finalize_grace_seconds=20.0,
+                    force_lineinfo=True,
+                    extra_env=env,
+                    sanitize_python_startup=True,
+                )
+                if nsys_report and Path(nsys_report).exists():
+                    return Path(nsys_report)
+                return None
+
+        profile_preset, full_timeline = _resolve_nsys_profile_mode(bench_config)
+        trace_forks = _command_uses_external_torchrun(target_command)
+        wait_mode = "all" if trace_forks else "primary"
+        timeout = timing_view.timeout_for("nsys") if timing_view else None
+        timeout = timeout or 120
+        automation = NsightAutomation(output_dir)
+        def _run_nsys_capture() -> Optional[Path]:
+            report = automation.profile_nsys(
+                command=target_command,
+                output_name=f"{benchmark_name}__{variant}",
+                trace_cuda=True,
+                trace_nvtx=True,
+                trace_osrt=True,
+                full_timeline=full_timeline,
+                trace_forks=trace_forks,
+                preset=profile_preset,
+                timeout_seconds=float(timeout) if timeout and timeout > 0 else None,
+                wait_mode=wait_mode,
+                finalize_grace_seconds=20.0,
+                force_lineinfo=True,
+                extra_env=env,
+                sanitize_python_startup=True,
+            )
+            if report and Path(report).exists():
+                return Path(report)
+            return None
+
+        nsys_report = _run_nsys_capture()
+        if (
+            nsys_report is None
+            and not trace_forks
+            and _command_is_direct_torchrun_wrapper(target_command)
+        ):
+            if LOGGER_AVAILABLE:
+                logger.warning(
+                    "  Retrying Nsight Systems capture once for %s (%s) after a missing report artifact on the direct single-process torchrun wrapper path.",
+                    benchmark_name,
+                    variant,
+                )
+            time.sleep(1.0)
+            nsys_report = _run_nsys_capture()
+            if nsys_report is None:
+                if LOGGER_AVAILABLE:
+                    logger.warning(
+                        "  Retrying Nsight Systems capture from a clean helper process for %s (%s) after repeated missing artifacts on the direct single-process torchrun wrapper path.",
+                        benchmark_name,
+                        variant,
+                    )
+                nsys_report = _retry_nsys_in_clean_helper(
+                    output_dir=output_dir,
+                    output_name=f"{benchmark_name}__{variant}",
+                    target_command=target_command,
+                    trace_forks=trace_forks,
+                    profile_preset=profile_preset,
+                    full_timeline=full_timeline,
+                    timeout=float(timeout) if timeout and timeout > 0 else None,
+                    wait_mode=wait_mode,
+                    env=env,
+                )
         if nsys_report and Path(nsys_report).exists():
             return Path(nsys_report)
         return None
@@ -2389,8 +2695,6 @@ if __name__ == "__main__":
                 exc_info=True,
             )
         return None
-    finally:
-        Path(wrapper_script.name).unlink(missing_ok=True)
 
 
 def _resolve_nsys_profile_mode(config: Optional[BenchmarkConfig]) -> tuple[str, bool]:
@@ -2496,11 +2800,94 @@ def _terminate_process_group(process: subprocess.Popen, reason: str, timeout_sec
             logger.warning("  Profiler cleanup detail (%s): %s", reason, detail)
 
 
-def _collect_descendant_pids(root_pid: int) -> List[int]:
+@dataclass
+class _ProfileSubprocessResult:
+    process: subprocess.Popen[str]
+    stdout_log: Path
+    stderr_log: Path
+    timed_out: bool
+    failure_warning: Optional[str]
+
+
+def _run_profile_subprocess(
+    *,
+    command: List[str],
+    cwd: Path,
+    env: Dict[str, str],
+    timeout_seconds: float,
+    log_base: Path,
+    terminate_reason: str,
+    capture_output: bool,
+    timeout_collect_error_message: str,
+    wait_error_message: str,
+) -> _ProfileSubprocessResult:
+    stdout_log = log_base.with_suffix(".stdout.log")
+    stderr_log = log_base.with_suffix(".stderr.log")
+    popen_kwargs = dict(
+        cwd=str(cwd),
+        text=True,
+        start_new_session=True,
+        env=env,
+    )
+    if capture_output:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **popen_kwargs,
+        )
+    else:
+        with stdout_log.open("w") as stdout_handle, stderr_log.open("w") as stderr_handle:
+            process = subprocess.Popen(
+                command,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                **popen_kwargs,
+            )
+
+    stdout_text = ""
+    stderr_text = ""
+    timed_out = False
+    failure_warning: Optional[str] = None
+    try:
+        if capture_output:
+            stdout_text, stderr_text = process.communicate(timeout=timeout_seconds)
+        else:
+            process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _terminate_process_group(process, terminate_reason, timeout_seconds=timeout_seconds)
+        try:
+            if capture_output:
+                stdout_text, stderr_text = process.communicate(timeout=2)
+            else:
+                process.wait(timeout=2)
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            failure_warning = f"{timeout_collect_error_message}: {exc}"
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        failure_warning = f"{wait_error_message}: {exc}"
+        _terminate_process_group(process, terminate_reason)
+
+    if capture_output:
+        if stdout_text:
+            stdout_log.write_text(stdout_text)
+        if stderr_text:
+            stderr_log.write_text(stderr_text)
+    log_base.with_suffix(".command.json").write_text(json.dumps({"command": command}, indent=2))
+    return _ProfileSubprocessResult(
+        process=process,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        timed_out=timed_out,
+        failure_warning=failure_warning,
+    )
+
+
+def _collect_descendant_pids(root_pid: int, *, proc_root: Path = Path("/proc")) -> List[int]:
     """Collect descendant PIDs for the current run process."""
     parent_to_children: Dict[int, Set[int]] = {}
     try:
-        proc_entries = list(Path("/proc").iterdir())
+        proc_entries = list(proc_root.iterdir())
     except Exception:
         return []
 
@@ -2589,6 +2976,61 @@ def _pid_exists(pid: Optional[int], *, proc_root: Path = Path("/proc")) -> bool:
     if pid is None or int(pid) <= 0:
         return False
     return (proc_root / str(int(pid))).exists()
+
+
+def _collect_current_run_benchmark_orphan_pids(
+    *,
+    current_run_id: str,
+    current_owner_pid: int,
+    repo_root: Path,
+    proc_root: Path = Path("/proc"),
+) -> List[int]:
+    """Find detached benchmark-owned processes from the current run."""
+    run_id = str(current_run_id).strip()
+    owner_pid = int(current_owner_pid)
+    owner_pid_marker = str(owner_pid)
+    if not run_id or owner_pid <= 0:
+        return []
+
+    related_pids = set(_collect_descendant_pids(owner_pid, proc_root=proc_root))
+    related_pids.update(_collect_process_lineage_pids(owner_pid, proc_root=proc_root))
+    related_pids.add(owner_pid)
+
+    repo_root_str = str(repo_root.resolve())
+    current_orphans: List[int] = []
+    try:
+        proc_entries = list(proc_root.iterdir())
+    except Exception:
+        return current_orphans
+
+    for proc_dir in proc_entries:
+        if not proc_dir.name.isdigit():
+            continue
+        pid = int(proc_dir.name)
+        if pid in related_pids:
+            continue
+
+        env = _read_proc_environ(pid, proc_root=proc_root)
+        if str(env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip() != run_id:
+            continue
+        if str(env.get("AISP_BENCHMARK_OWNER_PID", "")).strip() != owner_pid_marker:
+            continue
+
+        cmdline = _read_proc_cmdline(pid, proc_root=proc_root)
+        env_context = " ".join(
+            value
+            for value in (
+                env.get("PWD", ""),
+                env.get("PYTHONPATH", ""),
+            )
+            if value
+        )
+        if repo_root_str not in cmdline and repo_root_str not in env_context:
+            continue
+        current_orphans.append(pid)
+
+    current_orphans.sort()
+    return current_orphans
 
 
 def _collect_stale_benchmark_orphan_pids(
@@ -2681,9 +3123,62 @@ def _reap_stale_benchmark_orphans(
     return len(stale_pids)
 
 
-def _reap_run_descendants(reason: str, *, grace_seconds: float = 2.0) -> None:
+def _reap_current_run_benchmark_orphans(
+    reason: str,
+    *,
+    current_run_id: str,
+    current_owner_pid: int,
+    repo_root: Path,
+    grace_seconds: float = 2.0,
+) -> int:
+    """Kill detached benchmark-owned processes from the current run."""
+    current_orphans = _collect_current_run_benchmark_orphan_pids(
+        current_run_id=current_run_id,
+        current_owner_pid=current_owner_pid,
+        repo_root=repo_root,
+    )
+    if not current_orphans:
+        return 0
+
+    for pid in current_orphans:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    remaining = current_orphans
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = [pid for pid in remaining if Path(f"/proc/{pid}").exists()]
+
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    if LOGGER_AVAILABLE:
+        logger.warning(
+            "  Reaped %d detached benchmark process(es) from current run before %s",
+            len(current_orphans),
+            reason,
+        )
+    return len(current_orphans)
+
+
+def _reap_run_descendants(
+    reason: str,
+    *,
+    grace_seconds: float = 2.0,
+    proc_root: Path = Path("/proc"),
+) -> None:
     """Best-effort cleanup of leaked descendant processes owned by this run."""
-    descendants = _collect_descendant_pids(os.getpid())
+    descendants = _collect_descendant_pids(os.getpid(), proc_root=proc_root)
     if not descendants:
         return
 
@@ -2699,7 +3194,7 @@ def _reap_run_descendants(reason: str, *, grace_seconds: float = 2.0) -> None:
     remaining = descendants
     while remaining and time.monotonic() < deadline:
         time.sleep(0.05)
-        remaining = [pid for pid in remaining if Path(f"/proc/{pid}").exists()]
+        remaining = [pid for pid in remaining if (proc_root / str(pid)).exists()]
 
     for pid in remaining:
         try:
@@ -2721,10 +3216,17 @@ def _reap_benchmark_process_leftovers(
     reason: str,
     *,
     current_run_id: str,
+    current_owner_pid: int,
     repo_root: Path,
 ) -> None:
-    """Clear benchmark-owned leftovers before the next example starts."""
+    """Clear benchmark-owned leftovers before the next benchmark phase starts."""
     _reap_run_descendants(reason)
+    _reap_current_run_benchmark_orphans(
+        reason,
+        current_run_id=current_run_id,
+        current_owner_pid=current_owner_pid,
+        repo_root=repo_root,
+    )
     _reap_stale_benchmark_orphans(
         reason,
         current_run_id=current_run_id,
@@ -2769,8 +3271,11 @@ def profile_python_benchmark_ncu(
         config = BenchmarkConfig()
     config = _apply_preferred_ncu_profile_overrides(config, benchmark)
 
+    profiling_view = config.profiling
+    validity_view = config.validity
+    timing_view = config.timing
     profiler_config = build_profiler_config_from_benchmark(config)
-    configured_nvtx_includes = profiler_config.nvtx_includes
+    configured_nvtx_includes = profiling_view.nsys_nvtx_include or profiler_config.nvtx_includes
     nvtx_includes = list(configured_nvtx_includes or [])
     # Keep the emitted wrapper NVTX range aligned with configured include filters;
     # otherwise NCU can connect/disconnect without capturing any kernels.
@@ -2798,13 +3303,13 @@ def profile_python_benchmark_ncu(
     chapter_name = chapter_dir.name
     if chapter_name.startswith("ch") and chapter_name[2:].isdigit():
         chapter_num = int(chapter_name[2:])
-    metric_set = str(getattr(config, "ncu_metric_set", "auto") or "auto").lower()
+    metric_set = str(profiling_view.ncu_metric_set or "auto").lower()
     # "auto" follows the active profiling preset:
     # - minimal -> MINIMAL_METRICS (basic set)
     # - roofline -> ROOFLINE_METRICS
     # - deep_dive -> chapter-specific metrics (when available)
     if metric_set == "auto":
-        preset = str(getattr(config, "profile_type", None) or "minimal").lower()
+        preset = str(profiling_view.profile_type or "minimal").lower()
         if preset in {"minimal", "roofline"}:
             metrics_override = resolve_ncu_metrics(preset, chapter=None)
         elif preset == "deep_dive":
@@ -2813,187 +3318,120 @@ def profile_python_benchmark_ncu(
             metrics_override = resolve_ncu_metrics("deep_dive", chapter=None)
     else:
         metrics_override = resolve_ncu_metrics(metric_set, chapter=chapter_num)
-    validity_profile = str(getattr(config, "validity_profile", "strict")).strip().lower()
-    lock_gpu_clocks_flag = bool(getattr(config, "lock_gpu_clocks", False))
+    validity_profile = validity_view.validity_profile
+    lock_gpu_clocks_flag = validity_view.lock_gpu_clocks
     if validity_profile != "strict":
         lock_gpu_clocks_flag = False
-    gpu_sm_clock_mhz = getattr(config, "gpu_sm_clock_mhz", None)
-    gpu_mem_clock_mhz = getattr(config, "gpu_mem_clock_mhz", None)
+    gpu_sm_clock_mhz = validity_view.gpu_sm_clock_mhz
+    gpu_mem_clock_mhz = validity_view.gpu_mem_clock_mhz
 
-    # Create a temporary wrapper script that runs the benchmark
-    wrapper_script = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
-    
     try:
-        wrapper_script.write(f"""
-from pathlib import Path
-from contextlib import nullcontext
-
-_BENCHMARK_PATH = Path(r"{benchmark_path}")
-from core.utils.python_entrypoints import load_module_from_path
-
-_BENCHMARK_MODULE = load_module_from_path("profile_benchmark_module", _BENCHMARK_PATH)
-get_benchmark = _BENCHMARK_MODULE.get_benchmark
-
-from core.harness.benchmark_harness import (
-    BenchmarkConfig,
-    ReadOnlyBenchmarkConfigView,
-    lock_gpu_clocks,
-    ramp_gpu_clocks,
-)
-from core.profiling.nvtx_helper import nvtx_range
-
-def _run_profile() -> None:
-    import sys
-    benchmark = get_benchmark()
-    _profiling_config = BenchmarkConfig(
-        enable_profiling=True,
-        enable_nsys=True,
-        enable_ncu=True,
-        enable_nvtx=True,
-        nsys_nvtx_include={configured_nvtx_includes!r},
-        profile_type={config.profile_type!r},
-        ncu_metric_set={config.ncu_metric_set!r},
-        pm_sampling_interval={config.pm_sampling_interval!r},
-        ncu_replay_mode={config.ncu_replay_mode!r},
-        validity_profile={validity_profile!r},
-        lock_gpu_clocks={lock_gpu_clocks_flag!r},
-        gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
-        gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
-    )
-    benchmark._config = ReadOnlyBenchmarkConfigView.from_config(_profiling_config)
-    lock_ctx = (
-        lock_gpu_clocks(
-            device=0,
-            sm_clock_mhz=getattr(_profiling_config, "gpu_sm_clock_mhz", None),
-            mem_clock_mhz=getattr(_profiling_config, "gpu_mem_clock_mhz", None),
-        )
-        if getattr(_profiling_config, "lock_gpu_clocks", False)
-        else nullcontext()
-    )
-    with lock_ctx:
-        try:
-            ramp_gpu_clocks(device=0)
-        except Exception as exc:
-            print(f"[profile_warning] Failed to ramp GPU clocks before ncu capture: {{exc}}", file=sys.stderr)
-        benchmark.setup()
-
-        # Warmup (keep short; profiling is not a timing run)
-        benchmark.benchmark_fn()
-
-        # Profile execution
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-
-        with nvtx_range({profile_nvtx_label!r}, enable=True):
-            benchmark.benchmark_fn()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-
-        # Some benchmarks launch worker processes (e.g., vLLM) and need
-        # graceful teardown so Nsight can exit cleanly. Others prefer hard-exit
-        # to avoid teardown crashes under Nsight.
-        if getattr(benchmark, "profile_require_teardown", False):
-            try:
-                benchmark.teardown()
-            except Exception as exc:
-                print(f"[profile_warning] Benchmark teardown failed after ncu capture: {{exc}}", file=sys.stderr)
-            raise SystemExit(0)
-        import os as _os
-        _os._exit(0)
-
-
-if __name__ == "__main__":
-    _run_profile()
-""")
-        wrapper_script.close()
-        
-        use_torchrun = _is_torchrun_launch(config)
-        if use_torchrun:
-            target_command, env = _build_torchrun_profile_command(config, wrapper_script.name)
-            ncu_command = profiler_config.get_ncu_command_for_target(
-                str(ncu_output.with_suffix("")),
-                target_command,
-                metrics=metrics_override,
-                nvtx_includes=ncu_nvtx_includes,
-            )
-        else:
-            env = os.environ.copy()
-            ncu_command = profiler_config.get_ncu_command(
-                str(ncu_output.with_suffix("")),
-                wrapper_script.name,
-                python_executable=sys.executable,
-                metrics=metrics_override,
-                nvtx_includes=ncu_nvtx_includes,
-            )
-        env = _apply_profile_env_overrides(
-            _harden_profile_env(env, repo_root=repo_root, chapter_dir=chapter_dir),
-            config=config,
-            benchmark=benchmark,
-        )
-        ncu_env_overrides = getattr(benchmark, "ncu_env_overrides", None)
-        if ncu_env_overrides:
-            env.update({str(key): str(value) for key, value in ncu_env_overrides.items()})
-        ncu_command.insert(1, "--force-overwrite")
-        
-        # ncu profiling timeout: align with BenchmarkConfig.ncu_timeout_seconds
-        # ncu is slower than nsys and needs more time for metric collection
-        ncu_timeout_seconds = config.get_effective_timeout("ncu") or NCU_TIMEOUT_SECONDS
-        timed_out = False
-        process = subprocess.Popen(
-            ncu_command,
-            cwd=str(chapter_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-            env=env,
-        )
-        stdout_text = ""
-        stderr_text = ""
-        failure_warning: Optional[str] = None
-        try:
-            stdout_text, stderr_text = process.communicate(timeout=ncu_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _terminate_process_group(process, f"{benchmark_name}_{variant}", timeout_seconds=ncu_timeout_seconds)
-            try:
-                stdout_text, stderr_text = process.communicate(timeout=2)
-            except Exception as exc:
-                failure_warning = (
-                    f"Timed-out NCU profiling for {benchmark_name} ({variant}) could not collect trailing stdout/stderr: {exc}"
+        use_torchrun = bool(_is_torchrun_launch(config))
+        wrapper_path: Optional[Path] = None
+        torchrun_profile_spec = None
+        has_target_launch_spec = False
+        with ExitStack() as stack:
+            if use_torchrun:
+                torchrun_profile_spec = _resolve_profile_torchrun_spec(
+                    benchmark,
+                    profiler="ncu",
+                    config=config,
                 )
-        except Exception as exc:
-            failure_warning = f"NCU profiling communicate failed for {benchmark_name} ({variant}): {exc}"
-            _terminate_process_group(process, f"{benchmark_name}_{variant}")
-        if stdout_text:
-            log_base.with_suffix(".stdout.log").write_text(stdout_text)
-        if stderr_text:
-            log_base.with_suffix(".stderr.log").write_text(stderr_text)
-        log_base.with_suffix(".command.json").write_text(json.dumps({"command": ncu_command}, indent=2))
-        if failure_warning:
-            _append_profile_warning(log_base.with_suffix(".stderr.log"), failure_warning)
+            if torchrun_profile_spec is not None:
+                has_target_launch_spec = True
+                target_command, base_env = _build_torchrun_profile_command(
+                    config,
+                    spec=torchrun_profile_spec,
+                )
+                env = _apply_profile_env_overrides(
+                    _harden_profile_env(base_env, repo_root=repo_root, chapter_dir=chapter_dir),
+                    config=config,
+                    benchmark=benchmark,
+                )
+                use_torchrun = _command_uses_external_torchrun(target_command)
+            else:
+                wrapper_source = render_ncu_python_profile_wrapper(
+                    benchmark_path=benchmark_path,
+                    configured_nvtx_includes=configured_nvtx_includes,
+                    profile_type=profiling_view.profile_type,
+                    ncu_metric_set=profiling_view.ncu_metric_set,
+                    pm_sampling_interval=profiling_view.pm_sampling_interval,
+                    ncu_replay_mode=profiling_view.ncu_replay_mode,
+                    validity_profile=validity_profile,
+                    lock_gpu_clocks_flag=lock_gpu_clocks_flag,
+                    gpu_sm_clock_mhz=gpu_sm_clock_mhz,
+                    gpu_mem_clock_mhz=gpu_mem_clock_mhz,
+                    profile_nvtx_label=profile_nvtx_label,
+                )
+                wrapper_path, target_command, env, use_torchrun = stack.enter_context(
+                    _temporary_python_profile_launch(
+                        wrapper_source,
+                        chapter_dir=chapter_dir,
+                        repo_root=repo_root,
+                        config=config,
+                        benchmark=benchmark,
+                    )
+                )
+
+            if has_target_launch_spec:
+                ncu_command = profiler_config.get_ncu_command_for_target(
+                    str(ncu_output.with_suffix("")),
+                    target_command,
+                    metrics=metrics_override,
+                    nvtx_includes=ncu_nvtx_includes,
+                )
+            else:
+                if wrapper_path is None:
+                    raise RuntimeError("Wrapper path required for non-torchrun NCU profiling")
+                ncu_command = profiler_config.get_ncu_command(
+                    str(ncu_output.with_suffix("")),
+                    str(wrapper_path),
+                    python_executable=sys.executable,
+                    metrics=metrics_override,
+                    nvtx_includes=ncu_nvtx_includes,
+                )
+            ncu_env_overrides = getattr(benchmark, "ncu_env_overrides", None)
+            if ncu_env_overrides:
+                env.update({str(key): str(value) for key, value in ncu_env_overrides.items()})
+            ncu_command.insert(1, "--force-overwrite")
+
+            # ncu profiling timeout: align with BenchmarkConfig.ncu_timeout_seconds
+            # ncu is slower than nsys and needs more time for metric collection
+            ncu_timeout_seconds = timing_view.timeout_for("ncu") or NCU_TIMEOUT_SECONDS
+            run_result = _run_profile_subprocess(
+                command=ncu_command,
+                cwd=chapter_dir,
+                env=env,
+                timeout_seconds=float(ncu_timeout_seconds),
+                log_base=log_base,
+                terminate_reason=f"{benchmark_name}_{variant}",
+                capture_output=True,
+                timeout_collect_error_message=(
+                    f"Timed-out NCU profiling for {benchmark_name} ({variant}) could not collect trailing stdout/stderr"
+                ),
+                wait_error_message=f"NCU profiling communicate failed for {benchmark_name} ({variant})",
+            )
+        if run_result.failure_warning:
+            _append_profile_warning(run_result.stderr_log, run_result.failure_warning)
             return None
-        
+
         # Check if file exists (ncu may create file even with non-zero exit code)
-        if not timed_out:
+        if not run_result.timed_out:
             if ncu_output.exists():
                 return ncu_output
-            # Try alternative path
             alt_path = output_dir / f"{benchmark_name}__{variant}.ncu-rep"
             if alt_path.exists():
                 return alt_path
-            # Check for any .ncu-rep file matching the pattern
             for ncu_file in output_dir.glob(f"{benchmark_name}__{variant}*.ncu-rep"):
                 return ncu_file
-            if process.returncode not in (0, None):
+            if run_result.process.returncode not in (0, None):
                 _append_profile_warning(
-                    log_base.with_suffix(".stderr.log"),
-                    f"NCU profiling exited with code {process.returncode} for {benchmark_name} ({variant}) without producing a report.",
+                    run_result.stderr_log,
+                    f"NCU profiling exited with code {run_result.process.returncode} for {benchmark_name} ({variant}) without producing a report.",
                 )
         else:
             _append_profile_warning(
-                log_base.with_suffix(".stderr.log"),
+                run_result.stderr_log,
                 f"NCU profiling timed out after {ncu_timeout_seconds}s for {benchmark_name} ({variant}).",
             )
         return None
@@ -3007,9 +3445,6 @@ if __name__ == "__main__":
                 exc_info=True,
             )
         return None
-    finally:
-        # Clean up wrapper script
-        Path(wrapper_script.name).unlink(missing_ok=True)
 
 
 def _apply_preferred_ncu_profile_overrides(config: BenchmarkConfig, benchmark: Any) -> BenchmarkConfig:
@@ -3088,55 +3523,37 @@ def profile_cuda_executable_ncu(
     ncu_command.insert(1, "--force-overwrite")
     
     try:
+        env = _apply_profile_env_overrides(
+            _harden_profile_env(
+                None,
+                repo_root=Path(__file__).resolve().parents[2],
+                chapter_dir=chapter_dir,
+            ),
+            config=config,
+            benchmark=benchmark,
+        )
         # ncu profiling timeout: align with BenchmarkConfig.ncu_timeout_seconds
         # ncu is slower than nsys and needs more time for metric collection
         ncu_timeout_seconds = config.get_effective_timeout("ncu") or NCU_TIMEOUT_SECONDS
-        timed_out = False
-        process = subprocess.Popen(
-            ncu_command,
-            cwd=str(chapter_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-            env=_apply_profile_env_overrides(
-                _harden_profile_env(
-                    None,
-                    repo_root=Path(__file__).resolve().parents[2],
-                    chapter_dir=chapter_dir,
-                ),
-                config=config,
-                benchmark=benchmark,
+        run_result = _run_profile_subprocess(
+            command=ncu_command,
+            cwd=chapter_dir,
+            env=env,
+            timeout_seconds=float(ncu_timeout_seconds),
+            log_base=log_base,
+            terminate_reason=f"{exec_name}__{variant}",
+            capture_output=True,
+            timeout_collect_error_message=(
+                f"Timed-out NCU profiling for executable {exec_name} ({variant}) could not collect trailing stdout/stderr"
             ),
+            wait_error_message=f"NCU profiling communicate failed for executable {exec_name} ({variant})",
         )
-        stdout_text = ""
-        stderr_text = ""
-        failure_warning: Optional[str] = None
-        try:
-            stdout_text, stderr_text = process.communicate(timeout=ncu_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _terminate_process_group(process, f"{exec_name}__{variant}", timeout_seconds=ncu_timeout_seconds)
-            try:
-                stdout_text, stderr_text = process.communicate(timeout=2)
-            except Exception as exc:
-                failure_warning = (
-                    f"Timed-out NCU profiling for executable {exec_name} ({variant}) could not collect trailing stdout/stderr: {exc}"
-                )
-        except Exception as exc:
-            failure_warning = f"NCU profiling communicate failed for executable {exec_name} ({variant}): {exc}"
-            _terminate_process_group(process, f"{exec_name}__{variant}")
-        if stdout_text:
-            log_base.with_suffix(".stdout.log").write_text(stdout_text)
-        if stderr_text:
-            log_base.with_suffix(".stderr.log").write_text(stderr_text)
-        log_base.with_suffix(".command.json").write_text(json.dumps({"command": ncu_command}, indent=2))
-        if failure_warning:
-            _append_profile_warning(log_base.with_suffix(".stderr.log"), failure_warning)
+        if run_result.failure_warning:
+            _append_profile_warning(run_result.stderr_log, run_result.failure_warning)
             return None
-        
+
         # Check if file exists (ncu may create file even with non-zero exit code)
-        if not timed_out:
+        if not run_result.timed_out:
             if ncu_output.exists():
                 return ncu_output
             # Try alternative path
@@ -3146,18 +3563,18 @@ def profile_cuda_executable_ncu(
             # Check for any .ncu-rep file matching the pattern
             for ncu_file in output_dir.glob(f"{exec_name}__{variant}*.ncu-rep"):
                 return ncu_file
-            if process.returncode not in (0, None):
+            if run_result.process.returncode not in (0, None):
                 _append_profile_warning(
-                    log_base.with_suffix(".stderr.log"),
-                    f"NCU profiling exited with code {process.returncode} for executable {exec_name} ({variant}) without producing a report.",
+                    run_result.stderr_log,
+                    f"NCU profiling exited with code {run_result.process.returncode} for executable {exec_name} ({variant}) without producing a report.",
                 )
         else:
             _append_profile_warning(
-                log_base.with_suffix(".stderr.log"),
+                run_result.stderr_log,
                 f"NCU profiling timed out after {ncu_timeout_seconds}s for executable {exec_name} ({variant}).",
             )
         return None
-    except (subprocess.TimeoutExpired, Exception) as exc:
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
         if LOGGER_AVAILABLE:
             logger.warning(
                 "  Failed to launch NCU profiling for executable %s (%s): %s",
@@ -3200,172 +3617,90 @@ def profile_python_benchmark_torch(
     torch_output = output_dir / f"{benchmark_name}__{variant}_torch_trace.json"
     log_base = output_dir / f"{benchmark_name}__{variant}__torch"
     existing_cfg = getattr(benchmark, "_config", None)
-    validity_profile = str(getattr(existing_cfg, "validity_profile", "strict")).strip().lower()
+    if existing_cfg is None and hasattr(benchmark, "get_config"):
+        existing_cfg = benchmark.get_config()
+    validity_view = existing_cfg.validity if existing_cfg else None
+    timing_view = existing_cfg.timing if existing_cfg else None
+    validity_profile = validity_view.validity_profile if validity_view else "strict"
     if validity_profile not in {"strict", "portable"}:
         validity_profile = "strict"
-    lock_gpu_clocks_flag = bool(getattr(existing_cfg, "lock_gpu_clocks", True))
+    lock_gpu_clocks_flag = validity_view.lock_gpu_clocks if validity_view else True
     if validity_profile != "strict":
         lock_gpu_clocks_flag = False
     profile_timeout_seconds = 900
-    if existing_cfg is not None and hasattr(existing_cfg, "get_effective_timeout"):
-        try:
-            maybe_timeout = existing_cfg.get_effective_timeout("torch")
-            if maybe_timeout:
-                profile_timeout_seconds = int(maybe_timeout)
-        except Exception as exc:
-            if LOGGER_AVAILABLE:
-                logger.warning(
-                    "  Failed to resolve torch profiler timeout override for %s (%s): %s",
-                    benchmark_name,
-                    variant,
-                    exc,
-                    exc_info=True,
-                )
+    maybe_timeout = timing_view.timeout_for("torch") if timing_view else None
+    if maybe_timeout:
+        profile_timeout_seconds = int(maybe_timeout)
 
     # Run torch profiling in an isolated subprocess so a profiler-side hang
     # cannot wedge the parent benchmark sweep.
     repo_root = Path(__file__).resolve().parents[2]
-    wrapper_script = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
-    wrapper_path = Path(wrapper_script.name)
-    wrapper_script.write(
-        f"""
-from pathlib import Path
-from contextlib import nullcontext
-
-_BENCHMARK_PATH = Path(r"{benchmark_path}")
-from core.utils.python_entrypoints import load_module_from_path
-
-_BENCHMARK_MODULE = load_module_from_path("profile_benchmark_module", _BENCHMARK_PATH)
-get_benchmark = _BENCHMARK_MODULE.get_benchmark
-from core.harness.benchmark_harness import (
-    BenchmarkConfig,
-    ReadOnlyBenchmarkConfigView,
-    lock_gpu_clocks,
-    ramp_gpu_clocks,
-)
-import torch
-import torch.profiler
-
-
-def _run_profile() -> None:
-    benchmark = get_benchmark()
-    profiling_config = BenchmarkConfig(
-        enable_profiling=True,
-        enable_nvtx=True,
-        validity_profile={validity_profile!r},
-        lock_gpu_clocks={lock_gpu_clocks_flag!r},
-        gpu_sm_clock_mhz={getattr(existing_cfg, "gpu_sm_clock_mhz", None)!r},
-        gpu_mem_clock_mhz={getattr(existing_cfg, "gpu_mem_clock_mhz", None)!r},
-    )
-    benchmark._config = ReadOnlyBenchmarkConfigView.from_config(profiling_config)
-
-    lock_ctx = (
-        lock_gpu_clocks(
-            device=0,
-            sm_clock_mhz=getattr(profiling_config, "gpu_sm_clock_mhz", None),
-            mem_clock_mhz=getattr(profiling_config, "gpu_mem_clock_mhz", None),
+    torchrun_profile_spec = None
+    if existing_cfg is not None and _is_torchrun_launch(existing_cfg):
+        torchrun_profile_spec = _resolve_profile_torchrun_spec(
+            benchmark,
+            profiler="torch",
+            config=existing_cfg,
+            output_path=torch_output,
         )
-        if getattr(profiling_config, "lock_gpu_clocks", False) and torch.cuda.is_available()
-        else nullcontext()
-    )
-
-    with lock_ctx:
-        if torch.cuda.is_available():
-            ramp_gpu_clocks(device=0)
-        benchmark.setup()
-        benchmark.benchmark_fn()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        activities = [torch.profiler.ProfilerActivity.CPU]
-        if torch.cuda.is_available():
-            activities.append(torch.profiler.ProfilerActivity.CUDA)
-        with torch.profiler.profile(
-            activities=activities,
-            record_shapes=False,
-            profile_memory=False,
-            with_stack=False,
-            with_flops=False,
-            with_modules=False,
-        ) as prof:
-            benchmark.benchmark_fn()
-            prof.step()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        benchmark.teardown()
-    prof.export_chrome_trace(r"{torch_output}")
-    print(r"{torch_output}")
-
-
-if __name__ == "__main__":
-    _run_profile()
-"""
-    )
-    wrapper_script.close()
-
-    cmd = [sys.executable, str(wrapper_path)]
-    env = _apply_profile_env_overrides(
-        _harden_profile_env(None, repo_root=repo_root, chapter_dir=chapter_dir),
-        config=existing_cfg,
-        benchmark=benchmark,
-    )
-
-    stdout_log = log_base.with_suffix(".stdout.log")
-    stderr_log = log_base.with_suffix(".stderr.log")
-
-    with stdout_log.open("w") as stdout_handle, stderr_log.open("w") as stderr_handle:
-        process = subprocess.Popen(
-            cmd,
-            cwd=str(chapter_dir),
-            stdout=stdout_handle,
-            stderr=stderr_handle,
-            text=True,
-            start_new_session=True,
-            env=env,
-        )
-
-    timed_out = False
-    failure_warning: Optional[str] = None
-    try:
-        process.wait(timeout=profile_timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _terminate_process_group(
-            process,
-            f"{benchmark_name}__{variant}__torch",
-            timeout_seconds=float(profile_timeout_seconds),
-        )
-        try:
-            process.wait(timeout=2)
-        except Exception as exc:
-            failure_warning = (
-                f"Timed-out torch profiler for {benchmark_name} ({variant}) could not confirm process exit: {exc}"
+    with ExitStack() as stack:
+        if torchrun_profile_spec is not None and existing_cfg is not None:
+            cmd, base_env = _build_torchrun_profile_command(existing_cfg, spec=torchrun_profile_spec)
+            env = _apply_profile_env_overrides(
+                _harden_profile_env(base_env, repo_root=repo_root, chapter_dir=chapter_dir),
+                config=existing_cfg,
+                benchmark=benchmark,
             )
-    except Exception as exc:
-        failure_warning = f"Torch profiler wait failed for {benchmark_name} ({variant}): {exc}"
-        _terminate_process_group(process, f"{benchmark_name}__{variant}__torch")
-    finally:
-        wrapper_path.unlink(missing_ok=True)
+        else:
+            wrapper_source = render_torch_python_profile_wrapper(
+                benchmark_path=benchmark_path,
+                torch_output=torch_output,
+                validity_profile=validity_profile,
+                lock_gpu_clocks_flag=lock_gpu_clocks_flag,
+                gpu_sm_clock_mhz=validity_view.gpu_sm_clock_mhz if validity_view else None,
+                gpu_mem_clock_mhz=validity_view.gpu_mem_clock_mhz if validity_view else None,
+            )
+            _wrapper_path, cmd, env, _use_torchrun = stack.enter_context(
+                _temporary_python_profile_launch(
+                    wrapper_source,
+                    chapter_dir=chapter_dir,
+                    repo_root=repo_root,
+                    config=existing_cfg,
+                    benchmark=benchmark,
+                    allow_torchrun=False,
+                )
+            )
 
-    stdout_text = _safe_read_text(stdout_log) or ""
-    stderr_text = _safe_read_text(stderr_log) or ""
-    log_base.with_suffix(".command.json").write_text(json.dumps({"command": cmd}, indent=2))
+        run_result = _run_profile_subprocess(
+            command=cmd,
+            cwd=chapter_dir,
+            env=env,
+            timeout_seconds=float(profile_timeout_seconds),
+            log_base=log_base,
+            terminate_reason=f"{benchmark_name}__{variant}__torch",
+            capture_output=False,
+            timeout_collect_error_message=(
+                f"Timed-out torch profiler for {benchmark_name} ({variant}) could not confirm process exit"
+            ),
+            wait_error_message=f"Torch profiler wait failed for {benchmark_name} ({variant})",
+        )
 
-    if timed_out:
-        with stderr_log.open("a") as handle:
+    if run_result.timed_out:
+        with run_result.stderr_log.open("a") as handle:
             handle.write(f"\ntorch profiler timed out after {profile_timeout_seconds}s\n")
         return None
-    if failure_warning:
-        _append_profile_warning(stderr_log, failure_warning)
+    if run_result.failure_warning:
+        _append_profile_warning(run_result.stderr_log, run_result.failure_warning)
         return None
-    if process.returncode != 0:
+    if run_result.process.returncode != 0:
         _append_profile_warning(
-            stderr_log,
-            f"Torch profiler exited with code {process.returncode} for {benchmark_name} ({variant}). See {stderr_log} for details.",
+            run_result.stderr_log,
+            f"Torch profiler exited with code {run_result.process.returncode} for {benchmark_name} ({variant}). See {run_result.stderr_log} for details.",
         )
         return None
     if not torch_output.exists():
         _append_profile_warning(
-            stderr_log,
+            run_result.stderr_log,
             f"Torch profiler completed without producing expected trace {torch_output} for {benchmark_name} ({variant}).",
         )
         return None
@@ -3579,6 +3914,11 @@ def _merge_benchmark_config(
         base_config,
         "allow_virtualization",
         getattr(merged, "allow_virtualization", False),
+    )
+    merged.allow_foreign_gpu_processes = getattr(
+        base_config,
+        "allow_foreign_gpu_processes",
+        getattr(merged, "allow_foreign_gpu_processes", False),
     )
     merged.validity_profile = getattr(
         base_config,
@@ -3871,6 +4211,14 @@ def _test_chapter_impl(
                 'average_speedup': 0.0,
             }
         }
+
+    def _reset_parent_execution_state(*, include_gpu_state: bool = False) -> None:
+        allow_cuda_context = str(launch_via).strip().lower() == "torchrun"
+        reset_cuda_state(allow_cuda_context=allow_cuda_context)
+        if include_gpu_state and allow_cuda_context:
+            reset_gpu_state()
+        if cold_start and allow_cuda_context:
+            reset_gpu_state()
     
     # Clean build directories to prevent stale lock issues (before any GPU operations)
     logger.info(f"  Cleaning build directories...")
@@ -3878,11 +4226,7 @@ def _test_chapter_impl(
     
     # Reset CUDA state at start of chapter (always, to prevent cascading failures)
     logger.info(f"  Resetting GPU state...")
-    reset_cuda_state()
-    reset_gpu_state()  # Full GPU reset between chapters for clean state
-    # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
-    if cold_start:
-        reset_gpu_state()
+    _reset_parent_execution_state(include_gpu_state=True)
     
     # Ensure PyTorch inductor cache directory exists to prevent C++ compilation errors
     # (This is also done in env_defaults.py, but we ensure it here as well for safety)
@@ -4323,6 +4667,7 @@ def _test_chapter_impl(
             _reap_benchmark_process_leftovers(
                 f"example_start:{chapter_name}:{example_name}",
                 current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                current_owner_pid=os.getpid(),
                 repo_root=repo_root,
             )
         
@@ -4370,10 +4715,7 @@ def _test_chapter_impl(
                 continue
         
             # Reset CUDA state before each benchmark pair (always, to prevent cascading failures)
-            reset_cuda_state()
-            # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
-            if cold_start:
-                reset_gpu_state()
+            _reset_parent_execution_state()
             
             # Load and run baseline
             baseline_benchmark = load_benchmark(baseline_path)
@@ -4412,13 +4754,17 @@ def _test_chapter_impl(
                         example_type=example_type,
                         error=msg,
                     )
-                reset_cuda_state()  # Reset after failure or skip
-                if cold_start:
-                    reset_gpu_state()
+                _reset_parent_execution_state()  # Reset after failure or skip
                 mark_progress(example_name)
                 continue
 
             try:
+                _reap_benchmark_process_leftovers(
+                    f"phase_start:{chapter_name}:{example_name}:baseline_timing",
+                    current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                    current_owner_pid=os.getpid(),
+                    repo_root=repo_root,
+                )
                 # Use benchmark_with_manifest for reproducibility
                 run_id = f"{chapter_name}_{example_name}_baseline"
                 baseline_phase_start = time.perf_counter()
@@ -4520,9 +4866,7 @@ def _test_chapter_impl(
                             error=error_message,
                         )
 
-                    reset_cuda_state()
-                    if cold_start:
-                        reset_gpu_state()
+                    _reset_parent_execution_state()
                     mark_progress(example_name)
                     continue
                 _record_manifest(
@@ -4534,6 +4878,7 @@ def _test_chapter_impl(
                 baseline_timing = baseline_result.timing
                 baseline_memory = baseline_result.memory
                 baseline_custom_metrics = getattr(baseline_result, "custom_metrics", None) or {}
+                baseline_story_metadata = getattr(baseline_result, "story_metadata", None) or {}
                 if not baseline_custom_metrics:
                     getter = getattr(baseline_benchmark, "get_custom_metrics", None)
                     if callable(getter):
@@ -4543,10 +4888,21 @@ def _test_chapter_impl(
                                 baseline_custom_metrics = metrics
                         except Exception:
                             baseline_custom_metrics = {}
+                if not baseline_story_metadata:
+                    getter = getattr(baseline_benchmark, "get_story_metadata", None)
+                    if callable(getter):
+                        try:
+                            payload = getter()
+                            if isinstance(payload, dict):
+                                baseline_story_metadata = payload
+                        except Exception:
+                            baseline_story_metadata = {}
                 baseline_time = baseline_timing.mean_ms if baseline_timing else 0.0
                 result_entry['baseline_time_ms'] = baseline_time
                 if baseline_custom_metrics:
                     result_entry['baseline_custom_metrics'] = baseline_custom_metrics
+                if baseline_story_metadata:
+                    result_entry['baseline_story_metadata'] = baseline_story_metadata
                 
                 # Capture baseline memory
                 if baseline_memory and baseline_memory.peak_mb:
@@ -4646,9 +5002,7 @@ def _test_chapter_impl(
                             error=result_entry["error"],
                         )
                         mark_progress(example_name)
-                        reset_cuda_state()
-                        if cold_start:
-                            reset_gpu_state()
+                        _reset_parent_execution_state()
                         continue
                     try:
                         if verify_input:
@@ -4673,9 +5027,7 @@ def _test_chapter_impl(
                             error=result_entry["error"],
                         )
                         mark_progress(example_name)
-                        reset_cuda_state()
-                        if cold_start:
-                            reset_gpu_state()
+                        _reset_parent_execution_state()
                         continue
 
                 # Profile baseline if profiling is enabled (nsys, ncu, PyTorch)
@@ -4688,6 +5040,12 @@ def _test_chapter_impl(
                     baseline_profile_dir.mkdir(parents=True, exist_ok=True)
 
                 if enable_profiling and profiling_output_dir:
+                    _reap_benchmark_process_leftovers(
+                        f"phase_start:{chapter_name}:{example_name}:baseline_profiling",
+                        current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                        current_owner_pid=os.getpid(),
+                        repo_root=repo_root,
+                    )
                     logger.info(f"    Profiling baseline...")
                     profiler_results = []
                     baseline_profiler_statuses: Dict[str, str] = {}
@@ -4943,7 +5301,12 @@ def _test_chapter_impl(
                     
                     logger.info(f" ({', '.join(profiler_results)})")
                     result_entry["baseline_profiler_statuses"] = dict(baseline_profiler_statuses)
-                    _reap_run_descendants(f"{chapter_name}:{example_name}:baseline_profiling")
+                    _reap_benchmark_process_leftovers(
+                        f"{chapter_name}:{example_name}:baseline_profiling",
+                        current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                        current_owner_pid=os.getpid(),
+                        repo_root=repo_root,
+                    )
                     
                     # Display extracted metrics
                     if baseline_metrics:
@@ -5022,10 +5385,7 @@ def _test_chapter_impl(
                         )
                 
                 benchmark_results.append(result_entry)
-                reset_cuda_state()  # Reset after failure
-                # Additional cleanup for cold start mode
-                if cold_start:
-                    reset_gpu_state()
+                _reset_parent_execution_state()  # Reset after failure
                 mark_progress(example_name)
                 continue
             
@@ -5130,10 +5490,13 @@ def _test_chapter_impl(
                 
                 try:
                     # Reset CUDA state before each optimized benchmark (always, to prevent cascading failures)
-                    reset_cuda_state()
-                    # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
-                    if cold_start:
-                        reset_gpu_state()
+                    _reset_parent_execution_state()
+                    _reap_benchmark_process_leftovers(
+                        f"phase_start:{chapter_name}:{example_name}:{technique}:optimized_timing",
+                        current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                        current_owner_pid=os.getpid(),
+                        repo_root=repo_root,
+                    )
                     
                     # Use benchmark_with_manifest for reproducibility
                     opt_run_id = f"{chapter_name}_{example_name}_optimized_{technique}"
@@ -5249,9 +5612,7 @@ def _test_chapter_impl(
                                 error=error_message,
                             )
 
-                        reset_cuda_state()
-                        if cold_start:
-                            reset_gpu_state()
+                        _reset_parent_execution_state()
                         continue
                     _record_manifest(
                         optimized_run,
@@ -5263,6 +5624,7 @@ def _test_chapter_impl(
                     optimized_timing = optimized_result.timing
                     optimized_memory = optimized_result.memory
                     optimized_custom_metrics = getattr(optimized_result, "custom_metrics", None) or {}
+                    optimized_story_metadata = getattr(optimized_result, "story_metadata", None) or {}
                     if not optimized_custom_metrics:
                         getter = getattr(optimized_benchmark, "get_custom_metrics", None)
                         if callable(getter):
@@ -5272,6 +5634,15 @@ def _test_chapter_impl(
                                     optimized_custom_metrics = metrics
                             except Exception:
                                 optimized_custom_metrics = {}
+                    if not optimized_story_metadata:
+                        getter = getattr(optimized_benchmark, "get_story_metadata", None)
+                        if callable(getter):
+                            try:
+                                payload = getter()
+                                if isinstance(payload, dict):
+                                    optimized_story_metadata = payload
+                            except Exception:
+                                optimized_story_metadata = {}
                     optimized_time = optimized_timing.mean_ms if optimized_timing else 0.0
                     # Speedup is always derived from timing values (schema v2 integrity)
                     speedup = baseline_time / optimized_time if optimized_time > 0 else 1.0
@@ -5483,6 +5854,8 @@ def _test_chapter_impl(
                         opt_result['gpu_metrics'] = opt_gpu_metrics
                     if optimized_custom_metrics:
                         opt_result['custom_metrics'] = optimized_custom_metrics
+                    if optimized_story_metadata:
+                        opt_result['story_metadata'] = optimized_story_metadata
                     if scenario_speedup is not None:
                         opt_result['scenario_speedup'] = scenario_speedup
                     if throughput_payload:
@@ -5508,6 +5881,12 @@ def _test_chapter_impl(
                         and str(profile_type).lower() != "minimal"
                         and opt_result.get("status") == "succeeded"
                     ):
+                        _reap_benchmark_process_leftovers(
+                            f"phase_start:{chapter_name}:{example_name}:{technique}:optimized_profiling",
+                            current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                            current_owner_pid=os.getpid(),
+                            repo_root=repo_root,
+                        )
                         pair_dir = _profile_pair_dir(
                             profile_output_root, chapter_id, example_name, technique
                         )
@@ -5776,7 +6155,12 @@ def _test_chapter_impl(
                         
                         logger.info(f" ({', '.join(profiler_results)})")
                         opt_result["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
-                        _reap_run_descendants(f"{chapter_name}:{example_name}:{technique}:optimized_profiling")
+                        _reap_benchmark_process_leftovers(
+                            f"{chapter_name}:{example_name}:{technique}:optimized_profiling",
+                            current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                            current_owner_pid=os.getpid(),
+                            repo_root=repo_root,
+                        )
                         
                         # Display extracted metrics
                         if optimized_metrics:
@@ -5833,14 +6217,18 @@ def _test_chapter_impl(
                         def get_str():
                             try:
                                 error_parts["str"] = str(exc)
-                            except Exception:
-                                pass
-                        
+                            except Exception as str_exc:
+                                error_parts["str"] = (
+                                    f"<str() failed: {type(str_exc).__name__}: {str_exc}>"
+                                )
+
                         def get_repr():
                             try:
                                 error_parts["repr"] = repr(exc)
-                            except Exception:
-                                pass
+                            except Exception as repr_exc:
+                                error_parts["repr"] = (
+                                    f"<repr() failed: {type(repr_exc).__name__}: {repr_exc}>"
+                                )
                         
                         # Try to get string representation with timeout
                         import threading
@@ -5922,10 +6310,7 @@ def _test_chapter_impl(
                             error=skip_reason or error_full,
                         )
                     
-                    reset_cuda_state()  # Reset after failure
-                    # Additional cleanup for cold start mode
-                    if cold_start:
-                        reset_gpu_state()
+                    _reset_parent_execution_state()  # Reset after failure
             
             if result_entry['status'] == 'skipped':
                 benchmark_results.append(result_entry)
@@ -5955,6 +6340,12 @@ def _test_chapter_impl(
                     cand = optimized_profile_candidates.get(best_key)
                     if cand:
                         try:
+                            _reap_benchmark_process_leftovers(
+                                f"phase_start:{chapter_name}:{example_name}:{best_key}:optimized_profiling",
+                                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                                current_owner_pid=os.getpid(),
+                                repo_root=repo_root,
+                            )
                             pair_dir = _profile_pair_dir(
                                 profile_output_root, chapter_id, example_name, best_key
                             )
@@ -6224,6 +6615,12 @@ def _test_chapter_impl(
 
                             logger.info(f" ({', '.join(profiler_results)})")
                             best_opt["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
+                            _reap_benchmark_process_leftovers(
+                                f"{chapter_name}:{example_name}:{best_key}:optimized_profiling",
+                                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                                current_owner_pid=os.getpid(),
+                                repo_root=repo_root,
+                            )
                             if optimized_metrics:
                                 logger.info("        📈 Profiler Metrics:")
                                 log_profiler_metrics_table(logger, optimized_metrics, indent="          ")
@@ -6425,10 +6822,7 @@ def _test_chapter_impl(
             mark_progress(example_name)
             
             # Reset CUDA state after each benchmark pair (always, to ensure clean state)
-            reset_cuda_state()
-            # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
-            if cold_start:
-                reset_gpu_state()
+            _reset_parent_execution_state()
         
         # Process CUDA benchmarks
         for baseline_cu_path, optimized_cu_paths, example_name in cuda_pairs:
@@ -6462,6 +6856,7 @@ def _test_chapter_impl(
             _reap_benchmark_process_leftovers(
                 f"example_start:{chapter_name}:{example_name}:cuda",
                 current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                current_owner_pid=os.getpid(),
                 repo_root=repo_root,
             )
 
@@ -6502,9 +6897,7 @@ def _test_chapter_impl(
                     reason=reason,
                 )
                 mark_progress(example_name)
-                reset_cuda_state()  # Reset after skip to keep state clean
-                if cold_start:
-                    reset_gpu_state()
+                _reset_parent_execution_state()  # Reset after skip to keep state clean
                 continue
 
             # Benchmark baseline with explicit timeout
@@ -6515,6 +6908,12 @@ def _test_chapter_impl(
             logger.info(
                 f"    Running baseline executable {baseline_executable.name} "
                 f"(runs={cuda_iterations}, timeout={cuda_timeout}s per run)"
+            )
+            _reap_benchmark_process_leftovers(
+                f"phase_start:{chapter_name}:{example_name}:cuda_baseline_timing",
+                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                current_owner_pid=os.getpid(),
+                repo_root=repo_root,
             )
             baseline_phase_start = time.perf_counter()
             emit_event(
@@ -6557,9 +6956,7 @@ def _test_chapter_impl(
                     error=result_entry['error'],
                 )
                 mark_progress(example_name)
-                reset_cuda_state()  # Reset after failure
-                if cold_start:
-                    reset_gpu_state()
+                _reset_parent_execution_state()  # Reset after failure
                 continue
             if baseline_result.skip_reason:
                 reason = baseline_result.skip_reason
@@ -6592,9 +6989,7 @@ def _test_chapter_impl(
                     error=reason,
                 )
                 mark_progress(example_name)
-                reset_cuda_state()
-                if cold_start:
-                    reset_gpu_state()
+                _reset_parent_execution_state()
                 continue
 
             baseline_time = baseline_result.mean_ms
@@ -6665,6 +7060,12 @@ def _test_chapter_impl(
                 baseline_profile_dir.mkdir(parents=True, exist_ok=True)
 
             if enable_profiling and profiling_output_dir:
+                _reap_benchmark_process_leftovers(
+                    f"phase_start:{chapter_name}:{example_name}:cuda_baseline_profiling",
+                    current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                    current_owner_pid=os.getpid(),
+                    repo_root=repo_root,
+                )
                 logger.info(f"    Profiling baseline...")
                 profiler_results = []
                 baseline_profiler_statuses: Dict[str, str] = {}
@@ -6839,7 +7240,12 @@ def _test_chapter_impl(
 
                 logger.info(f" ({', '.join(profiler_results)})")
                 result_entry["baseline_profiler_statuses"] = dict(baseline_profiler_statuses)
-                _reap_run_descendants(f"{chapter_name}:{example_name}:cuda_baseline_profiling")
+                _reap_benchmark_process_leftovers(
+                    f"{chapter_name}:{example_name}:cuda_baseline_profiling",
+                    current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                    current_owner_pid=os.getpid(),
+                    repo_root=repo_root,
+                )
 
                 # Display extracted metrics
                 if baseline_metrics:
@@ -6928,6 +7334,12 @@ def _test_chapter_impl(
                 logger.info(
                     f"    Running {opt_name} "
                     f"(runs={cuda_iterations}, timeout={cuda_timeout}s per run)"
+                )
+                _reap_benchmark_process_leftovers(
+                    f"phase_start:{chapter_name}:{example_name}:{technique}:cuda_optimized_timing",
+                    current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                    current_owner_pid=os.getpid(),
+                    repo_root=repo_root,
                 )
                 opt_phase_start = time.perf_counter()
                 emit_event(
@@ -7122,6 +7534,12 @@ def _test_chapter_impl(
                     and str(profile_type).lower() != "minimal"
                     and opt_result.get("status") == "succeeded"
                 ):
+                    _reap_benchmark_process_leftovers(
+                        f"phase_start:{chapter_name}:{example_name}:{technique}:cuda_optimized_profiling",
+                        current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                        current_owner_pid=os.getpid(),
+                        repo_root=repo_root,
+                    )
                     pair_dir = _profile_pair_dir(
                         profile_output_root, chapter_id, example_name, technique
                     )
@@ -7306,7 +7724,12 @@ def _test_chapter_impl(
 
                     logger.info(f" ({', '.join(profiler_results)})")
                     opt_result["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
-                    _reap_run_descendants(f"{chapter_name}:{example_name}:{technique}:cuda_optimized_profiling")
+                    _reap_benchmark_process_leftovers(
+                        f"{chapter_name}:{example_name}:{technique}:cuda_optimized_profiling",
+                        current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                        current_owner_pid=os.getpid(),
+                        repo_root=repo_root,
+                    )
 
                     # Display extracted metrics
                     if optimized_metrics:
@@ -7377,6 +7800,12 @@ def _test_chapter_impl(
                     cand = cuda_optimized_profile_candidates.get(best_key)
                     if cand:
                         try:
+                            _reap_benchmark_process_leftovers(
+                                f"phase_start:{chapter_name}:{example_name}:{best_key}:cuda_optimized_profiling",
+                                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                                current_owner_pid=os.getpid(),
+                                repo_root=repo_root,
+                            )
                             pair_dir = _profile_pair_dir(
                                 profile_output_root, chapter_id, example_name, best_key
                             )
@@ -7560,6 +7989,12 @@ def _test_chapter_impl(
 
                             logger.info(f" ({', '.join(profiler_results)})")
                             best_opt["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
+                            _reap_benchmark_process_leftovers(
+                                f"{chapter_name}:{example_name}:{best_key}:cuda_optimized_profiling",
+                                current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
+                                current_owner_pid=os.getpid(),
+                                repo_root=repo_root,
+                            )
                             if optimized_metrics:
                                 logger.info("        📈 Profiler Metrics:")
                                 log_profiler_metrics_table(logger, optimized_metrics, indent="          ")
@@ -8966,6 +9401,13 @@ def _verify_patched_benchmark(
         'errors': [],
         'details': {},
     }
+
+    def _append_detail_warning(message: str, *, exc: Optional[BaseException] = None) -> str:
+        warning = f"{message}: {exc}" if exc is not None else message
+        warnings_list = result['details'].setdefault('warnings', [])
+        if warning not in warnings_list:
+            warnings_list.append(warning)
+        return warning
     
     # Load both modules
     try:
@@ -9207,14 +9649,21 @@ def _verify_patched_benchmark(
             result['quarantine_reason'] = 'capture_verification_payload_error'
             try:
                 orig_benchmark.teardown()
-            except Exception:
-                pass
+            except Exception as cleanup_exc:
+                _append_detail_warning(
+                    "Original benchmark teardown failed after capture_verification_payload() error",
+                    exc=cleanup_exc,
+                )
             return result
         # Prefer get_verify_output() method if available (consistent with FULL VERIFICATION)
         if hasattr(orig_benchmark, 'get_verify_output'):
             try:
                 orig_output = orig_benchmark.get_verify_output()
-            except Exception:
+            except Exception as exc:
+                _append_detail_warning(
+                    "Original benchmark get_verify_output() failed during patched verification",
+                    exc=exc,
+                )
                 orig_output = None
         else:
             orig_output = getattr(orig_benchmark, 'output', None)
@@ -9271,18 +9720,28 @@ def _verify_patched_benchmark(
             result['quarantine_reason'] = 'capture_verification_payload_error'
             try:
                 patch_benchmark.teardown()
-            except Exception:
-                pass
+            except Exception as cleanup_exc:
+                _append_detail_warning(
+                    "Patched benchmark teardown failed after capture_verification_payload() error",
+                    exc=cleanup_exc,
+                )
             try:
                 orig_benchmark.teardown()
-            except Exception:
-                pass
+            except Exception as cleanup_exc:
+                _append_detail_warning(
+                    "Original benchmark teardown failed during patched capture_verification_payload() cleanup",
+                    exc=cleanup_exc,
+                )
             return result
         # Prefer get_verify_output() method if available (consistent with FULL VERIFICATION)
         if hasattr(patch_benchmark, 'get_verify_output'):
             try:
                 patch_output = patch_benchmark.get_verify_output()
-            except Exception:
+            except Exception as exc:
+                _append_detail_warning(
+                    "Patched benchmark get_verify_output() failed during patched verification",
+                    exc=exc,
+                )
                 patch_output = None
         else:
             patch_output = getattr(patch_benchmark, 'output', None)
@@ -10522,10 +10981,12 @@ def main():
     logger.info(f"Bench root: {active_bench_root}")
     event_run_id = build_run_id("bench-main", base_dir=default_artifacts_root(active_bench_root))
     os.environ["AISP_BENCHMARK_OWNER_RUN_ID"] = event_run_id
+    os.environ["AISP_BENCHMARK_OWNER_PID"] = str(os.getpid())
     atexit.register(_reap_run_descendants, "run_exit")
     _reap_benchmark_process_leftovers(
         "run_start",
         current_run_id=event_run_id,
+        current_owner_pid=os.getpid(),
         repo_root=repo_root,
     )
     event_log_path = args.output.parent / "benchmark_events.jsonl"
@@ -10599,13 +11060,10 @@ def main():
             f"Expected: {dump_caps_path.resolve()}\n"
             f"This is a critical configuration error."
         )
-    import subprocess
-    result = subprocess.run(
-        [sys.executable, str(dump_caps_path), "--fast"],
-        capture_output=True,
-        text=True,
+    result = _run_repo_python_module(
+        "core.scripts.utilities.dump_hardware_capabilities",
+        "--fast",
         timeout=15,
-        check=True  # Fail if script fails
     )
     logger.info(result.stdout)
     if result.stderr:
@@ -10620,12 +11078,9 @@ def main():
             f"Expected: {precompile_path.resolve()}\n"
             f"This is a critical configuration error."
         )
-    result = subprocess.run(
-        [sys.executable, str(precompile_path)],
-        capture_output=True,
-        text=True,
-        timeout=300,  # Pre-compilation can take multiple minutes on fresh builds
-        check=True  # Fail if script fails
+    result = _run_repo_python_module(
+        "core.scripts.utilities.precompile_cuda_extensions",
+        timeout=300,
     )
     logger.info(result.stdout)
     if result.stderr:
@@ -10676,11 +11131,11 @@ def main():
         # GPU reset and cleanup between chapters to prevent state corruption
         if chapter_idx > 0:
             logger.info(f"\n  Resetting GPU state before {chapter_dir.name}...")
-            reset_cuda_state()
-            reset_gpu_state()
+            _reset_parent_execution_state(include_gpu_state=True)
         _reap_benchmark_process_leftovers(
             f"chapter_start:{chapter_dir.name}",
             current_run_id=event_run_id,
+            current_owner_pid=os.getpid(),
             repo_root=repo_root,
         )
         

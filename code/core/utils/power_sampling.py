@@ -65,7 +65,8 @@ class PowerSampler:
     def stop(self) -> Dict[str, object]:
         if self._thread is None:
             return self._build_metrics()
-        assert self._stop_event is not None
+        if self._stop_event is None:
+            raise RuntimeError("PowerSampler stop requested without an active stop event")
         self._stop_event.set()
         self._thread.join()
         self._thread = None
@@ -80,7 +81,8 @@ class PowerSampler:
         self._handles = []
 
     def _run(self) -> None:
-        assert self._stop_event is not None
+        if self._stop_event is None:
+            raise RuntimeError("PowerSampler worker started without a stop event")
         try:
             while not self._stop_event.wait(self.interval):
                 self._sample_once()

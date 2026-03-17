@@ -106,7 +106,7 @@ class OptimizedAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             iterations=20,
-            warmup=10,
+            warmup=5,
             use_subprocess=True,
         )
 

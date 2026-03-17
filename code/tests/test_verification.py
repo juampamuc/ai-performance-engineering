@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -47,6 +48,7 @@ from core.benchmark.quarantine import (
 from core.benchmark.verify_runner import (
     GoldenOutput,
     GoldenOutputCache,
+    TimingConfig,
     VerifyConfig,
     VerifyRunner,
 )
@@ -869,6 +871,92 @@ class TestVerifyRunner:
         result = runner.verify_baseline(baseline)
         assert result.passed is False
         assert "signature" in result.reason.lower()
+
+    def test_verify_baseline_fails_when_mark_execution_complete_raises(self, temp_dirs):
+        runner = VerifyRunner(
+            cache_dir=temp_dirs["cache"],
+            quarantine_manager=QuarantineManager(temp_dirs["quarantine"]),
+        )
+
+        class BrokenExecutionMarkerBenchmark(MockBenchmark):
+            def mark_execution_complete(self) -> None:
+                raise RuntimeError("marker boom")
+
+        result = runner.verify_baseline(BrokenExecutionMarkerBenchmark("baseline"))
+
+        assert result.passed is False
+        assert "mark_execution_complete() failed during verification" in (result.reason or "")
+
+    def test_verify_baseline_warns_when_teardown_fails(self, temp_dirs):
+        runner = VerifyRunner(
+            cache_dir=temp_dirs["cache"],
+            quarantine_manager=QuarantineManager(temp_dirs["quarantine"]),
+        )
+
+        class BrokenTeardownBenchmark(MockBenchmark):
+            def teardown(self) -> None:
+                raise RuntimeError("teardown boom")
+
+        with pytest.warns(RuntimeWarning, match="teardown\\(\\) failed during verification cleanup"):
+            result = runner.verify_baseline(BrokenTeardownBenchmark("baseline"))
+
+        assert result.passed is True
+
+    def test_verify_baseline_fails_when_skip_hook_raises(self, temp_dirs):
+        runner = VerifyRunner(
+            cache_dir=temp_dirs["cache"],
+            quarantine_manager=QuarantineManager(temp_dirs["quarantine"]),
+        )
+
+        class BrokenSkipHookBenchmark(MockBenchmark):
+            def skip_input_verification(self) -> bool:
+                raise RuntimeError("skip hook boom")
+
+        result = runner.verify_baseline(BrokenSkipHookBenchmark("baseline"))
+
+        assert result.passed is False
+        assert result.reason == "skip hook boom"
+
+    def test_verify_pair_surfaces_advisory_check_warnings(self, temp_dirs):
+        runner = VerifyRunner(
+            cache_dir=temp_dirs["cache"],
+            quarantine_manager=QuarantineManager(temp_dirs["quarantine"]),
+        )
+        baseline = MockBenchmark("baseline")
+        optimized = MockBenchmark("optimized")
+
+        with patch.object(
+            runner,
+            "_run_fresh_input_check",
+            return_value=(True, "Fresh input check warning: deterministic-by-design"),
+        ), patch.object(
+            runner,
+            "_run_jitter_check",
+            return_value=(True, "Jitter check skipped due to error: no mutable input tensor"),
+        ):
+            result = runner.verify_pair(baseline, optimized)
+
+        assert result.passed is True
+        assert result.details == {
+            "warnings": [
+                "Fresh input check warning: deterministic-by-design",
+                "Jitter check skipped due to error: no mutable input tensor",
+            ]
+        }
+
+    def test_timing_config_warns_when_get_config_raises(self):
+        class BrokenGetConfigBenchmark:
+            warmup_iterations = 7
+            iterations = 11
+
+            def get_config(self):
+                raise RuntimeError("config boom")
+
+        with pytest.warns(RuntimeWarning, match="Failed to inspect .*get_config\\(\\) for verification timing"):
+            config = TimingConfig.from_benchmark(BrokenGetConfigBenchmark())
+
+        assert config.warmup_iterations == 7
+        assert config.measurement_iterations == 11
 
 
 # =============================================================================

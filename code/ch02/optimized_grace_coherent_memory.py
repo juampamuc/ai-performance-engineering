@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Optimized: Grace-Blackwell coherent memory with cache-aware access.
-
-Demonstrates optimized coherent memory patterns:
-- Zero-copy buffers for small transfers (<4MB)
-- Pinned memory with async copies for medium transfers (4-64MB)
-- Explicit transfers with optimal alignment for large transfers (>64MB)
-- NUMA-aware allocation on Grace CPUs
-"""
+"""Optimized: coherent-memory transfers with stable placement and async staging."""
 
 import ctypes
 import os
@@ -135,12 +128,9 @@ class OptimizedGraceCoherentMemory:
     
     def _select_strategy(self) -> str:
         """Select optimal transfer strategy based on size."""
-        if self.size_mb < self.ZERO_COPY_THRESHOLD_MB:
+        if self.is_grace_blackwell and self.size_mb < self.ZERO_COPY_THRESHOLD_MB:
             return "zero_copy"
-        elif self.size_mb < self.ASYNC_THRESHOLD_MB:
-            return "async_pinned"
-        else:
-            return "explicit_aligned"
+        return "async_pinned"
     
     def _bind_numa_node(self):
         """Bind to NUMA node closest to GPU (Grace-Blackwell specific)."""
@@ -217,61 +207,34 @@ class OptimizedGraceCoherentMemory:
             
             logger.info(f"Using double-buffered async transfers ({self.size_mb}MB)")
     
-    def run(self) -> float:
-        """Execute optimized coherent memory access pattern."""
+    def run_step(self) -> float:
+        """Execute one transfer step using the selected coherent-memory strategy."""
         torch.cuda.synchronize()
         start = time.perf_counter()
         
         if self.strategy == "zero_copy":
-            # Zero-copy: Direct access via coherent NVLink-C2C
-            for _ in range(self.iterations):
-                # Access happens through coherent cache
-                self.gpu_data.mul_(2.0).add_(1.0)
-                # No explicit copy needed - coherency maintained by hardware
+            self.gpu_data.mul_(2.0).add_(1.0)
         
         elif self.strategy == "async_pinned":
-            # Async pinned: Overlap copy with compute
-            for _ in range(self.iterations):
-                with torch.cuda.stream(self.stream):
-                    # Async H2D copy
-                    self.gpu_data.copy_(self.cpu_data, non_blocking=True)
-                
-                # Compute (can overlap with copy)
-                self.gpu_data.mul_(2.0).add_(1.0)
-                
-                # Async D2H copy
+            with torch.cuda.stream(self.stream):
+                self.gpu_data.copy_(self.cpu_data, non_blocking=True)
+            torch.cuda.current_stream().wait_stream(self.stream)
+            self.gpu_data.mul_(2.0).add_(1.0)
+            self.stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(self.stream):
                 self.cpu_data.copy_(self.gpu_data, non_blocking=True)
-                self.stream.synchronize()
+            self.stream.synchronize()
         
         else:  # explicit_aligned
-            # Double-buffered: Overlap H2D with compute, then D2H with next H2D
-            # First iteration: start H2D
             with torch.cuda.stream(self.copy_stream):
                 self.gpu_data.copy_(self.cpu_data, non_blocking=True)
-            
-            for i in range(self.iterations):
-                # Wait for H2D to complete before compute
-                self.compute_stream.wait_stream(self.copy_stream)
-                
-                # Compute on current data
-                self.gpu_data.mul_(2.0).add_(1.0)
-                
-                # Start async D2H copy
-                with torch.cuda.stream(self.copy_stream):
-                    self.copy_stream.wait_stream(self.compute_stream)
-                    self.cpu_data_out.copy_(self.gpu_data, non_blocking=True)
-                    
-                    # If not last iteration, start next H2D (overlaps with D2H)
-                    if i < self.iterations - 1:
-                        # Feed the next iteration with the freshly produced CPU data.
-                        # This preserves baseline semantics on non-Grace systems.
-                        self.gpu_data.copy_(self.cpu_data_out, non_blocking=True)
-
-                # Swap CPU buffers so cpu_data always reflects the latest output.
-                self.cpu_data, self.cpu_data_out = self.cpu_data_out, self.cpu_data
-            
-            # Final sync
+            self.compute_stream.wait_stream(self.copy_stream)
+            self.gpu_data.mul_(2.0).add_(1.0)
+            with torch.cuda.stream(self.copy_stream):
+                self.copy_stream.wait_stream(self.compute_stream)
+                self.cpu_data_out.copy_(self.gpu_data, non_blocking=True)
             self.copy_stream.synchronize()
+            self.cpu_data, self.cpu_data_out = self.cpu_data_out, self.cpu_data
         
         torch.cuda.synchronize()
         end = time.perf_counter()
@@ -280,9 +243,9 @@ class OptimizedGraceCoherentMemory:
         
         # Calculate bandwidth (zero-copy only counts once since data isn't moved)
         if self.strategy == "zero_copy":
-            bandwidth_gb_s = (self.size_mb / 1024) * self.iterations / elapsed
+            bandwidth_gb_s = (self.size_mb / 1024) / elapsed
         else:
-            bandwidth_gb_s = (self.size_mb / 1024) * self.iterations * 2 / elapsed  # 2 for H2D + D2H
+            bandwidth_gb_s = (self.size_mb / 1024) * 2 / elapsed  # H2D + D2H
         
         logger.info(f"Optimized bandwidth ({self.strategy}): {bandwidth_gb_s:.2f} GB/s")
         return elapsed
@@ -310,7 +273,8 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
             size_mb=size_mb,
             iterations=iterations,
         )
-        bytes_per_iter = size_mb * 1024 * 1024 * 2  # H2D + D2H
+        multiplier = 1 if self._impl.strategy == "zero_copy" else 2
+        bytes_per_iter = size_mb * 1024 * 1024 * multiplier
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             bytes_per_iteration=float(bytes_per_iter),
@@ -337,11 +301,13 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
             torch.cuda.synchronize()
 
     def benchmark_fn(self) -> None:
-        elapsed = self._impl.run()
+        elapsed = self._impl.run_step()
         self.elapsed_s = elapsed
         multiplier = 1 if self._impl.strategy == "zero_copy" else 2
-        self.bandwidth_gb_s = (self._impl.size_mb / 1024) * self._impl.iterations * multiplier / elapsed
-        verify_output = self._impl.gpu_data[:1000].detach().clone()
+        self.bandwidth_gb_s = (self._impl.size_mb / 1024) * multiplier / elapsed
+        # Compare the post-transfer host-visible tensor instead of a device
+        # buffer slice so every strategy reports the same semantic result.
+        verify_output = self._impl.cpu_data[:1000].detach().cpu().clone()
         self.output = verify_output
 
     def capture_verification_payload(self) -> None:
@@ -367,11 +333,14 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
-        # This benchmark does substantial work inside benchmark_fn() (it runs an
-        # internal loop of coherent-memory transfers). A single harness iteration
-        # is intentional and still yields stable timings (the harness also has
-        # adaptive-iterations enabled by default).
-        return BenchmarkConfig(iterations=1, warmup=5, enable_memory_tracking=False)
+        return BenchmarkConfig(
+            iterations=max(1, self._impl.iterations),
+            warmup=5,
+            enable_memory_tracking=False,
+            # benchmark_fn mutates the transfer buffers, so adaptive iteration
+            # expansion would change the observable output used for verification.
+            adaptive_iterations=False,
+        )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
@@ -388,7 +357,7 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
         """Return memory transfer metrics for grace_coherent_memory."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
         multiplier = 1 if self._impl.strategy == "zero_copy" else 2
-        bytes_transferred = float(self.size_mb * 1024 * 1024 * self._impl.iterations * multiplier)
+        bytes_transferred = float(self.size_mb * 1024 * 1024 * multiplier)
         return compute_memory_transfer_metrics(
             bytes_transferred=bytes_transferred,
             elapsed_ms=(self.elapsed_s or 0.001) * 1000.0,
@@ -417,7 +386,7 @@ def run_benchmark(
     harness = BenchmarkHarness(
         mode=BenchmarkMode.CUSTOM,
         config=BenchmarkConfig(
-            iterations=1,
+            iterations=max(1, iterations),
             warmup=5,
             profile_mode=profile,
         ),
@@ -431,8 +400,3 @@ def run_benchmark(
         "size_mb": size_mb,
         "iterations": iterations,
     }
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

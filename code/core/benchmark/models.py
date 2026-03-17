@@ -360,6 +360,14 @@ class BenchmarkResult(BaseModel):
     multi_gpu_required: Optional[bool] = Field(None, description="Benchmark declared multi-GPU requirement")
     seeds: Optional[Dict[str, Any]] = Field(None, description="Seeds applied for reproducibility (random, numpy, torch, cuda)")
     custom_metrics: Dict[str, float] = Field(default_factory=dict, description="Benchmark-specific custom metrics")
+    story_metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Non-numeric benchmark story metadata (control pair role, chapter alignment, exemplar status)",
+    )
+    runtime_env: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Runtime environment overrides applied during benchmark execution",
+    )
     gpu_metrics: Optional[Dict[str, Optional[float | str]]] = Field(
         None,
         description="Snapshot of GPU telemetry (temperature, power, utilization, timestamp)",
@@ -394,6 +402,11 @@ class BenchmarkResult(BaseModel):
                 },
                 "custom_metrics": {
                     "scenario_total_phase_ms": 123.4
+                },
+                "story_metadata": {
+                    "pair_role": "control",
+                    "chapter_alignment": "supplementary",
+                    "chapter_native_exemplar": False
                 },
                 "launch_via": "python",
                 "world_size": 1,

@@ -12,7 +12,7 @@ from ch15.placement_sim import (  # noqa: E402
     PlacementSimulator,
     percentile,
 )
-from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
+from core.benchmark.verification_mixin import VerificationPayloadMixin  # noqa: E402
 
 
 class _PlacementBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -22,10 +22,11 @@ class _PlacementBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         self.cfg = cfg
         self.prefix = prefix
+        self.sessions = 64
         self.simulator = PlacementSimulator()
         self._summary: Dict[str, float] = {}
         self.output = None  # Simulation metrics as tensor
-        self.register_workload_metadata(requests_per_iteration=1.0)
+        self.register_workload_metadata(requests_per_iteration=float(self.sessions))
         self._verify_cfg = torch.tensor(
             [cfg.prefill_tp_size, cfg.decode_tp_size, cfg.decode_microbatch],
             dtype=torch.int64,
@@ -36,13 +37,15 @@ class _PlacementBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.set_default_dtype(self.cfg.dtype)  # type: ignore[arg-type]
 
     def benchmark_fn(self) -> None:
-        run = self.simulator.simulate(self.cfg, sessions=64, seed=17)
+        run = self.simulator.simulate(self.cfg, sessions=self.sessions, seed=17)
         ttft_p50 = percentile(run.ttft_ms, 50)
         ttft_p95 = percentile(run.ttft_ms, 95)
         decode_p50 = percentile(run.decode_ms, 50)
         decode_p95 = percentile(run.decode_ms, 95)
         total_ms = sum(run.ttft_ms) + sum(run.decode_ms)
         tput_tokens_s = run.tokens_processed / max(total_ms / 1000.0, 1e-6)
+        self._total_tokens = int(run.tokens_processed)
+        self._total_requests = int(run.sessions)
 
         self._summary = {
             f"{self.prefix}.ttft_p50_ms": ttft_p50,
@@ -95,12 +98,12 @@ class _PlacementBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return inference metrics for inference_placement."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 10.0),
-            tpot_ms=getattr(self, '_tpot_ms', 1.0),
-            total_tokens=getattr(self, '_total_tokens', 100),
-            total_requests=getattr(self, '_total_requests', 1),
-            batch_size=getattr(self, 'batch_size', 1),
-            max_batch_size=getattr(self, 'max_batch_size', 32),
+            ttft_ms=None,
+            tpot_ms=None,
+            total_tokens=int(getattr(self, '_total_tokens', self.cfg.batch_size)),
+            total_requests=int(getattr(self, '_total_requests', self.sessions)),
+            batch_size=int(getattr(self, 'batch_size', self.cfg.batch_size)),
+            max_batch_size=int(getattr(self, 'max_batch_size', self.cfg.batch_size)),
         )
 
 
@@ -125,7 +128,3 @@ class BaselineInferencePlacementBenchmark(_PlacementBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return BaselineInferencePlacementBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

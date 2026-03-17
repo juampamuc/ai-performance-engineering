@@ -136,6 +136,29 @@ def test_linter_sync_only_fails_on_hot_path_sync(tmp_path: Path):
     assert "stream/event synchronize()" in result.stdout
 
 
+def test_contract_ast_rejects_benchmark_module_main_guard(tmp_path: Path) -> None:
+    ok, errors, warnings = _lint_tmp_file(
+        tmp_path,
+        "baseline_tmp_main_guard.py",
+        "class TmpBench:\n"
+        "    def setup(self):\n"
+        "        pass\n\n"
+        "    def benchmark_fn(self):\n"
+        "        pass\n\n"
+        "    def teardown(self):\n"
+        "        pass\n\n"
+        "def get_benchmark():\n"
+        "    return TmpBench()\n\n"
+        "if __name__ == \"__main__\":\n"
+        "    from core.harness.benchmark_harness import benchmark_main\n"
+        "    benchmark_main(get_benchmark)\n",
+    )
+
+    assert not ok
+    assert any("must not define __main__ blocks" in error for error in errors)
+    assert warnings == []
+
+
 def test_contract_ast_accepts_payload_mixin_inherited_verification_methods():
     """AST validation should recognize VerificationPayloadMixin via inheritance."""
     repo_root = Path(__file__).parent.parent

@@ -12,6 +12,7 @@ Expected speedup: 5-20x depending on sequence length.
 
 from __future__ import annotations
 
+from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,20 +20,14 @@ import torch.nn.functional as F
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
-
-def resolve_device() -> torch.device:
-    """Return CUDA device if available."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch16")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for ch16")
 
 
 class OptimizedPagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -186,8 +181,3 @@ class OptimizedPagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return OptimizedPagedAttentionBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

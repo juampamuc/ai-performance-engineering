@@ -22,15 +22,11 @@ __device__ __forceinline__ float evaluate_branch_with_redundancy(float value, fl
     const float repeated = expensive_transform(value, sine, cosine);
     const float averaged = 0.5f * (magnitude + repeated);
 
-    const float sine_neg = __sinf(-value);
-    const float cosine_neg = __cosf(-value);
-    volatile float redundant_eval = expensive_transform(-value, sine_neg, cosine_neg);
-
     float checksum = value * 0.5f;
     checksum = fmaf(checksum, 0.99991f, 0.0001f * value);
     checksum = fmaf(checksum, 0.99973f, -0.0001f * value);
 
-    const float blended = averaged + (redundant_eval - redundant_eval) + (checksum - checksum);
+    const float blended = averaged + (checksum - checksum);
     return blended * scale;
 }
 
@@ -64,12 +60,11 @@ __global__ void threshold_naive_kernel(
         return;
     }
 
-    const volatile float* volatile_inputs = reinterpret_cast<const volatile float*>(inputs);
-    const float branch_value = volatile_inputs[idx];
+    const float value = inputs[idx];
+    const float branch_value = value;
     float result = 0.0f;
     const float outer_threshold = threshold * kThresholdSecondaryScale;
     if (branch_value > outer_threshold) {
-        const float value = volatile_inputs[idx];  // Naive path reloads from memory for the actual math.
         float accum = 0.0f;
         #pragma unroll 4
         for (int repeat = 0; repeat < 4; ++repeat) {
@@ -77,7 +72,6 @@ __global__ void threshold_naive_kernel(
         }
         result = 0.25f * accum;
     } else if (branch_value > threshold) {
-        const float value = volatile_inputs[idx];
         float accum = 0.0f;
         #pragma unroll 4
         for (int repeat = 0; repeat < 4; ++repeat) {
@@ -85,7 +79,6 @@ __global__ void threshold_naive_kernel(
         }
         result = 0.25f * accum;
     } else if (branch_value < -outer_threshold) {
-        const float value = volatile_inputs[idx];
         float accum = 0.0f;
         #pragma unroll 4
         for (int repeat = 0; repeat < 4; ++repeat) {
@@ -93,7 +86,6 @@ __global__ void threshold_naive_kernel(
         }
         result = 0.25f * accum;
     } else if (branch_value < -threshold) {
-        const float value = volatile_inputs[idx];
         float accum = 0.0f;
         #pragma unroll 4
         for (int repeat = 0; repeat < 4; ++repeat) {

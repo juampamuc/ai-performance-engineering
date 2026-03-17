@@ -1,12 +1,9 @@
-"""Optimized paged attention with Blackwell FP8 KV cache.
+"""Optimized paged attention — Flash Attention via SDPA (Blackwell variant).
 
-This demonstrates Blackwell-specific optimizations:
-- FP8 KV cache for 2x memory savings
-- Flash Attention via SDPA for fast attention
-
-The FP8 KV cache optimization is primarily a MEMORY optimization that
-enables larger batch sizes / longer sequences, not a raw speed improvement.
-The speedup shown here comes from Flash Attention vs naive attention.
+This uses scaled_dot_product_attention which leverages Flash Attention for:
+- O(n) memory instead of O(n²)
+- Fused kernel (no intermediate materialization)
+- Hardware-optimized attention computation
 
 Compare with baseline_paged_attention.py which uses naive O(n²) attention.
 """
@@ -28,11 +25,15 @@ logger = get_logger(__name__)
 
 
 class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: Flash Attention with FP8 KV cache (Blackwell).
-    
-    Uses Flash Attention via SDPA + FP8 KV cache demonstration.
-    The speedup comes from Flash Attention; FP8 provides memory savings.
-    """
+    """Optimized: Flash Attention via SDPA (Blackwell variant)."""
+
+    story_metadata = {
+        "pair_role": "variant",
+        "chapter_alignment": "canonical",
+        "chapter_native_exemplar": True,
+        "variant_of": "paged_attention",
+        "variant_reason": "Blackwell-tuned Flash SDPA path exposed as paged_attention_blackwell.",
+    }
     
     def __init__(self):
         super().__init__()
@@ -113,7 +114,7 @@ class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self.out_proj(output)
     
     def benchmark_fn(self) -> None:
-        """Benchmark: Flash Attention with FP8 KV cache benefits."""
+        """Benchmark the Flash SDPA forward path for the Blackwell variant."""
         config = self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
         with nvtx_range("optimized_paged_attention_blackwell", enable=enable_nvtx):
@@ -152,19 +153,16 @@ class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.empty_cache()
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return FP8 KV cache info metrics."""
         return {
-            "fp8_kv.enabled": 1.0,
-            "fp8_kv.memory_savings": 2.0,  # 2x savings with FP8
-            "seq_length": float(self.seq_length),
+            "story.variant_pair": 1.0,
+            "story.chapter_native_exemplar": 1.0,
+            "paged_attention.blackwell_variant": 1.0,
+            "paged_attention.seq_len": float(self.seq_len),
+            "paged_attention.num_heads": float(self.num_heads),
+            "paged_attention.head_dim": float(self.head_dim),
         }
 
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark harness discovery."""
     return PagedAttentionBlackwellBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

@@ -25,6 +25,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 | `batch` | `10.061 ms` | `0.185 ms` | `54.44x` |
 
 These are good chapter-level "does the optimization concept work?" numbers, not universal hardware ceilings.
+`book-after/ch10.md` is centered on intra-kernel pipelines, warp specialization, persistent kernels, and cluster workflows, so the canonical Chapter 10 surface stays anchored on targets such as `double_buffered_pipeline`, `pipeline_3stage`, `warp_specialized_pipeline`, and `cluster_group`.
 
 ## Profiler Evidence
 Use the harness target directly when you want reproducible Nsight evidence instead of ad hoc scripts:
@@ -53,13 +54,10 @@ python -m cli.aisp bench run --targets ch10 --profile minimal
 | Path | Description |
 | --- | --- |
 | `baseline_attention.py`, `optimized_attention.py`, `baseline_flash_attention.py`, `optimized_flash_attention.py`, `analyze_scaling.py` | Attention workloads that span eager, fused, and `torch.compile` paths for modern decoder models. |
-| `baseline_batch.py`, `optimized_batch.py`, `baseline_matmul.py`, `optimized_matmul.py`, `baseline_matmul_tcgen05.py`, `optimized_matmul_tcgen05.py` | Tensor-core matmul variants demonstrating tcgen05 lowering, register tiling, and PyTorch integration. |
+| `baseline_batch.py`, `optimized_batch.py`, `baseline_matmul_tcgen05_vs_cublas.py`, `optimized_matmul_tcgen05_vs_cublas.py` | Batch scheduling benchmarks plus a custom-tcgen05-versus-cuBLAS comparison target kept for manual tensor-core reference. |
 | `baseline_tcgen05_warp_specialization.py`, `optimized_tcgen05_warp_specialization.py`, `tcgen05_warp_specialized.cu` | Warp-specialized tcgen05 GEMM with dedicated producer/consumer warps. |
-| `baseline_tcgen05_cluster_pipeline.py`, `optimized_tcgen05_cluster_pipeline.py`, `tcgen05_cluster.cu` | Fixed-shape tcgen05 cluster pipeline pair: baseline stays eager while the optimized wrapper replays the cluster kernel through a CUDA graph so Python launch overhead does not dominate the chapter microbenchmark. |
 | `baseline_tcgen05_warp_specialization_cutlass.py`, `optimized_tcgen05_warp_specialization_cutlass.py`, `tcgen05_warp_specialized_cutlass.cu`, `tcgen05_warpgroup_specialized.cu` | CUTLASS warp-specialized mainloop comparison (1-SM warp-specialized vs 2-SM warpgroup tile). |
-| `../labs/tcgen05_cluster_shapes/` | Exploratory 1-SM vs 2-SM vs 4-SM tcgen05 cluster-shape lab; reports unsupported 4-SM schedules honestly instead of treating them as canonical chapter wins. |
 | `warpgroup_specialization_demo.py`, `tcgen05_warpgroup_specialized.cu` | Demo of the CUTLASS warpgroup array mainloop using a 2-SM tile. |
-| `baseline_tmem_tcgen05.py`, `optimized_tmem_tcgen05.py` | TMEM comparison benchmark surfaced via tcgen05 (baseline vs cuBLAS reference). |
 | `baseline_double_buffered_pipeline.{py,cu}`, `optimized_double_buffered_pipeline.{py,cu}`, `baseline_tma_2d_pipeline.py`, `optimized_tma_2d_pipeline.py` | Async pipeline samples mixing cp.async, TMA, and manual double buffering. |
 | `baseline_cluster_group*.{py,cu}`, `optimized_cluster_group*.{py,cu}`, `cluster_group_common.cuh`, `cluster_group_utils.py` | Clustered kernel suite covering DSMEM-enabled and DSMEM-free thread-block clusters. |
 | `baseline_cluster_multicast.py`, `optimized_cluster_multicast.py`, `tma_multicast_baseline.cu`, `tma_multicast_cluster.cu` | Cluster multicast GEMM example (baseline vs cluster multicast) wrapped as CUDA-binary harness benchmarks. |
@@ -81,9 +79,8 @@ python -m cli.aisp bench run --targets ch10 --profile minimal
 
 ## Validation Checklist
 - Cluster-enabled kernels fail fast on hardware without DSMEM support, while DSMEM-free variants still execute-use this to confirm cluster capability flags.
-- `python -m ch10.optimized_flash_attention --profile minimal` now prefers an explicit external FlashAttention engine (`flash_attn_3`, then `flash_attn`, then SDPA) and records both the engine and backend in structured metrics (`attention.engine_*`, `attention.selected_backend_*`), so any fallback remains visible instead of silent.
+- `python -m cli.aisp bench run --targets ch10:flash_attention --profile minimal` produces fewer kernel launches and higher achieved FLOP/s than the baseline script.
 - `python -m ch10.analyze_scaling` summarizes the chapter's scaling behavior without relying on path surgery.
-- `python -m labs.tcgen05_cluster_shapes.run_cluster_shape_sweep --json-out artifacts/tcgen05_cluster_shapes/latest.json` gives a clock-locked exploratory read on the shipped `1-SM` and `2-SM` tcgen05 paths and an honest `4-SM` support status.
 - `python -m ch10.cufile_gds_example` runs the CUDA memory pipeline and GDS demo, highlighting launch amortization and IO overlap.
 
 ## Notes

@@ -16,7 +16,7 @@ from core.harness.benchmark_harness import (
     LaunchVia,
     TorchrunLaunchSpec,
 )
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class NVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBenchmark):
@@ -112,7 +112,7 @@ class NVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
             bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             transfer_type="hbm",
         )
 
@@ -120,6 +120,3 @@ def get_benchmark() -> BaseBenchmark:
     return NVSHMEMTrainingPatternsMultiGPU()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

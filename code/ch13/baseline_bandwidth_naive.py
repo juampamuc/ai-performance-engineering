@@ -20,8 +20,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.utils.extension_loader_template import load_cuda_extension_v2
@@ -126,8 +124,8 @@ class BaselineBandwidthNaiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=getattr(self, '_last_elapsed_ms', None),
+            reduced_precision_time_ms=None,
             precision_type="fp8",
         )
 
@@ -142,7 +140,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselineBandwidthNaiveBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

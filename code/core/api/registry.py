@@ -109,6 +109,20 @@ _ROUTES: List[ApiRoute] = [
     ),
     ApiRoute(
         "POST",
+        "/api/cluster/fabric-eval",
+        "cluster.fabric_eval",
+        handlers.cluster_fabric_eval,
+        mcp_tool="cluster_fabric_eval",
+    ),
+    ApiRoute(
+        "POST",
+        "/api/cluster/nmx-partition-lab",
+        "cluster.nmx_partition_lab",
+        handlers.cluster_nmx_partition_lab,
+        mcp_tool="cluster_nmx_partition_lab",
+    ),
+    ApiRoute(
+        "POST",
         "/api/cluster/build-canonical-package",
         "cluster.build_canonical_package",
         handlers.cluster_build_canonical_package,

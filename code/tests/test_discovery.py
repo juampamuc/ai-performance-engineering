@@ -4,6 +4,7 @@ Tests discovery of Python and CUDA benchmark pairs as specified in Part 2.10.
 """
 
 import pytest
+import warnings
 from pathlib import Path
 
 repo_root = Path(__file__).parent.parent
@@ -127,6 +128,22 @@ class TestPythonBenchmarkDiscovery:
 
         assert lookup["performance"] == ("baseline_performance.py", ["optimized_performance.py"])
         assert lookup["performance_fp16"] == ("baseline_performance_fp16.py", ["optimized_performance_fp16.py"])
+
+    def test_discover_benchmarks_pairs_pageable_copy_with_normalized_name(self, tmp_path):
+        """Discovery should pair the pageable-copy benchmark without alias logic."""
+        chapter_dir = tmp_path / "ch03"
+        chapter_dir.mkdir()
+
+        (chapter_dir / "baseline_pageable_copy.py").write_text(_DUMMY_BENCH_SOURCE)
+        (chapter_dir / "optimized_pageable_copy.py").write_text(_DUMMY_BENCH_SOURCE)
+
+        pairs = discover_benchmarks(chapter_dir)
+        lookup = {example_name: (baseline_path.name, [p.name for p in optimized_paths]) for baseline_path, optimized_paths, example_name in pairs}
+
+        assert lookup["pageable_copy"] == (
+            "baseline_pageable_copy.py",
+            ["optimized_pageable_copy.py"],
+        )
     
     def test_discover_benchmarks_real_chapter(self):
         """Test discovery on a real chapter directory if it exists."""
@@ -159,6 +176,104 @@ class TestPythonBenchmarkDiscovery:
 
         assert "host_staged_reduction" in names
         assert "distributed" not in names
+
+    def test_discover_benchmarks_ch06_hides_duplicate_add_aliases(self):
+        """Chapter 6 should expose only the book-aligned add targets."""
+        ch06_dir = repo_root / "ch06"
+        if not ch06_dir.exists():
+            pytest.skip("ch06 directory not found")
+
+        pairs = discover_benchmarks(ch06_dir)
+        names = {example_name for _, _, example_name in pairs}
+
+        assert "add_tensors" in names
+        assert "add_tensors_cuda" in names
+        assert "add" not in names
+        assert "add_cuda" not in names
+
+    def test_discover_benchmarks_ch14_hides_auxiliary_bench_variants(self):
+        """Chapter 14 should expose only canonical paired benchmark targets."""
+        ch14_dir = repo_root / "ch14"
+        if not ch14_dir.exists():
+            pytest.skip("ch14 directory not found")
+
+        pairs = discover_benchmarks(ch14_dir)
+        names = {example_name for _, _, example_name in pairs}
+
+        assert "sliding_window" in names
+        assert "triton_persistent" in names
+        assert "sliding_window_bench" not in names
+        assert "triton_persistent_bench" not in names
+
+    def test_discover_benchmarks_ch10_removes_off_theme_matmul_pair(self):
+        """Chapter 10 auto-discovery should stay aligned with the book-native target set."""
+        ch10_dir = repo_root / "ch10"
+        if not ch10_dir.exists():
+            pytest.skip("ch10 directory not found")
+
+        pairs = discover_benchmarks(ch10_dir)
+        names = {example_name for _, _, example_name in pairs}
+
+        assert "double_buffered_pipeline" in names
+        assert "warp_specialized_pipeline" in names
+        assert "cluster_group" in names
+        assert "matmul" not in names
+
+    def test_discover_benchmarks_keeps_intentional_variant_alias_targets(self):
+        """Optimized suffix variants should stay discoverable as explicit targets when intended."""
+        chapter_expectations = {
+            "ch10": {"dsmem_reduction_cluster_atomic"},
+            "ch12": {
+                "cuda_graphs_router",
+                "kernel_fusion_llm_reuse_static_tensor_and_simplify_setup",
+            },
+            "ch16": {"paged_attention_blackwell"},
+            "ch18": {"flexdecoding_graphs"},
+        }
+
+        for chapter, expected_names in chapter_expectations.items():
+            chapter_dir = repo_root / chapter
+            if not chapter_dir.exists():
+                pytest.skip(f"{chapter} directory not found")
+            pairs = discover_benchmarks(chapter_dir)
+            names = {example_name for _, _, example_name in pairs}
+            assert expected_names <= names
+
+    def test_discover_benchmarks_surfaces_split_targets_and_drops_removed_aliases(self):
+        """Renamed and split targets should be visible, and removed aliases should be gone."""
+        chapter_expectations = {
+            "ch10": ({"matmul_tcgen05_vs_cublas"}, {"tmem_cutlass", "tmem_tcgen05"}),
+            "ch15": ({"moe_dispatch", "moe_routing_topology_aware"}, {"moe_routing_simple"}),
+            "ch18": ({"paged_attn_backend", "paged_attn_layout"}, {"paged_attn"}),
+        }
+
+        for chapter, (expected_names, removed_names) in chapter_expectations.items():
+            chapter_dir = repo_root / chapter
+            if not chapter_dir.exists():
+                pytest.skip(f"{chapter} directory not found")
+            pairs = discover_benchmarks(chapter_dir)
+            names = {example_name for _, _, example_name in pairs}
+            assert expected_names <= names
+            assert not (removed_names & names)
+
+    def test_discover_benchmarks_ch12_graph_conditional_runtime_keeps_python_entrypoint(self):
+        """Discovery should keep the optimized Python graph-conditional runtime benchmark."""
+        ch12_dir = repo_root / "ch12"
+        if not ch12_dir.exists():
+            pytest.skip("ch12 directory not found")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pairs = discover_benchmarks(ch12_dir)
+
+        names = {example_name for _, _, example_name in pairs}
+        assert "graph_conditional_runtime" in names
+        assert not any(
+            "optimized_graph_conditional_runtime.py" in str(warning.message)
+            and "missing get_benchmark()" in str(warning.message)
+            for warning in caught
+        )
+
 
 
 class TestCudaBenchmarkDiscovery:
@@ -218,6 +333,18 @@ class TestCudaBenchmarkDiscovery:
         assert len(cuda_benchmarks) == 2
         # Should be sorted
         assert cuda_benchmarks[0].name < cuda_benchmarks[1].name
+
+    def test_discover_cuda_benchmarks_ignores_generated_copies(self, tmp_path):
+        """Generated benchmark copies should not leak into CUDA discovery."""
+        ch01_dir = tmp_path / "ch01"
+        ch01_dir.mkdir()
+
+        (ch01_dir / "baseline_atomic_reduction_mcp_copy_3.cu").write_text("// generated")
+        (ch01_dir / "baseline_atomic_reduction.cu").write_text("// canonical")
+
+        cuda_benchmarks = discover_cuda_benchmarks(tmp_path)
+
+        assert [path.name for path in cuda_benchmarks] == ["baseline_atomic_reduction.cu"]
 
 
 class TestChapterDiscovery:

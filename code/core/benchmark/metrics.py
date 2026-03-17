@@ -98,7 +98,7 @@ def detect_hardware_specs() -> HardwareSpecs:
 
 def compute_memory_transfer_metrics(
     bytes_transferred: float,
-    elapsed_ms: float,
+    elapsed_ms: Optional[float],
     transfer_type: str = "pcie",  # "pcie", "nvlink", "hbm"
     specs: Optional[HardwareSpecs] = None,
 ) -> Dict[str, float]:
@@ -114,9 +114,6 @@ def compute_memory_transfer_metrics(
         Dict with bandwidth metrics and efficiency percentages
     """
     specs = specs or detect_hardware_specs()
-    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
-    achieved_gbps = (bytes_transferred / 1e9) / elapsed_s
-    
     # Get theoretical peak for transfer type
     peak_map = {
         "pcie": specs.pcie_bandwidth_gbps,
@@ -124,15 +121,21 @@ def compute_memory_transfer_metrics(
         "hbm": specs.hbm_bandwidth_gbps,
     }
     theoretical_peak = peak_map.get(transfer_type, specs.pcie_bandwidth_gbps)
-    efficiency = (achieved_gbps / theoretical_peak) * 100.0 if theoretical_peak > 0 else 0.0
-    
-    return {
+
+    metrics = {
         "transfer.bytes": bytes_transferred,
-        "transfer.achieved_gbps": achieved_gbps,
         "transfer.theoretical_peak_gbps": theoretical_peak,
-        "transfer.efficiency_pct": min(efficiency, 100.0),
         "transfer.type": 0.0 if transfer_type == "pcie" else (1.0 if transfer_type == "nvlink" else 2.0),
     }
+    if elapsed_ms is None:
+        return metrics
+
+    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
+    achieved_gbps = (bytes_transferred / 1e9) / elapsed_s
+    efficiency = (achieved_gbps / theoretical_peak) * 100.0 if theoretical_peak > 0 else 0.0
+    metrics["transfer.achieved_gbps"] = achieved_gbps
+    metrics["transfer.efficiency_pct"] = min(efficiency, 100.0)
+    return metrics
 
 
 # =============================================================================
@@ -207,8 +210,8 @@ def compute_memory_access_metrics(
 # =============================================================================
 
 def compute_optimization_metrics(
-    baseline_ms: float,
-    optimized_ms: float,
+    baseline_ms: Optional[float],
+    optimized_ms: Optional[float],
     technique: str,
     registers_per_thread: int = 0,
     shared_mem_bytes: int = 0,
@@ -228,9 +231,6 @@ def compute_optimization_metrics(
         Dict with optimization effectiveness metrics
     """
     specs = specs or detect_hardware_specs()
-    speedup = baseline_ms / optimized_ms if optimized_ms > 0 else 0.0
-    improvement_pct = ((baseline_ms - optimized_ms) / baseline_ms) * 100.0 if baseline_ms > 0 else 0.0
-    
     # Estimate occupancy impact
     max_regs_per_sm = 65536  # Typical for modern GPUs
     max_shared_per_sm = specs.shared_mem_per_sm_kb * 1024
@@ -240,15 +240,21 @@ def compute_optimization_metrics(
     smem_limited_blocks = int(max_shared_per_sm / shared_mem_bytes) if shared_mem_bytes > 0 else 32
     estimated_blocks_per_sm = min(reg_limited_blocks, smem_limited_blocks, 32)
     
-    return {
-        "optimization.baseline_ms": baseline_ms,
-        "optimization.optimized_ms": optimized_ms,
-        "optimization.speedup": speedup,
-        "optimization.improvement_pct": improvement_pct,
+    metrics = {
         "optimization.registers_per_thread": float(registers_per_thread),
         "optimization.shared_mem_bytes": float(shared_mem_bytes),
         "optimization.estimated_blocks_per_sm": float(estimated_blocks_per_sm),
     }
+    if baseline_ms is not None:
+        metrics["optimization.baseline_ms"] = float(baseline_ms)
+    if optimized_ms is not None:
+        metrics["optimization.optimized_ms"] = float(optimized_ms)
+    if baseline_ms is not None and optimized_ms is not None:
+        speedup = baseline_ms / optimized_ms if optimized_ms > 0 else 0.0
+        improvement_pct = ((baseline_ms - optimized_ms) / baseline_ms) * 100.0 if baseline_ms > 0 else 0.0
+        metrics["optimization.speedup"] = speedup
+        metrics["optimization.improvement_pct"] = improvement_pct
+    return metrics
 
 
 # =============================================================================
@@ -258,7 +264,7 @@ def compute_optimization_metrics(
 def compute_roofline_metrics(
     total_flops: float,
     total_bytes: float,
-    elapsed_ms: float,
+    elapsed_ms: Optional[float],
     precision: str = "fp16",  # "fp32", "fp16", "fp8", "tensor"
     specs: Optional[HardwareSpecs] = None,
 ) -> Dict[str, float]:
@@ -275,12 +281,7 @@ def compute_roofline_metrics(
         Dict with roofline position and efficiency metrics
     """
     specs = specs or detect_hardware_specs()
-    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
-    
-    # Achieved performance
-    achieved_tflops = (total_flops / 1e12) / elapsed_s
-    achieved_gbps = (total_bytes / 1e9) / elapsed_s
-    
+
     # Arithmetic intensity (FLOPS per byte)
     arithmetic_intensity = total_flops / total_bytes if total_bytes > 0 else 0.0
     
@@ -297,29 +298,33 @@ def compute_roofline_metrics(
     # ridge_point = peak_tflops / (memory_bandwidth_TB_per_s)
     ridge_point = (peak_tflops * 1000.0) / specs.hbm_bandwidth_gbps
     
-    # Memory-bound performance ceiling at this arithmetic intensity
-    memory_ceiling_tflops = (achieved_gbps / 1000.0) * arithmetic_intensity
-    
     # Classification
     is_compute_bound = arithmetic_intensity > ridge_point
-    
-    # Efficiency relative to the appropriate ceiling
-    if is_compute_bound:
-        efficiency = (achieved_tflops / peak_tflops) * 100.0
-    else:
-        efficiency = (achieved_gbps / specs.hbm_bandwidth_gbps) * 100.0
-    
-    return {
-        "roofline.achieved_tflops": achieved_tflops,
-        "roofline.achieved_gbps": achieved_gbps,
+
+    metrics = {
         "roofline.arithmetic_intensity": arithmetic_intensity,
         "roofline.ridge_point": ridge_point,
         "roofline.peak_tflops": peak_tflops,
         "roofline.peak_gbps": specs.hbm_bandwidth_gbps,
-        "roofline.memory_ceiling_tflops": memory_ceiling_tflops,
         "roofline.is_compute_bound": 1.0 if is_compute_bound else 0.0,
-        "roofline.efficiency_pct": min(efficiency, 100.0),
     }
+    if elapsed_ms is None:
+        return metrics
+
+    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
+    achieved_tflops = (total_flops / 1e12) / elapsed_s
+    achieved_gbps = (total_bytes / 1e9) / elapsed_s
+    memory_ceiling_tflops = (achieved_gbps / 1000.0) * arithmetic_intensity
+    if is_compute_bound:
+        efficiency = (achieved_tflops / peak_tflops) * 100.0
+    else:
+        efficiency = (achieved_gbps / specs.hbm_bandwidth_gbps) * 100.0
+
+    metrics["roofline.achieved_tflops"] = achieved_tflops
+    metrics["roofline.achieved_gbps"] = achieved_gbps
+    metrics["roofline.memory_ceiling_tflops"] = memory_ceiling_tflops
+    metrics["roofline.efficiency_pct"] = min(efficiency, 100.0)
+    return metrics
 
 
 def compute_gemm_metrics(
@@ -430,8 +435,8 @@ def compute_reduction_metrics(
 # =============================================================================
 
 def compute_stream_metrics(
-    sequential_time_ms: float,
-    overlapped_time_ms: float,
+    sequential_time_ms: Optional[float],
+    overlapped_time_ms: Optional[float],
     num_streams: int,
     num_operations: int,
 ) -> Dict[str, float]:
@@ -446,26 +451,26 @@ def compute_stream_metrics(
     Returns:
         Dict with stream overlap efficiency metrics
     """
-    # Overlap efficiency: how much time was saved
-    time_saved_ms = sequential_time_ms - overlapped_time_ms
-    overlap_efficiency = (time_saved_ms / sequential_time_ms) * 100.0 if sequential_time_ms > 0 else 0.0
-    
-    # Theoretical max speedup with perfect overlap
     theoretical_speedup = num_operations  # Perfect parallelism
-    actual_speedup = sequential_time_ms / overlapped_time_ms if overlapped_time_ms > 0 else 1.0
-    parallelism_efficiency = (actual_speedup / theoretical_speedup) * 100.0 if theoretical_speedup > 0 else 0.0
-    
-    return {
-        "stream.sequential_ms": sequential_time_ms,
-        "stream.overlapped_ms": overlapped_time_ms,
-        "stream.time_saved_ms": time_saved_ms,
-        "stream.overlap_efficiency_pct": overlap_efficiency,
+    metrics = {
         "stream.num_streams": float(num_streams),
         "stream.num_operations": float(num_operations),
         "stream.theoretical_speedup": float(theoretical_speedup),
-        "stream.actual_speedup": actual_speedup,
-        "stream.parallelism_efficiency_pct": min(parallelism_efficiency, 100.0),
     }
+    if sequential_time_ms is not None:
+        metrics["stream.sequential_ms"] = float(sequential_time_ms)
+    if overlapped_time_ms is not None:
+        metrics["stream.overlapped_ms"] = float(overlapped_time_ms)
+    if sequential_time_ms is not None and overlapped_time_ms is not None:
+        time_saved_ms = sequential_time_ms - overlapped_time_ms
+        overlap_efficiency = (time_saved_ms / sequential_time_ms) * 100.0 if sequential_time_ms > 0 else 0.0
+        actual_speedup = sequential_time_ms / overlapped_time_ms if overlapped_time_ms > 0 else 1.0
+        parallelism_efficiency = (actual_speedup / theoretical_speedup) * 100.0 if theoretical_speedup > 0 else 0.0
+        metrics["stream.time_saved_ms"] = time_saved_ms
+        metrics["stream.overlap_efficiency_pct"] = overlap_efficiency
+        metrics["stream.actual_speedup"] = actual_speedup
+        metrics["stream.parallelism_efficiency_pct"] = min(parallelism_efficiency, 100.0)
+    return metrics
 
 
 # =============================================================================
@@ -473,8 +478,8 @@ def compute_stream_metrics(
 # =============================================================================
 
 def compute_graph_metrics(
-    baseline_launch_overhead_us: float,
-    graph_launch_overhead_us: float,
+    baseline_launch_overhead_us: Optional[float],
+    graph_launch_overhead_us: Optional[float],
     num_nodes: int,
     num_iterations: int,
 ) -> Dict[str, float]:
@@ -489,19 +494,25 @@ def compute_graph_metrics(
     Returns:
         Dict with graph optimization metrics
     """
-    overhead_reduction_us = baseline_launch_overhead_us - graph_launch_overhead_us
-    overhead_reduction_pct = (overhead_reduction_us / baseline_launch_overhead_us) * 100.0 if baseline_launch_overhead_us > 0 else 0.0
-    total_overhead_saved_us = overhead_reduction_us * num_iterations
-    
-    return {
-        "graph.baseline_launch_us": baseline_launch_overhead_us,
-        "graph.graph_launch_us": graph_launch_overhead_us,
-        "graph.overhead_reduction_us": overhead_reduction_us,
-        "graph.overhead_reduction_pct": overhead_reduction_pct,
+    metrics = {
         "graph.num_nodes": float(num_nodes),
         "graph.num_iterations": float(num_iterations),
-        "graph.total_overhead_saved_us": total_overhead_saved_us,
     }
+    if baseline_launch_overhead_us is not None:
+        metrics["graph.baseline_launch_us"] = float(baseline_launch_overhead_us)
+    if graph_launch_overhead_us is not None:
+        metrics["graph.graph_launch_us"] = float(graph_launch_overhead_us)
+    if baseline_launch_overhead_us is not None and graph_launch_overhead_us is not None:
+        overhead_reduction_us = baseline_launch_overhead_us - graph_launch_overhead_us
+        overhead_reduction_pct = (
+            (overhead_reduction_us / baseline_launch_overhead_us) * 100.0
+            if baseline_launch_overhead_us > 0
+            else 0.0
+        )
+        metrics["graph.overhead_reduction_us"] = overhead_reduction_us
+        metrics["graph.overhead_reduction_pct"] = overhead_reduction_pct
+        metrics["graph.total_overhead_saved_us"] = overhead_reduction_us * num_iterations
+    return metrics
 
 
 # =============================================================================
@@ -509,8 +520,8 @@ def compute_graph_metrics(
 # =============================================================================
 
 def compute_precision_metrics(
-    fp32_time_ms: float,
-    reduced_precision_time_ms: float,
+    fp32_time_ms: Optional[float],
+    reduced_precision_time_ms: Optional[float],
     precision_type: str,  # "fp16", "bf16", "fp8", "fp4"
     accuracy_delta: float = 0.0,  # Accuracy loss (if measured)
 ) -> Dict[str, float]:
@@ -525,8 +536,6 @@ def compute_precision_metrics(
     Returns:
         Dict with precision tradeoff metrics
     """
-    speedup = fp32_time_ms / reduced_precision_time_ms if reduced_precision_time_ms > 0 else 0.0
-    
     # Memory reduction factors
     memory_reduction = {
         "fp16": 2.0,
@@ -536,19 +545,22 @@ def compute_precision_metrics(
     }
     reduction_factor = memory_reduction.get(precision_type, 1.0)
     
-    # Theoretical speedup based on memory bandwidth
-    theoretical_speedup = reduction_factor  # Simplified: assumes memory-bound
-    speedup_efficiency = (speedup / theoretical_speedup) * 100.0 if theoretical_speedup > 0 else 0.0
-    
-    return {
-        "precision.fp32_ms": fp32_time_ms,
-        "precision.reduced_ms": reduced_precision_time_ms,
-        "precision.speedup": speedup,
+    metrics = {
         "precision.memory_reduction_factor": reduction_factor,
-        "precision.theoretical_speedup": theoretical_speedup,
-        "precision.speedup_efficiency_pct": speedup_efficiency,
         "precision.accuracy_delta": accuracy_delta,
     }
+    if fp32_time_ms is not None:
+        metrics["precision.fp32_ms"] = float(fp32_time_ms)
+    if reduced_precision_time_ms is not None:
+        metrics["precision.reduced_ms"] = float(reduced_precision_time_ms)
+    if fp32_time_ms is not None and reduced_precision_time_ms is not None:
+        speedup = fp32_time_ms / reduced_precision_time_ms if reduced_precision_time_ms > 0 else 0.0
+        theoretical_speedup = reduction_factor  # Simplified: assumes memory-bound
+        speedup_efficiency = (speedup / theoretical_speedup) * 100.0 if theoretical_speedup > 0 else 0.0
+        metrics["precision.speedup"] = speedup
+        metrics["precision.theoretical_speedup"] = theoretical_speedup
+        metrics["precision.speedup_efficiency_pct"] = speedup_efficiency
+    return metrics
 
 
 # =============================================================================
@@ -556,8 +568,8 @@ def compute_precision_metrics(
 # =============================================================================
 
 def compute_inference_metrics(
-    ttft_ms: float,
-    tpot_ms: float,
+    ttft_ms: Optional[float],
+    tpot_ms: Optional[float],
     total_tokens: int,
     total_requests: int,
     batch_size: int,
@@ -576,19 +588,23 @@ def compute_inference_metrics(
     Returns:
         Dict with inference performance metrics
     """
-    tokens_per_second = (total_tokens / (ttft_ms + tpot_ms * total_tokens)) * 1000.0 if total_tokens > 0 else 0.0
     batch_utilization = (batch_size / max_batch_size) * 100.0 if max_batch_size > 0 else 0.0
-    
-    return {
-        "inference.ttft_ms": ttft_ms,
-        "inference.tpot_ms": tpot_ms,
+    metrics = {
         "inference.total_tokens": float(total_tokens),
         "inference.total_requests": float(total_requests),
-        "inference.tokens_per_second": tokens_per_second,
         "inference.batch_size": float(batch_size),
         "inference.max_batch_size": float(max_batch_size),
         "inference.batch_utilization_pct": batch_utilization,
     }
+    if ttft_ms is not None:
+        metrics["inference.ttft_ms"] = float(ttft_ms)
+    if tpot_ms is not None:
+        metrics["inference.tpot_ms"] = float(tpot_ms)
+    if ttft_ms is not None and tpot_ms is not None and total_tokens > 0:
+        metrics["inference.tokens_per_second"] = (
+            total_tokens / (ttft_ms + tpot_ms * total_tokens)
+        ) * 1000.0
+    return metrics
 
 
 # =============================================================================
@@ -597,10 +613,10 @@ def compute_inference_metrics(
 
 def compute_speculative_decoding_metrics(
     draft_tokens: int,
-    accepted_tokens: int,
-    draft_time_ms: float,
-    verify_time_ms: float,
-    num_rounds: int,
+    accepted_tokens: Optional[int],
+    draft_time_ms: Optional[float],
+    verify_time_ms: Optional[float],
+    num_rounds: Optional[int],
 ) -> Dict[str, float]:
     """Compute metrics for speculative decoding benchmarks (ch18).
     
@@ -614,26 +630,28 @@ def compute_speculative_decoding_metrics(
     Returns:
         Dict with speculative decoding efficiency metrics
     """
-    acceptance_rate = (accepted_tokens / draft_tokens) * 100.0 if draft_tokens > 0 else 0.0
-    avg_accepted_per_round = accepted_tokens / num_rounds if num_rounds > 0 else 0.0
-    draft_verify_ratio = draft_time_ms / verify_time_ms if verify_time_ms > 0 else 0.0
-    
-    # Tokens wasted on rejected drafts
-    rejected_tokens = draft_tokens - accepted_tokens
-    waste_pct = (rejected_tokens / draft_tokens) * 100.0 if draft_tokens > 0 else 0.0
-    
-    return {
+    metrics = {
         "speculative.draft_tokens": float(draft_tokens),
-        "speculative.accepted_tokens": float(accepted_tokens),
-        "speculative.rejected_tokens": float(rejected_tokens),
-        "speculative.acceptance_rate_pct": acceptance_rate,
-        "speculative.waste_pct": waste_pct,
-        "speculative.avg_accepted_per_round": avg_accepted_per_round,
-        "speculative.draft_time_ms": draft_time_ms,
-        "speculative.verify_time_ms": verify_time_ms,
-        "speculative.draft_verify_ratio": draft_verify_ratio,
-        "speculative.num_rounds": float(num_rounds),
     }
+    if accepted_tokens is not None:
+        metrics["speculative.accepted_tokens"] = float(accepted_tokens)
+        rejected_tokens = draft_tokens - accepted_tokens
+        acceptance_rate = (accepted_tokens / draft_tokens) * 100.0 if draft_tokens > 0 else 0.0
+        waste_pct = (rejected_tokens / draft_tokens) * 100.0 if draft_tokens > 0 else 0.0
+        metrics["speculative.rejected_tokens"] = float(rejected_tokens)
+        metrics["speculative.acceptance_rate_pct"] = acceptance_rate
+        metrics["speculative.waste_pct"] = waste_pct
+    if draft_time_ms is not None:
+        metrics["speculative.draft_time_ms"] = float(draft_time_ms)
+    if verify_time_ms is not None:
+        metrics["speculative.verify_time_ms"] = float(verify_time_ms)
+    if num_rounds is not None:
+        metrics["speculative.num_rounds"] = float(num_rounds)
+    if accepted_tokens is not None and num_rounds is not None and num_rounds > 0:
+        metrics["speculative.avg_accepted_per_round"] = accepted_tokens / num_rounds
+    if draft_time_ms is not None and verify_time_ms is not None and verify_time_ms > 0:
+        metrics["speculative.draft_verify_ratio"] = draft_time_ms / verify_time_ms
+    return metrics
 
 
 # =============================================================================
@@ -708,7 +726,7 @@ def compute_system_config_metrics(
 def compute_distributed_metrics(
     world_size: int,
     bytes_transferred: float,
-    elapsed_ms: float,
+    elapsed_ms: Optional[float],
     collective_type: str = "allreduce",  # "allreduce", "allgather", "reduce_scatter", "p2p"
     specs: Optional[HardwareSpecs] = None,
 ) -> Dict[str, float]:
@@ -725,16 +743,22 @@ def compute_distributed_metrics(
         Dict with distributed communication metrics
     """
     specs = specs or detect_hardware_specs()
-    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
-    
-    # Achieved bandwidth
-    achieved_gbps = (bytes_transferred / 1e9) / elapsed_s
-    
+
     # Theoretical peak (NVLink for multi-GPU)
     theoretical_peak = specs.nvlink_bandwidth_gbps * (world_size - 1)  # Ring topology
+
+    metrics = {
+        "distributed.world_size": float(world_size),
+        "distributed.bytes_transferred": bytes_transferred,
+        "distributed.theoretical_peak_gbps": theoretical_peak,
+        "distributed.collective_type": 0.0 if collective_type == "allreduce" else 1.0,
+    }
+    if elapsed_ms is None:
+        return metrics
+
+    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
+    achieved_gbps = (bytes_transferred / 1e9) / elapsed_s
     efficiency = (achieved_gbps / theoretical_peak) * 100.0 if theoretical_peak > 0 else 0.0
-    
-    # Algorithm bandwidth (accounts for collective overhead)
     algo_bw_factor = {
         "allreduce": 2.0 * (world_size - 1) / world_size,
         "allgather": (world_size - 1) / world_size,
@@ -742,17 +766,10 @@ def compute_distributed_metrics(
         "p2p": 1.0,
     }
     factor = algo_bw_factor.get(collective_type, 1.0)
-    algo_bandwidth_gbps = achieved_gbps * factor
-    
-    return {
-        "distributed.world_size": float(world_size),
-        "distributed.bytes_transferred": bytes_transferred,
-        "distributed.achieved_gbps": achieved_gbps,
-        "distributed.algo_bandwidth_gbps": algo_bandwidth_gbps,
-        "distributed.theoretical_peak_gbps": theoretical_peak,
-        "distributed.efficiency_pct": min(efficiency, 100.0),
-        "distributed.collective_type": 0.0 if collective_type == "allreduce" else 1.0,
-    }
+    metrics["distributed.achieved_gbps"] = achieved_gbps
+    metrics["distributed.algo_bandwidth_gbps"] = achieved_gbps * factor
+    metrics["distributed.efficiency_pct"] = min(efficiency, 100.0)
+    return metrics
 
 
 # =============================================================================
@@ -861,7 +878,7 @@ def compute_pipeline_metrics(
 
 def compute_triton_metrics(
     num_elements: int,
-    elapsed_ms: float,
+    elapsed_ms: Optional[float],
     block_size: int = 1024,
     num_warps: int = 4,
     num_stages: int = 2,
@@ -883,30 +900,30 @@ def compute_triton_metrics(
         Dict with Triton kernel performance metrics
     """
     specs = specs or detect_hardware_specs()
-    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
-    
-    # Throughput
-    elements_per_second = num_elements / elapsed_s
-    
-    # Bandwidth if bytes provided
-    achieved_gbps = (bytes_transferred / 1e9) / elapsed_s if bytes_transferred > 0 else 0.0
-    bandwidth_efficiency = (achieved_gbps / specs.hbm_bandwidth_gbps) * 100.0 if achieved_gbps > 0 else 0.0
-    
+
     # Occupancy estimate
     threads_per_block = num_warps * 32
     blocks_per_sm_estimate = min(32, 2048 // threads_per_block)
-    
-    return {
+
+    metrics = {
         "triton.num_elements": float(num_elements),
-        "triton.elements_per_second": elements_per_second,
         "triton.block_size": float(block_size),
         "triton.num_warps": float(num_warps),
         "triton.num_stages": float(num_stages),
         "triton.threads_per_block": float(threads_per_block),
-        "triton.achieved_gbps": achieved_gbps,
-        "triton.bandwidth_efficiency_pct": bandwidth_efficiency,
         "triton.blocks_per_sm_estimate": float(blocks_per_sm_estimate),
     }
+    if elapsed_ms is None:
+        return metrics
+
+    elapsed_s = max(elapsed_ms / 1000.0, 1e-9)
+    elements_per_second = num_elements / elapsed_s
+    achieved_gbps = (bytes_transferred / 1e9) / elapsed_s if bytes_transferred > 0 else 0.0
+    bandwidth_efficiency = (achieved_gbps / specs.hbm_bandwidth_gbps) * 100.0 if achieved_gbps > 0 else 0.0
+    metrics["triton.elements_per_second"] = elements_per_second
+    metrics["triton.achieved_gbps"] = achieved_gbps
+    metrics["triton.bandwidth_efficiency_pct"] = bandwidth_efficiency
+    return metrics
 
 
 # =============================================================================
@@ -914,10 +931,10 @@ def compute_triton_metrics(
 # =============================================================================
 
 def compute_ai_optimization_metrics(
-    original_time_ms: float,
-    ai_optimized_time_ms: float,
-    suggestions_applied: int,
-    suggestions_total: int,
+    original_time_ms: Optional[float],
+    ai_optimized_time_ms: Optional[float],
+    suggestions_applied: Optional[int],
+    suggestions_total: Optional[int],
     code_changes: int = 0,
 ) -> Dict[str, float]:
     """Compute metrics for AI-assisted optimization benchmarks (ch20).
@@ -932,26 +949,36 @@ def compute_ai_optimization_metrics(
     Returns:
         Dict with AI optimization effectiveness metrics
     """
-    speedup = original_time_ms / ai_optimized_time_ms if ai_optimized_time_ms > 0 else 0.0
-    improvement_pct = ((original_time_ms - ai_optimized_time_ms) / original_time_ms) * 100.0 if original_time_ms > 0 else 0.0
-    
-    # Suggestion acceptance rate
-    acceptance_rate = (suggestions_applied / suggestions_total) * 100.0 if suggestions_total > 0 else 0.0
-    
-    # Efficiency per change
-    improvement_per_change = improvement_pct / code_changes if code_changes > 0 else 0.0
-    
-    return {
-        "ai_opt.original_ms": original_time_ms,
-        "ai_opt.optimized_ms": ai_optimized_time_ms,
-        "ai_opt.speedup": speedup,
-        "ai_opt.improvement_pct": improvement_pct,
-        "ai_opt.suggestions_applied": float(suggestions_applied),
-        "ai_opt.suggestions_total": float(suggestions_total),
-        "ai_opt.acceptance_rate_pct": acceptance_rate,
+    metrics = {
         "ai_opt.code_changes": float(code_changes),
-        "ai_opt.improvement_per_change": improvement_per_change,
     }
+    if original_time_ms is not None:
+        metrics["ai_opt.original_ms"] = float(original_time_ms)
+    if ai_optimized_time_ms is not None:
+        metrics["ai_opt.optimized_ms"] = float(ai_optimized_time_ms)
+    if original_time_ms is not None and ai_optimized_time_ms is not None:
+        speedup = original_time_ms / ai_optimized_time_ms if ai_optimized_time_ms > 0 else 0.0
+        improvement_pct = (
+            ((original_time_ms - ai_optimized_time_ms) / original_time_ms) * 100.0
+            if original_time_ms > 0
+            else 0.0
+        )
+        metrics["ai_opt.speedup"] = speedup
+        metrics["ai_opt.improvement_pct"] = improvement_pct
+        metrics["ai_opt.improvement_per_change"] = (
+            improvement_pct / code_changes if code_changes > 0 else 0.0
+        )
+    if suggestions_applied is not None:
+        metrics["ai_opt.suggestions_applied"] = float(suggestions_applied)
+    if suggestions_total is not None:
+        metrics["ai_opt.suggestions_total"] = float(suggestions_total)
+    if (
+        suggestions_applied is not None
+        and suggestions_total is not None
+        and suggestions_total > 0
+    ):
+        metrics["ai_opt.acceptance_rate_pct"] = (suggestions_applied / suggestions_total) * 100.0
+    return metrics
 
 
 # =============================================================================
@@ -1018,8 +1045,8 @@ def compute_moe_metrics(
 # =============================================================================
 
 def compute_speedup_metrics(
-    baseline_ms: float,
-    optimized_ms: float,
+    baseline_ms: Optional[float],
+    optimized_ms: Optional[float],
     name: str = "",
 ) -> Dict[str, float]:
     """Compute basic speedup metrics between baseline and optimized.
@@ -1033,15 +1060,17 @@ def compute_speedup_metrics(
         Dict with speedup and improvement metrics
     """
     prefix = f"{name}." if name else ""
-    speedup = baseline_ms / optimized_ms if optimized_ms > 0 else 0.0
-    improvement_pct = ((baseline_ms - optimized_ms) / baseline_ms) * 100.0 if baseline_ms > 0 else 0.0
-    
-    return {
-        f"{prefix}baseline_ms": baseline_ms,
-        f"{prefix}optimized_ms": optimized_ms,
-        f"{prefix}speedup": speedup,
-        f"{prefix}improvement_pct": improvement_pct,
-    }
+    metrics: Dict[str, float] = {}
+    if baseline_ms is not None:
+        metrics[f"{prefix}baseline_ms"] = float(baseline_ms)
+    if optimized_ms is not None:
+        metrics[f"{prefix}optimized_ms"] = float(optimized_ms)
+    if baseline_ms is not None and optimized_ms is not None:
+        speedup = baseline_ms / optimized_ms if optimized_ms > 0 else 0.0
+        improvement_pct = ((baseline_ms - optimized_ms) / baseline_ms) * 100.0 if baseline_ms > 0 else 0.0
+        metrics[f"{prefix}speedup"] = speedup
+        metrics[f"{prefix}improvement_pct"] = improvement_pct
+    return metrics
 
 
 # =============================================================================

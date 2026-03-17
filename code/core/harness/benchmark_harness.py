@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import torch
@@ -41,21 +41,6 @@ from core.utils.compile_utils import enable_tf32
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.backend_policy import apply_backend_policy, normalize_backend_policy, restore_backend_policy
 from core.harness.verify_output_codec import deserialize_verify_tensor
-
-if TYPE_CHECKING:
-    from core.benchmark.models import (
-        BenchmarkResult as PydanticBenchmarkResult,
-        BenchmarkRun,
-        MemoryStats,
-        TimingStats,
-        InferenceTimingStats,
-        ProfilerArtifacts,
-        ProfilerMetrics,
-        NsysMetrics,
-        NcuMetrics,
-        ProtonMetrics,
-        TorchMetrics,
-    )
 
 # Pydantic is required - fail fast if not available
 from core.benchmark.models import (
@@ -80,8 +65,6 @@ from core.harness.validity_checks import (
     check_stream_sync_completeness,
 )
 from core.utils.python_entrypoints import build_repo_python_env
-
-PYDANTIC_AVAILABLE = True
 
 # Import unified profiling runner
 try:
@@ -162,6 +145,14 @@ _QUICK_WINS_CONFIGURED = False
 _SDPA_KERNEL_CONTEXT = None
 
 
+def _emit_harness_warning(message: str, *, exc: Optional[BaseException] = None) -> None:
+    """Surface degraded harness behavior through logs and runtime warnings."""
+    detail = f"{message}: {exc}" if exc is not None else message
+    if LOGGER_AVAILABLE:
+        logger.warning(detail)
+    warnings.warn(detail, RuntimeWarning, stacklevel=2)
+
+
 def _format_environment_invalid_message(errors: Sequence[str], config: "BenchmarkConfig") -> str:
     """Build a consistent environment failure message with recovery guidance.
 
@@ -178,6 +169,18 @@ def _format_environment_invalid_message(errors: Sequence[str], config: "Benchmar
             " writes remain disabled unless --allow-portable-expectations-update is set."
         )
     return message
+
+
+_FOREIGN_GPU_PROCESS_ERROR_PREFIX = (
+    "Foreign CUDA compute process(es) detected on benchmark GPU before run: "
+)
+
+
+def _contains_only_foreign_gpu_process_errors(errors: Sequence[str]) -> bool:
+    """Return True when every environment error is the strict foreign-process gate."""
+    return bool(errors) and all(
+        str(error).startswith(_FOREIGN_GPU_PROCESS_ERROR_PREFIX) for error in errors
+    )
 
 
 def _is_nvidia_smi_permission_error(exc: subprocess.CalledProcessError) -> bool:
@@ -242,8 +245,11 @@ def _resolve_physical_device_index(device_index: int) -> int:
         finally:
             try:
                 pynvml.nvmlShutdown()
-            except Exception:
-                pass
+            except Exception as exc:
+                _emit_harness_warning(
+                    "Failed to shut down NVML after resolving physical device index",
+                    exc=exc,
+                )
         raise RuntimeError(f"Unable to map CUDA_VISIBLE_DEVICES entry {token!r} to a GPU index")
     raise RuntimeError(f"Unsupported CUDA_VISIBLE_DEVICES entry {token!r}")
 
@@ -348,8 +354,11 @@ def lock_gpu_clocks(device: int = 0, sm_clock_mhz: Optional[int] = None, mem_clo
         finally:
             try:
                 pynvml.nvmlShutdown()
-            except Exception:
-                pass
+            except Exception as exc:
+                _emit_harness_warning(
+                    "Failed to shut down NVML after querying application clocks",
+                    exc=exc,
+                )
 
     def _apply_clock_lock(target_sm: int, target_mem: int, *, retry_attempts: int = 1) -> tuple[int, int, int, int]:
         """Best-effort lock using application clocks, then hard locks as fallback.
@@ -418,7 +427,8 @@ def lock_gpu_clocks(device: int = 0, sm_clock_mhz: Optional[int] = None, mem_clo
             # while the harness is between targets.
             time.sleep(0.15)
 
-        assert last_exc is not None
+        if last_exc is None:
+            raise RuntimeError("GPU clock lock failed without a captured verification error")
         raise last_exc
 
     def _reassert_clock_lock(config_sm: Optional[int], config_mem: Optional[int]) -> tuple[int, int, int, int]:
@@ -1011,21 +1021,12 @@ class BenchmarkConfig:
         """Get effective timeout for a given stage, accounting for multiplier.
         
         Args:
-            stage: One of 'setup', 'warmup', 'measurement', 'profiling', 'nsys', 'ncu', 'proton'
+            stage: One of 'setup', 'warmup', 'measurement', 'profiling', 'torch', 'nsys', 'ncu', 'proton'
             
         Returns:
             Timeout in seconds, or None if no timeout for this stage
         """
-        timeouts = {
-            'setup': self.setup_timeout_seconds,
-            'warmup': self.warmup_timeout_seconds,
-            'measurement': self.measurement_timeout_seconds,
-            'profiling': self.profiling_timeout_seconds,
-            'nsys': self.nsys_timeout_seconds,
-            'ncu': self.ncu_timeout_seconds,
-            'proton': self.proton_timeout_seconds,
-        }
-        return timeouts.get(stage)
+        return self.timing.timeout_for(stage)
     
     def capture_timing_snapshot(self) -> Dict[str, Any]:
         """Capture a snapshot of timing-critical configuration values.
@@ -1036,11 +1037,27 @@ class BenchmarkConfig:
         Returns:
             Dict of timing-critical field names to their values
         """
-        return {
-            "warmup": self.warmup,
-            "iterations": self.iterations,
-            "min_run_time_ms": self.min_run_time_ms,
-        }
+        return self.timing.snapshot()
+
+    @property
+    def timing(self) -> "BenchmarkTimingView":
+        return _build_timing_view_from_mapping(self.__dict__)
+
+    @property
+    def profiling(self) -> "BenchmarkProfilingView":
+        return _build_profiling_view_from_mapping(self.__dict__)
+
+    @property
+    def validity(self) -> "BenchmarkValidityView":
+        return _build_validity_view_from_mapping(self.__dict__)
+
+    @property
+    def launch(self) -> "BenchmarkLaunchView":
+        return _build_launch_view_from_mapping(self.__dict__)
+
+    @property
+    def output(self) -> "BenchmarkOutputView":
+        return _build_output_view_from_mapping(self.__dict__)
 
     def capture_config_snapshot(self) -> Dict[str, Any]:
         """Capture a snapshot of all public configuration values.
@@ -1097,6 +1114,255 @@ class BenchmarkConfig:
             return False, f"Timing config modified during execution: {'; '.join(changes)}"
         return True, None
 
+@dataclass(frozen=True)
+class BenchmarkTimingView:
+    iterations: int
+    warmup: int
+    min_run_time_ms: float
+    percentiles: Tuple[float, ...]
+    timing_method: str
+    full_device_sync: bool
+    force_synchronize: bool
+    adaptive_iterations: bool
+    min_total_duration_ms: float
+    max_adaptive_iterations: int
+    enable_cuda_graph: bool
+    cuda_graph_warmup_iters: int
+    setup_timeout_seconds: Optional[int]
+    warmup_timeout_seconds: Optional[int]
+    measurement_timeout_seconds: int
+    profiling_timeout_seconds: Optional[int]
+    nsys_timeout_seconds: int
+    ncu_timeout_seconds: int
+    proton_timeout_seconds: int
+    timeout_multiplier: float
+
+    def timeout_for(self, stage: str) -> Optional[int]:
+        return {
+            "setup": self.setup_timeout_seconds,
+            "warmup": self.warmup_timeout_seconds,
+            "measurement": self.measurement_timeout_seconds,
+            "profiling": self.profiling_timeout_seconds,
+            "torch": self.profiling_timeout_seconds,
+            "nsys": self.nsys_timeout_seconds,
+            "ncu": self.ncu_timeout_seconds,
+            "proton": self.proton_timeout_seconds,
+        }.get(stage)
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            "warmup": self.warmup,
+            "iterations": self.iterations,
+            "min_run_time_ms": self.min_run_time_ms,
+        }
+
+
+@dataclass(frozen=True)
+class BenchmarkProfilingView:
+    enable_profiling: bool
+    enable_nsys: bool
+    enable_ncu: bool
+    enable_proton: bool
+    enable_nvtx: Optional[bool]
+    profile_mode: Optional[str]
+    profile_type: str
+    nsys_preset_override: Optional[str]
+    nsys_nvtx_include: Optional[Tuple[str, ...]]
+    ncu_metric_set: str
+    pm_sampling_interval: Optional[int]
+    ncu_replay_mode: str
+    ncu_replay_mode_override: bool
+    profiling_warmup: Optional[int]
+    profiling_iterations: Optional[int]
+    profile_env_overrides: Optional[MappingProxyType]
+
+
+@dataclass(frozen=True)
+class BenchmarkValidityView:
+    validity_profile: str
+    enforce_environment_validation: bool
+    allow_virtualization: bool
+    allow_foreign_gpu_processes: bool
+    clear_l2_cache: bool
+    isolate_warmup_cache: bool
+    cross_validate_timing: bool
+    timing_cross_validation_threshold: float
+    enforce_config_immutability: bool
+    reset_memory_pool: bool
+    disable_gc_during_timing: bool
+    check_input_output_aliasing: bool
+    clear_compile_cache: bool
+    audit_stream_sync: bool
+    detect_setup_precomputation: bool
+    detect_benchmark_fn_sync: bool
+    benchmark_fn_sync_policy: str
+    detect_benchmark_fn_antipatterns: bool
+    benchmark_fn_antipattern_policy: str
+    monitor_gpu_state: bool
+    monitor_backend_policy: bool
+    enforce_backend_policy_immutability: bool
+    track_memory_allocations: bool
+    force_tensor_evaluation: bool
+    lock_gpu_clocks: bool
+    gpu_sm_clock_mhz: Optional[int]
+    gpu_mem_clock_mhz: Optional[int]
+    graph_capture_cheat_ratio_threshold: float
+    graph_capture_memory_threshold_mb: float
+
+
+@dataclass(frozen=True)
+class BenchmarkLaunchView:
+    execution_mode: Union["ExecutionMode", str, None]
+    use_subprocess: bool
+    launch_via: Union["LaunchVia", str]
+    nproc_per_node: Optional[int]
+    nnodes: Optional[str]
+    rdzv_backend: Optional[str]
+    rdzv_endpoint: Optional[str]
+    env_passthrough: Tuple[str, ...]
+    target_extra_args: MappingProxyType
+    multi_gpu_required: bool
+    required_world_size: Optional[int]
+    single_gpu: bool
+    backend_policy: str
+    deterministic: bool
+    seed: Optional[int]
+    device: Optional[torch.device]
+
+
+@dataclass(frozen=True)
+class BenchmarkOutputView:
+    enable_memory_tracking: bool
+    profiling_output_dir: Optional[str]
+    subprocess_stderr_dir: Optional[str]
+    enable_cleanup: bool
+    enable_gpu_memory_logging: bool
+    gpu_memory_log_interval_seconds: float
+    gpu_memory_log_path: Optional[str]
+    target_label: Optional[str]
+
+
+def _build_timing_view_from_mapping(values: Dict[str, Any]) -> BenchmarkTimingView:
+    return BenchmarkTimingView(
+        iterations=int(values["iterations"]),
+        warmup=int(values["warmup"]),
+        min_run_time_ms=float(values["min_run_time_ms"]),
+        percentiles=tuple(float(v) for v in values.get("percentiles", ()) or ()),
+        timing_method=str(values["timing_method"]),
+        full_device_sync=bool(values["full_device_sync"]),
+        force_synchronize=bool(values["force_synchronize"]),
+        adaptive_iterations=bool(values["adaptive_iterations"]),
+        min_total_duration_ms=float(values["min_total_duration_ms"]),
+        max_adaptive_iterations=int(values["max_adaptive_iterations"]),
+        enable_cuda_graph=bool(values["enable_cuda_graph"]),
+        cuda_graph_warmup_iters=int(values["cuda_graph_warmup_iters"]),
+        setup_timeout_seconds=cast(Optional[int], values.get("setup_timeout_seconds")),
+        warmup_timeout_seconds=cast(Optional[int], values.get("warmup_timeout_seconds")),
+        measurement_timeout_seconds=int(values["measurement_timeout_seconds"]),
+        profiling_timeout_seconds=cast(Optional[int], values.get("profiling_timeout_seconds")),
+        nsys_timeout_seconds=int(values["nsys_timeout_seconds"]),
+        ncu_timeout_seconds=int(values["ncu_timeout_seconds"]),
+        proton_timeout_seconds=int(values["proton_timeout_seconds"]),
+        timeout_multiplier=float(values["timeout_multiplier"]),
+    )
+
+
+def _build_profiling_view_from_mapping(values: Dict[str, Any]) -> BenchmarkProfilingView:
+    nsys_nvtx_include = values.get("nsys_nvtx_include")
+    return BenchmarkProfilingView(
+        enable_profiling=bool(values["enable_profiling"]),
+        enable_nsys=bool(values["enable_nsys"]),
+        enable_ncu=bool(values["enable_ncu"]),
+        enable_proton=bool(values["enable_proton"]),
+        enable_nvtx=cast(Optional[bool], values.get("enable_nvtx")),
+        profile_mode=cast(Optional[str], values.get("profile_mode")),
+        profile_type=str(values["profile_type"]),
+        nsys_preset_override=cast(Optional[str], values.get("nsys_preset_override")),
+        nsys_nvtx_include=tuple(str(v) for v in nsys_nvtx_include) if nsys_nvtx_include else None,
+        ncu_metric_set=str(values["ncu_metric_set"]),
+        pm_sampling_interval=cast(Optional[int], values.get("pm_sampling_interval")),
+        ncu_replay_mode=str(values["ncu_replay_mode"]),
+        ncu_replay_mode_override=bool(values["ncu_replay_mode_override"]),
+        profiling_warmup=cast(Optional[int], values.get("profiling_warmup")),
+        profiling_iterations=cast(Optional[int], values.get("profiling_iterations")),
+        profile_env_overrides=cast(
+            Optional[MappingProxyType],
+            _freeze_benchmark_config_value(values.get("profile_env_overrides")),
+        ),
+    )
+
+
+def _build_validity_view_from_mapping(values: Dict[str, Any]) -> BenchmarkValidityView:
+    return BenchmarkValidityView(
+        validity_profile=str(values["validity_profile"]),
+        enforce_environment_validation=bool(values["enforce_environment_validation"]),
+        allow_virtualization=bool(values["allow_virtualization"]),
+        allow_foreign_gpu_processes=bool(values["allow_foreign_gpu_processes"]),
+        clear_l2_cache=bool(values["clear_l2_cache"]),
+        isolate_warmup_cache=bool(values["isolate_warmup_cache"]),
+        cross_validate_timing=bool(values["cross_validate_timing"]),
+        timing_cross_validation_threshold=float(values["timing_cross_validation_threshold"]),
+        enforce_config_immutability=bool(values["enforce_config_immutability"]),
+        reset_memory_pool=bool(values["reset_memory_pool"]),
+        disable_gc_during_timing=bool(values["disable_gc_during_timing"]),
+        check_input_output_aliasing=bool(values["check_input_output_aliasing"]),
+        clear_compile_cache=bool(values["clear_compile_cache"]),
+        audit_stream_sync=bool(values["audit_stream_sync"]),
+        detect_setup_precomputation=bool(values["detect_setup_precomputation"]),
+        detect_benchmark_fn_sync=bool(values["detect_benchmark_fn_sync"]),
+        benchmark_fn_sync_policy=str(values["benchmark_fn_sync_policy"]),
+        detect_benchmark_fn_antipatterns=bool(values["detect_benchmark_fn_antipatterns"]),
+        benchmark_fn_antipattern_policy=str(values["benchmark_fn_antipattern_policy"]),
+        monitor_gpu_state=bool(values["monitor_gpu_state"]),
+        monitor_backend_policy=bool(values["monitor_backend_policy"]),
+        enforce_backend_policy_immutability=bool(values["enforce_backend_policy_immutability"]),
+        track_memory_allocations=bool(values["track_memory_allocations"]),
+        force_tensor_evaluation=bool(values["force_tensor_evaluation"]),
+        lock_gpu_clocks=bool(values["lock_gpu_clocks"]),
+        gpu_sm_clock_mhz=cast(Optional[int], values.get("gpu_sm_clock_mhz")),
+        gpu_mem_clock_mhz=cast(Optional[int], values.get("gpu_mem_clock_mhz")),
+        graph_capture_cheat_ratio_threshold=float(values["graph_capture_cheat_ratio_threshold"]),
+        graph_capture_memory_threshold_mb=float(values["graph_capture_memory_threshold_mb"]),
+    )
+
+
+def _build_launch_view_from_mapping(values: Dict[str, Any]) -> BenchmarkLaunchView:
+    env_passthrough = values.get("env_passthrough") or []
+    return BenchmarkLaunchView(
+        execution_mode=cast(Union["ExecutionMode", str, None], values.get("execution_mode")),
+        use_subprocess=bool(values["use_subprocess"]),
+        launch_via=cast(Union["LaunchVia", str], values["launch_via"]),
+        nproc_per_node=cast(Optional[int], values.get("nproc_per_node")),
+        nnodes=cast(Optional[str], values.get("nnodes")),
+        rdzv_backend=cast(Optional[str], values.get("rdzv_backend")),
+        rdzv_endpoint=cast(Optional[str], values.get("rdzv_endpoint")),
+        env_passthrough=tuple(str(v) for v in env_passthrough),
+        target_extra_args=cast(
+            MappingProxyType,
+            _freeze_benchmark_config_value(values.get("target_extra_args") or {}),
+        ),
+        multi_gpu_required=bool(values["multi_gpu_required"]),
+        required_world_size=cast(Optional[int], values.get("required_world_size")),
+        single_gpu=bool(values["single_gpu"]),
+        backend_policy=str(values["backend_policy"]),
+        deterministic=bool(values["deterministic"]),
+        seed=cast(Optional[int], values.get("seed")),
+        device=cast(Optional[torch.device], values.get("device")),
+    )
+
+
+def _build_output_view_from_mapping(values: Dict[str, Any]) -> BenchmarkOutputView:
+    return BenchmarkOutputView(
+        enable_memory_tracking=bool(values["enable_memory_tracking"]),
+        profiling_output_dir=cast(Optional[str], values.get("profiling_output_dir")),
+        subprocess_stderr_dir=cast(Optional[str], values.get("subprocess_stderr_dir")),
+        enable_cleanup=bool(values["enable_cleanup"]),
+        enable_gpu_memory_logging=bool(values["enable_gpu_memory_logging"]),
+        gpu_memory_log_interval_seconds=float(values["gpu_memory_log_interval_seconds"]),
+        gpu_memory_log_path=cast(Optional[str], values.get("gpu_memory_log_path")),
+        target_label=cast(Optional[str], values.get("target_label")),
+    )
+
 
 def _freeze_benchmark_config_value(value: Any) -> Any:
     if isinstance(value, dict):
@@ -1137,6 +1403,26 @@ class ReadOnlyBenchmarkConfigView:
         if name in values:
             return values[name]
         raise AttributeError(f"{self.__class__.__name__} has no attribute {name!r}")
+
+    @property
+    def timing(self) -> BenchmarkTimingView:
+        return _build_timing_view_from_mapping(object.__getattribute__(self, "_values"))
+
+    @property
+    def profiling(self) -> BenchmarkProfilingView:
+        return _build_profiling_view_from_mapping(object.__getattribute__(self, "_values"))
+
+    @property
+    def validity(self) -> BenchmarkValidityView:
+        return _build_validity_view_from_mapping(object.__getattribute__(self, "_values"))
+
+    @property
+    def launch(self) -> BenchmarkLaunchView:
+        return _build_launch_view_from_mapping(object.__getattribute__(self, "_values"))
+
+    @property
+    def output(self) -> BenchmarkOutputView:
+        return _build_output_view_from_mapping(object.__getattribute__(self, "_values"))
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise AttributeError(
@@ -1207,6 +1493,7 @@ class BaseBenchmark:
     allow_cpu: bool = False
     multi_gpu_required: bool = False
     required_world_size: Optional[int] = None
+    story_metadata: Optional[Dict[str, Any]] = None
 
     def __init__(self):
         """Initialize benchmark with device resolution.
@@ -1520,6 +1807,48 @@ class BaseBenchmark:
         """Benchmarks can override to expose custom metrics."""
         return None
 
+    def get_story_metadata(self) -> Optional[Dict[str, Any]]:
+        """Return non-numeric story/intent metadata for reports and audits."""
+        candidate = getattr(self, "story_metadata", None)
+        if not isinstance(candidate, dict) or not candidate:
+            return None
+
+        def _normalize(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, (str, bool, int, float)):
+                return value
+            if isinstance(value, Path):
+                return str(value)
+            if isinstance(value, tuple):
+                value = list(value)
+            if isinstance(value, list):
+                items = []
+                for item in value:
+                    normalized = _normalize(item)
+                    if normalized is not None:
+                        items.append(normalized)
+                return items
+            if isinstance(value, dict):
+                normalized_dict: Dict[str, Any] = {}
+                for key, item in value.items():
+                    if not isinstance(key, str) or not key.strip():
+                        continue
+                    normalized = _normalize(item)
+                    if normalized is not None:
+                        normalized_dict[key] = normalized
+                return normalized_dict
+            return str(value)
+
+        normalized_payload: Dict[str, Any] = {}
+        for key, value in candidate.items():
+            if not isinstance(key, str) or not key.strip():
+                continue
+            normalized = _normalize(value)
+            if normalized is not None:
+                normalized_payload[key] = normalized
+        return normalized_payload or None
+
     def get_optimization_goal(self) -> str:
         """Return the primary optimization goal for this benchmark.
         
@@ -1661,9 +1990,17 @@ class BenchmarkHarness:
         self.device = self.config.device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        self._seed_info = self._setup_reproducibility()  # Store seed info for manifest
+        self._seed_info: Optional[Dict[str, Any]] = None
+        self._runtime_initialized = False
         self._thread_executor: Optional[ThreadPoolExecutor] = None
         self._environment_probe = environment_probe or EnvironmentProbe()
+
+    def _ensure_runtime_initialized(self) -> None:
+        """Perform CUDA-touching runtime setup only in the executing process."""
+        if self._runtime_initialized:
+            return
+        self._seed_info = self._setup_reproducibility()
+        self._runtime_initialized = True
     
     def _setup_reproducibility(self) -> Dict[str, Any]:
         """Setup for reproducible benchmarks.
@@ -2066,6 +2403,8 @@ class BenchmarkHarness:
         script_args.extend(_config_args_from_map())
         script_args.extend(extra_args)
 
+        if self._seed_info is None:
+            self._ensure_runtime_initialized()
         expected_torch_seed = getattr(self, "_seed_info", {}).get("torch_seed")
         if expected_torch_seed is None:
             raise RuntimeError("Missing expected torch seed for torchrun enforcement")
@@ -2093,6 +2432,7 @@ class BenchmarkHarness:
         repo_root = Path(__file__).resolve().parents[2]
         env = build_repo_python_env(repo_root, base_env=os.environ.copy())
         env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", str(os.getpid())))
+        env.setdefault("AISP_BENCHMARK_OWNER_PID", os.environ.get("AISP_BENCHMARK_OWNER_PID", str(os.getpid())))
         for key in getattr(config, "env_passthrough", []) or []:
             if key in os.environ:
                 env[key] = os.environ[key]
@@ -2258,9 +2598,6 @@ class BenchmarkHarness:
         Yields:
             MemoryStats pydantic model if tracking enabled, None otherwise.
         """
-        if not PYDANTIC_AVAILABLE:
-            raise ImportError("pydantic is required for memory tracking. Install with: pip install pydantic")
-        
         # Use provided config or fall back to instance config
         check_config = config if config is not None else self.config
         
@@ -2424,6 +2761,8 @@ class BenchmarkHarness:
         if isinstance(benchmark, BaseBenchmark):
             self._enforce_world_size_requirement(benchmark, config)
 
+        subprocess_coordinator = config.execution_mode == ExecutionMode.SUBPROCESS
+
         # Make merged config visible to benchmarks, but prevent runtime mutation.
         # Benchmarks read this via get_config() / self._config.
         benchmark._config = ReadOnlyBenchmarkConfigView.from_config(config)  # type: ignore[attr-defined]
@@ -2455,13 +2794,38 @@ class BenchmarkHarness:
         if env_result.errors:
             message = _format_environment_invalid_message(env_result.errors, config)
             enforce_env = bool(getattr(config, "enforce_environment_validation", True))
-            if enforce_env:
+            defer_foreign_process_failure = (
+                config.execution_mode == ExecutionMode.SUBPROCESS
+                and _contains_only_foreign_gpu_process_errors(env_result.errors)
+            )
+            if enforce_env and not defer_foreign_process_failure:
                 raise RuntimeError(message)
+            if defer_foreign_process_failure and LOGGER_AVAILABLE:
+                logger.warning(
+                    "ENVIRONMENT PRECHECK DEFERRED: parent benchmark() observed only "
+                    "foreign CUDA process errors before subprocess isolation; "
+                    "strict validation will re-run inside the isolated subprocess. %s",
+                    message,
+                )
+            elif defer_foreign_process_failure:
+                warnings.warn(
+                    "ENVIRONMENT PRECHECK DEFERRED: parent benchmark() observed only "
+                    "foreign CUDA process errors before subprocess isolation; "
+                    "strict validation will re-run inside the isolated subprocess. "
+                    + message,
+                    RuntimeWarning,
+                )
             if LOGGER_AVAILABLE:
                 logger.warning(message)
         
         gpu_mem_logger: Optional[GpuMemoryLogger] = None
-        if should_enable_gpu_memory_logging(getattr(config, "enable_gpu_memory_logging", False)):
+        if not subprocess_coordinator:
+            self._ensure_runtime_initialized()
+
+        if (
+            not subprocess_coordinator
+            and should_enable_gpu_memory_logging(getattr(config, "enable_gpu_memory_logging", False))
+        ):
             log_interval = resolve_gpu_log_interval(getattr(config, "gpu_memory_log_interval_seconds", 5.0))
             log_path = resolve_gpu_log_path(getattr(config, "gpu_memory_log_path", None))
             gpu_mem_logger = GpuMemoryLogger(self.device, interval=log_interval, log_path=log_path)
@@ -2522,12 +2886,14 @@ class BenchmarkHarness:
         Returns:
             BenchmarkRun with manifest and result
         """
-        if not PYDANTIC_AVAILABLE or BenchmarkRun is None:
-            raise ImportError("pydantic and BenchmarkRun are required for benchmark_with_manifest")
-        
         from datetime import datetime
         from core.benchmark.run_manifest import RunManifest
-        
+        from core.benchmark.run_manifest import SeedInfo
+
+        subprocess_coordinator = self.config.execution_mode == ExecutionMode.SUBPROCESS
+        if not subprocess_coordinator:
+            self._ensure_runtime_initialized()
+
         # Create manifest at start
         start_time = datetime.now()
 
@@ -2556,21 +2922,36 @@ class BenchmarkHarness:
                 manifest.collection_warnings.append(message)
             if LOGGER_AVAILABLE:
                 logger.warning(message)
-        
-        # Add seed information to manifest
-        from core.benchmark.run_manifest import SeedInfo
-        if self._seed_info:
+
+        def _seed_info_to_manifest(seed_info: Optional[Dict[str, Any]]) -> Optional[SeedInfo]:
+            if not seed_info:
+                return None
+            return SeedInfo(
+                random_seed=seed_info.get("random_seed"),
+                numpy_seed=seed_info.get("numpy_seed"),
+                torch_seed=seed_info.get("torch_seed"),
+                cuda_seed=seed_info.get("cuda_seed"),
+                deterministic_mode=bool(seed_info.get("deterministic_mode", False)),
+                schemaVersion="1.0",
+            )
+
+        manifest_seed_info = _seed_info_to_manifest(self._seed_info)
+        if manifest_seed_info is not None:
             manifest.seeds = SeedInfo(
-                random_seed=self._seed_info.get("random_seed"),
-                numpy_seed=self._seed_info.get("numpy_seed"),
-                torch_seed=self._seed_info.get("torch_seed"),
-                cuda_seed=self._seed_info.get("cuda_seed"),
-                deterministic_mode=bool(self._seed_info.get("deterministic_mode", False)),
+                random_seed=manifest_seed_info.random_seed,
+                numpy_seed=manifest_seed_info.numpy_seed,
+                torch_seed=manifest_seed_info.torch_seed,
+                cuda_seed=manifest_seed_info.cuda_seed,
+                deterministic_mode=manifest_seed_info.deterministic_mode,
                 schemaVersion="1.0",
             )
         
         # Run benchmark
         result = self.benchmark(benchmark)
+
+        result_seed_info = _seed_info_to_manifest(getattr(result, "seeds", None))
+        if result_seed_info is not None:
+            manifest.seeds = result_seed_info
 
         # The harness locks application clocks during timing. The manifest created above
         # captures pre-lock state, so patch it with the telemetry captured while clocks
@@ -2611,6 +2992,15 @@ class BenchmarkHarness:
                 )
         except Exception as exc:
             _append_manifest_warning(f"Failed to patch locked GPU telemetry into manifest: {exc}")
+
+        try:
+            runtime_env = getattr(result, "runtime_env", None) or {}
+            env_info = getattr(manifest, "environment", None)
+            if runtime_env and env_info is not None:
+                for key, value in runtime_env.items():
+                    env_info.relevant_env_vars[str(key)] = str(value)
+        except Exception as exc:
+            _append_manifest_warning(f"Failed to merge runtime environment overrides into manifest: {exc}")
         
         # Finalize manifest
         end_time = datetime.now()
@@ -2756,6 +3146,7 @@ class BenchmarkHarness:
         inference_timing_data: Optional[Dict[str, List[float]]] = None
         seed_metadata = copy.deepcopy(getattr(self, "_seed_info", None))
         child_custom_metrics: Optional[Dict[str, float]] = None
+        child_runtime_env: Optional[Dict[str, str]] = None
         child_gpu_metrics: Optional[Dict[str, Optional[float | str]]] = None
         stage_watchdog: Dict[str, Dict[str, Any]] = {
             "setup": {"status": "pending"},
@@ -2875,11 +3266,22 @@ class BenchmarkHarness:
             import signal
             repo_root = Path(__file__).resolve().parents[2]
             env = build_repo_python_env(repo_root, base_env=os.environ.copy())
-            env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", str(os.getpid())))
+            owner_run_id = os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", str(os.getpid()))
+            owner_pid = os.environ.get("AISP_BENCHMARK_OWNER_PID", str(os.getpid()))
+            env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", owner_run_id)
+            env.setdefault("AISP_BENCHMARK_OWNER_PID", owner_pid)
             if getattr(config, "single_gpu", False):
                 env["CUDA_VISIBLE_DEVICES"] = self._select_single_gpu_visible()
             process = subprocess.Popen(
-                [sys.executable, "-m", "core.harness.isolated_runner"],
+                [
+                    sys.executable,
+                    "-m",
+                    "core.harness.isolated_runner",
+                    "--aisp-owner-run-id",
+                    owner_run_id,
+                    "--aisp-owner-pid",
+                    owner_pid,
+                ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -2887,6 +3289,14 @@ class BenchmarkHarness:
                 env=env,
                 preexec_fn=os.setsid  # Create new process group for reliable killing
             )
+            if LOGGER_AVAILABLE:
+                logger.info(
+                    "SUBPROCESS DISPATCH: coordinator_pid=%s worker_pid=%s owner_run_id=%s owner_pid=%s",
+                    os.getpid(),
+                    process.pid,
+                    owner_run_id,
+                    owner_pid,
+                )
             
             # Send input JSON and wait for result
             input_json = json.dumps(input_data)
@@ -2899,8 +3309,8 @@ class BenchmarkHarness:
                 try:
                     if process.stdin:
                         process.stdin.close()
-                except Exception:
-                    pass
+                except Exception as close_exc:
+                    errors.append(f"Failed to close subprocess stdin after broken pipe: {close_exc}")
                 try:
                     stdout, stderr = process.communicate(timeout=5)
                 except Exception as follow_exc:
@@ -3002,6 +3412,10 @@ class BenchmarkHarness:
                             if benchmark_result.profiler_metrics.proton:
                                 proton_metrics = benchmark_result.profiler_metrics.proton.to_dict()
                         child_custom_metrics = dict(benchmark_result.custom_metrics or {})
+                        child_runtime_env = {
+                            str(key): str(value)
+                            for key, value in dict(benchmark_result.runtime_env or {}).items()
+                        }
                         
                         # Extract verify_output/tolerance/signature from subprocess and store on benchmark
                         verify_output_data = result_dict.get("verify_output")
@@ -3213,6 +3627,11 @@ class BenchmarkHarness:
             custom_metrics = self._resolve_custom_metrics(benchmark)
             if custom_metrics:
                 result.custom_metrics = custom_metrics
+        story_metadata = self._resolve_story_metadata(benchmark)
+        if story_metadata:
+            result.story_metadata = story_metadata
+        if child_runtime_env is not None:
+            result.runtime_env = child_runtime_env
         self._attach_throughput_metrics(result, benchmark)
         
         # Add inference timing if available
@@ -3312,6 +3731,7 @@ class BenchmarkHarness:
     
     def _benchmark_with_threading(self, benchmark: BaseBenchmark, config: BenchmarkConfig) -> PydanticBenchmarkResult:
         """Run benchmark using threading (alternative to subprocess method)."""
+        self._ensure_runtime_initialized()
         import inspect
         
         errors = []
@@ -3616,6 +4036,7 @@ class BenchmarkHarness:
                                 app_sm, app_mem = _read_app_clocks()
                                 if abs(app_sm - target_sm_i) > 50 or abs(app_mem - target_mem_i) > 50:
                                     last_app = (app_sm, app_mem)
+                                    last_lock_retry_error: Optional[BaseException] = None
                                     for _attempt in range(3):
                                         try:
                                             _nvidia_smi(["-i", str(physical_index), "-pm", "1"])
@@ -3626,18 +4047,24 @@ class BenchmarkHarness:
                                                     f"--applications-clocks={target_mem_i},{target_sm_i}",
                                                 ]
                                             )
-                                        except Exception:
-                                            pass
+                                        except Exception as lock_exc:
+                                            last_lock_retry_error = lock_exc
                                         time.sleep(0.05)
                                         app_sm, app_mem = _read_app_clocks()
                                         last_app = (app_sm, app_mem)
                                         if abs(app_sm - target_sm_i) <= 50 and abs(app_mem - target_mem_i) <= 50:
                                             break
                                     else:
+                                        retry_detail = (
+                                            f" Last lock attempt error: {last_lock_retry_error}"
+                                            if last_lock_retry_error is not None
+                                            else ""
+                                        )
                                         raise RuntimeError(
                                             "GPU clock lock invalid at measurement start: "
                                             f"requested SM={target_sm_i}MHz Mem={target_mem_i}MHz, "
-                                            f"applications SM={last_app[0]}MHz Mem={last_app[1]}MHz"
+                                            f"applications SM={last_app[0]}MHz Mem={last_app[1]}MHz."
+                                            f"{retry_detail}"
                                         )
 
                             # Short ramp to bring current clocks up to the locked application clocks.
@@ -3771,9 +4198,11 @@ class BenchmarkHarness:
                     if hasattr(benchmark, "mark_execution_complete"):
                         try:
                             benchmark.mark_execution_complete()
-                        except Exception:
-                            # Execution marker is advisory; failures are surfaced in verification
-                            pass
+                        except Exception as exc:
+                            _emit_harness_warning(
+                                f"{benchmark.__class__.__name__}.mark_execution_complete() failed during benchmark run",
+                                exc=exc,
+                            )
 
                     # Capture benchmark-specific metrics before teardown mutates benchmark state.
                     captured_custom_metrics = self._resolve_custom_metrics(benchmark)
@@ -3976,6 +4405,9 @@ class BenchmarkHarness:
         custom_metrics = captured_custom_metrics or self._resolve_custom_metrics(benchmark)
         if custom_metrics:
             result.custom_metrics = custom_metrics
+        story_metadata = self._resolve_story_metadata(benchmark)
+        if story_metadata:
+            result.story_metadata = story_metadata
         self._attach_throughput_metrics(result, benchmark)
 
         # Add inference timing if available
@@ -4077,6 +4509,7 @@ class BenchmarkHarness:
         self, fn: Callable, config: BenchmarkConfig
     ) -> tuple[List[float], Dict[str, str]]:
         """Benchmark with profiling enabled."""
+        self._ensure_runtime_initialized()
         profiling_outputs = {}
         
         # Create profiling output directory
@@ -4241,6 +4674,7 @@ class BenchmarkHarness:
             Tuple of (times_ms, inference_timing_data) where inference_timing_data is None
             or a dict with 'ttft_times_ms' and 'tpot_times_ms' keys
         """
+        self._ensure_runtime_initialized()
         times_ms: List[float] = []
         inference_timing_data: Optional[Dict[str, List[float]]] = None
         ttft_times_ms: List[float] = []
@@ -4356,6 +4790,7 @@ class BenchmarkHarness:
             memory_tracker.start()
         
         is_cuda = self.device.type == "cuda"
+        force_eval_warning_emitted = False
         
         if is_cuda:
             timing_method = getattr(config, "timing_method", "cuda_event")
@@ -4424,10 +4859,12 @@ class BenchmarkHarness:
             cuda_graph_captured = False
             graph_cheat_detector = GraphCaptureCheatDetector(self.device) if use_cuda_graph else None
             internal_stream_ids: Set[int] = set()
+            graph_replay_warning_emitted = False
             
             def _run_single_iteration():
                 """Helper to run a single benchmark iteration and return timing."""
                 nonlocal iteration_count, total_duration_ms, cuda_graph, cuda_graph_captured
+                nonlocal graph_replay_warning_emitted, force_eval_warning_emitted
                 
                 # Clear L2 cache before each iteration (Triton best practice)
                 # This ensures each iteration measures "cold cache" performance
@@ -4489,13 +4926,21 @@ class BenchmarkHarness:
                 if use_cuda_graph and cuda_graph_captured and cuda_graph is not None and graph_cheat_detector is not None:
                     try:
                         graph_cheat_detector.end_replay(elapsed_ms)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        if not graph_replay_warning_emitted:
+                            _emit_harness_warning(
+                                "Graph cheat detector replay finalization failed; graph-capture audit may be incomplete",
+                                exc=exc,
+                            )
+                            graph_replay_warning_emitted = True
                 if use_reported_time:
                     reported = getattr(benchmark_obj, "last_time_ms", None)
                     if reported is not None:
                         elapsed_ms = reported
                 times_ms.append(elapsed_ms)
+                if benchmark_obj is not None:
+                    benchmark_obj._last_elapsed_ms = elapsed_ms
+                    benchmark_obj._last_wall_elapsed_ms = wall_elapsed_ms
 
                 if benchmark_obj is not None:
                     finalize_iteration = getattr(benchmark_obj, "finalize_iteration_metrics", None)
@@ -4531,8 +4976,13 @@ class BenchmarkHarness:
                                     tensors_to_force[k] = v
                         if tensors_to_force:
                             force_tensor_evaluation(tensors_to_force)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        if not force_eval_warning_emitted:
+                            _emit_harness_warning(
+                                "Failed to force eager tensor evaluation after timing; lazy-evaluation protection may be incomplete",
+                                exc=exc,
+                            )
+                            force_eval_warning_emitted = True
                 return elapsed_ms, result
             
             def _capture_cuda_graph():
@@ -4680,8 +5130,8 @@ class BenchmarkHarness:
                             issues.append(
                                 f"UNDECLARED STREAMS: {len(undeclared_streams)} stream(s) were created/used without being declared via get_custom_streams()."
                             )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        issues.append(f"Failed to inspect stream audit info: {exc}")
                 if not audit_ok or audit_warnings:
                     issues.extend(audit_warnings)
                 if issues:
@@ -4751,6 +5201,9 @@ class BenchmarkHarness:
                     if reported is not None:
                         elapsed_ms = reported
                 times_ms.append(elapsed_ms)
+                if benchmark_obj is not None:
+                    benchmark_obj._last_elapsed_ms = elapsed_ms
+                    benchmark_obj._last_wall_elapsed_ms = elapsed_ms
                 
                 # Check if function returned inference timing data
                 if isinstance(result, dict):
@@ -4770,8 +5223,13 @@ class BenchmarkHarness:
                                     tensors_to_force[k] = v
                         if tensors_to_force:
                             force_tensor_evaluation(tensors_to_force)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        if not force_eval_warning_emitted:
+                            _emit_harness_warning(
+                                "Failed to force eager tensor evaluation after timing; lazy-evaluation protection may be incomplete",
+                                exc=exc,
+                            )
+                            force_eval_warning_emitted = True
         
         # Build inference timing data if collected
         if ttft_times_ms or tpot_times_ms:
@@ -4929,9 +5387,6 @@ class BenchmarkHarness:
         Returns:
             InferenceTimingStats object or None if no data
         """
-        if not PYDANTIC_AVAILABLE or InferenceTimingStats is None:
-            return None
-        
         if not ttft_times_ms or not tpot_times_ms:
             return None
         
@@ -4978,9 +5433,6 @@ class BenchmarkHarness:
         self, times_ms: List[float], config: BenchmarkConfig
     ) -> PydanticBenchmarkResult:
         """Compute statistical measures and return Pydantic BenchmarkResult."""
-        if not PYDANTIC_AVAILABLE:
-            raise ImportError("pydantic is required. Install with: pip install pydantic")
-        
         if not times_ms:
             raise ValueError("No timing data collected")
         
@@ -5094,6 +5546,19 @@ class BenchmarkHarness:
             except Exception as exc:  # pragma: no cover - defensive
                 if LOGGER_AVAILABLE:
                     logger.debug(f"get_custom_metrics() raised: {exc}")
+        return None
+
+    def _resolve_story_metadata(self, benchmark: BaseBenchmark) -> Optional[Dict[str, Any]]:
+        """Resolve benchmark story metadata if provided."""
+        getter = getattr(benchmark, "get_story_metadata", None)
+        if callable(getter):
+            try:
+                payload = getter()
+                if isinstance(payload, dict) and payload:
+                    return copy.deepcopy(payload)
+            except Exception as exc:  # pragma: no cover - defensive
+                if LOGGER_AVAILABLE:
+                    logger.debug(f"get_story_metadata() raised: {exc}")
         return None
 
     def _infer_workload_metadata_from_attributes(self, benchmark: BaseBenchmark) -> Optional[WorkloadMetadata]:
@@ -5233,7 +5698,7 @@ def benchmark_main(
     name: Optional[str] = None,
     force_sync: Optional[bool] = None,
 ) -> None:
-    """Safe helper for running benchmarks in __main__ blocks.
+    """Safe helper for standalone scripts that need to run a benchmark factory.
     
     This function avoids CUDA initialization issues by NOT calling get_benchmark_fn()
     in the parent process when using subprocess mode. Instead, it:
@@ -5241,10 +5706,15 @@ def benchmark_main(
     2. If so, runs the benchmark directly without harness subprocess (single process)
     3. If not, uses the harness normally
     
-    Usage in benchmark files:
+    Usage in standalone scripts:
         if __name__ == "__main__":
             from core.harness.benchmark_harness import benchmark_main
             benchmark_main(get_benchmark)
+
+    Discovery, compare.py, and ``cli.aisp bench run`` only require
+    ``get_benchmark()``. Harness-discoverable benchmark modules should expose the
+    factory and avoid defining ``__main__`` blocks so the supported execution
+    path stays consistent across the repo.
     
     This prevents the common mistake of:
         if __name__ == "__main__":

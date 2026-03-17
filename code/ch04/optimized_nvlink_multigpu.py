@@ -8,7 +8,7 @@ import torch
 from core.benchmark.gpu_requirements import require_min_gpus
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class OptimizedNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -109,7 +109,7 @@ class OptimizedNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
         bytes_transferred = float(self.numel * 4 * len(self.pairs))
         return compute_memory_transfer_metrics(
             bytes_transferred=bytes_transferred,
-            elapsed_ms=getattr(self, "_last_elapsed_ms", 1.0),
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
             transfer_type="hbm",
         )
 
@@ -126,7 +126,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedNVLinkBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

@@ -5,7 +5,7 @@ from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 from core.benchmark.verification import simple_signature
 
@@ -31,7 +31,7 @@ class OptimizedMicroTilingMatmulBenchmark(CudaBinaryBenchmark):
         return compute_roofline_metrics(
             total_flops=self._total_flops,
             total_bytes=self._total_bytes,
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             precision="fp32",
         )
     # get_verify_output inherited from CudaBinaryBenchmark - uses checksum from -DVERIFY=1 build
@@ -46,6 +46,3 @@ def get_benchmark() -> OptimizedMicroTilingMatmulBenchmark:
     return OptimizedMicroTilingMatmulBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

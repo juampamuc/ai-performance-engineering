@@ -21,7 +21,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from core.optimization.moe_inference import ExpertMLP
 from core.optimization.shared_expert_dispatch import dispatch_shared_expert_packed_scatter

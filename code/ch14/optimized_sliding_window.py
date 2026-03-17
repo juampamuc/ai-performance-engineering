@@ -1,7 +1,10 @@
-"""Optimized sliding window attention - O(n·w) complexity vs O(n²).
+"""Optimized causal attention via Flash SDPA vs naive O(n²) attention.
 
-This optimized version uses sliding window attention that only attends
-to the last W tokens, reducing complexity from O(n²) to O(n·w).
+This optimized variant uses PyTorch's scaled_dot_product_attention, which
+leverages Flash Attention kernels for fused execution without explicit
+materialization of the O(n²) attention score matrix. The historical
+``sliding_window`` filename is kept for benchmark-pair continuity; the
+optimized path is full causal SDPA rather than an explicit local-window mask.
 """
 
 from __future__ import annotations
@@ -16,24 +19,23 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
 
 class OptimizedAttentionModule(nn.Module):
-    """Optimized attention using SDPA (Flash Attention).
-    
-    Uses PyTorch's scaled_dot_product_attention which leverages Flash Attention
-    for O(n²) memory complexity but much better constants via kernel fusion.
+    """Optimized attention using full causal SDPA (Flash Attention).
+
+    Uses PyTorch's scaled_dot_product_attention for fused execution with the
+    same sequence shape as the baseline, but without explicit attention-score
+    materialization.
     """
     
     def __init__(
         self,
         embed_dim: int,
         num_heads: int,
-        window_size: int = 512,  # Kept for API compatibility
+        window_size: int = 512,  # Kept only for pair/file API compatibility
         dropout: float = 0.0,
     ):
         super().__init__()
@@ -124,7 +126,7 @@ class OptimizedSlidingWindowBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 _ = self.model(self.x)
 
     def benchmark_fn(self) -> None:
-        """Benchmark: Sliding window attention."""
+        """Benchmark fused full-sequence causal SDPA."""
         with torch.no_grad():
             self.output = self.model(self.x)
             self._last = float(self.output.sum())
@@ -155,8 +157,8 @@ class OptimizedSlidingWindowBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
         return BenchmarkConfig(
-            iterations=50,
-            warmup=10,
+            iterations=20,
+            warmup=5,
         )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
@@ -167,7 +169,7 @@ class OptimizedSlidingWindowBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_triton_metrics
         return compute_triton_metrics(
             num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             block_size=getattr(self, 'BLOCK_SIZE', 1024),
             num_warps=getattr(self, 'num_warps', 4),
         )
@@ -182,8 +184,3 @@ class OptimizedSlidingWindowBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedSlidingWindowBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

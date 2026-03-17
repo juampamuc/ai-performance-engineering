@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import shutil
+import sys
 import time
 from collections import Counter
 from datetime import datetime
@@ -26,9 +27,11 @@ from core.analysis.performance_analyzer import (
     PerformanceAnalyzer,
     load_benchmark_data as load_benchmark_results,
 )
+from core.benchmark.metrics import detect_hardware_specs
 from core import profile_artifacts
 from core.compile_analysis import load_compile_analysis
 from core.discovery import get_bench_roots, discover_all_chapters
+from core.harness.hardware_capabilities import detect_capabilities
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 _HISTORY_CACHE: Dict[str, Any] = {"key": None, "runs": None, "trends": None}
@@ -37,14 +40,14 @@ _HISTORY_CACHE: Dict[str, Any] = {"key": None, "runs": None, "trends": None}
 def _safe_package_version(name: str) -> Optional[str]:
     try:
         return importlib_metadata.version(name)
-    except Exception:
+    except importlib_metadata.PackageNotFoundError:
         return None
 
 
 def _package_root(name: str) -> Optional[Path]:
     try:
         spec = importlib_util.find_spec(name)
-    except Exception:
+    except (ImportError, ModuleNotFoundError, ValueError):
         return None
     if spec is None:
         return None
@@ -177,24 +180,34 @@ class PerformanceCoreBase:
 
         gpu_info = self.get_gpu_info()
         gpu_name = gpu_info.get("name", "Unknown GPU")
-        if "B200" in gpu_name or "B300" in gpu_name:
-            roofline_data["hardware_specs"] = {
-                "name": gpu_name,
-                "memory_bandwidth_gb_s": 8000,
-                "peak_tflops": 2500,
-            }
-        elif "H100" in gpu_name:
-            roofline_data["hardware_specs"] = {
-                "name": gpu_name,
-                "memory_bandwidth_gb_s": 3350,
-                "peak_tflops": 120,
-            }
-        else:
-            roofline_data["hardware_specs"] = {
-                "name": gpu_name,
-                "memory_bandwidth_gb_s": None,
-                "peak_tflops": None,
-            }
+        memory_bandwidth_gb_s: Optional[float] = None
+        peak_tflops: Optional[float] = None
+        caps = None
+        try:
+            caps = detect_capabilities()
+        except Exception:
+            caps = None
+        if caps is not None and caps.memory_bandwidth_tbps is not None:
+            memory_bandwidth_gb_s = caps.memory_bandwidth_tbps * 1000.0
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                props = torch.cuda.get_device_properties(0)
+                if props.major >= 9:
+                    specs = detect_hardware_specs()
+                    peak_tflops = specs.fp8_tflops
+                    if memory_bandwidth_gb_s is None:
+                        memory_bandwidth_gb_s = specs.hbm_bandwidth_gbps
+        except (ImportError, AttributeError, OSError, RuntimeError) as exc:
+            roofline_data.setdefault("warnings", []).append(
+                f"Failed to resolve hardware roofline specs from torch runtime: {exc}"
+            )
+        roofline_data["hardware_specs"] = {
+            "name": gpu_name,
+            "memory_bandwidth_gb_s": memory_bandwidth_gb_s,
+            "peak_tflops": peak_tflops,
+        }
 
         try:
             data = self.load_benchmark_data().get("benchmarks", [])
@@ -226,8 +239,10 @@ class PerformanceCoreBase:
                         "speedup": speedup,
                     })
             roofline_data["has_real_data"] = len(roofline_data["baseline_points"]) > 0
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError) as exc:
+            roofline_data.setdefault("warnings", []).append(
+                f"Failed to extract benchmark roofline points from benchmark data: {exc}"
+            )
 
         return roofline_data
 
@@ -725,6 +740,7 @@ class PerformanceCoreBase:
     # GPU + software info
     # ------------------------------------------------------------------
     def get_gpu_info(self) -> dict:
+        warnings: List[str] = []
         try:
             result = subprocess.run(
                 [
@@ -772,10 +788,10 @@ class PerformanceCoreBase:
                         device = torch.device("cuda")
                         props = torch.cuda.get_device_properties(device)
                         compute_capability = f"{props.major}.{props.minor}"
-                except Exception:
-                    pass
+                except (ImportError, AttributeError, OSError, RuntimeError) as exc:
+                    warnings.append(f"Failed to query torch CUDA runtime: {exc}")
 
-                return {
+                payload = {
                     "name": parts[0],
                     "temperature": float(parts[1]),
                     "temperature_hbm": hbm_temp,
@@ -796,9 +812,13 @@ class PerformanceCoreBase:
                     "compute_capability": compute_capability,
                     "live": True,
                 }
-        except Exception:
-            pass
-        return {
+                if warnings:
+                    payload["warnings"] = warnings
+                return payload
+            error = result.stderr.strip() or "nvidia-smi failed or no GPU available"
+        except Exception as exc:
+            error = f"nvidia-smi failed or no GPU available: {exc}"
+        payload = {
             "name": "GPU Not Detected",
             "temperature": None,
             "temperature_hbm": None,
@@ -818,8 +838,11 @@ class PerformanceCoreBase:
             "cuda_version": None,
             "compute_capability": None,
             "live": False,
-            "error": "nvidia-smi failed or no GPU available",
+            "error": error,
         }
+        if warnings:
+            payload["warnings"] = warnings
+        return payload
 
     def get_gpu_topology(self) -> dict:
         topology = {
@@ -829,6 +852,7 @@ class PerformanceCoreBase:
             "nvlink_available": False,
             "p2p_matrix": [],
         }
+        warnings: List[str] = []
         try:
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=index,name,uuid,pci.bus_id", "--format=csv,noheader"],
@@ -903,10 +927,12 @@ class PerformanceCoreBase:
                                     row.append("?")
                         p2p_matrix.append(row)
                     topology["p2p_matrix"] = p2p_matrix
-            except Exception:
-                pass
+            except (ImportError, AttributeError, OSError, RuntimeError) as exc:
+                warnings.append(f"Failed to query torch peer access matrix: {exc}")
         except Exception as e:
             topology["error"] = str(e)
+        if warnings:
+            topology["warnings"] = warnings
 
         return topology
 
@@ -935,8 +961,14 @@ class PerformanceCoreBase:
                 if current_gpu is not None:
                     nvlink["links_per_gpu"][current_gpu] = link_count
                 nvlink["total_bandwidth_gbs"] = sum(l.get("bandwidth_gbs", 0) for l in nvlink["link_details"])
-        except Exception:
-            pass
+            else:
+                stderr = result.stderr.strip()
+                if stderr:
+                    nvlink.setdefault("warnings", []).append(
+                        f"Failed to query NVLink status: {stderr}"
+                    )
+        except Exception as exc:
+            nvlink.setdefault("warnings", []).append(f"Failed to query NVLink status: {exc}")
         return nvlink
 
     def get_software_info(self) -> dict:
@@ -957,6 +989,7 @@ class PerformanceCoreBase:
             "gpu_count": None,
             "torch_compile_backend": None,
         }
+        warnings: List[str] = []
 
         try:
             import torch
@@ -970,8 +1003,8 @@ class PerformanceCoreBase:
                 info["architecture"] = props.name
                 info["gpu_count"] = torch.cuda.device_count()
                 info["torch_compile_backend"] = os.environ.get("TORCH_COMPILE_BACKEND")
-        except Exception:
-            pass
+        except (ImportError, AttributeError, OSError, RuntimeError) as exc:
+            warnings.append(f"Failed to query torch software details: {exc}")
 
         try:
             result = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=3)
@@ -979,17 +1012,17 @@ class PerformanceCoreBase:
                 lines = result.stdout.splitlines()
                 if lines:
                     info["cuda_driver"] = lines[2].split()[2] if len(lines) > 2 else None
-        except Exception:
-            pass
+            elif result.stderr.strip():
+                warnings.append(f"Failed to query NVIDIA driver details: {result.stderr.strip()}")
+        except Exception as exc:
+            warnings.append(f"Failed to query NVIDIA driver details: {exc}")
 
         for pkg in ["triton", "transformer_engine", "flash_attn", "xformers"]:
             info[pkg] = _safe_package_version(pkg)
 
-        try:
-            import sys
-            info["python"] = sys.version.split()[0]
-        except Exception:
-            pass
+        info["python"] = sys.version.split()[0]
+        if warnings:
+            info["warnings"] = warnings
 
         return info
 
@@ -1021,8 +1054,8 @@ class PerformanceCoreBase:
                     if "CUTLASS_VERSION_PATCH" in line:
                         patch = int(re.findall(r"\\d+", line)[0])
                 result["cutlass"]["version"] = f"{major}.{minor}.{patch}"
-            except Exception:
-                pass
+            except (IndexError, OSError, ValueError) as exc:
+                result["warnings"].append(f"Failed to parse CUTLASS version from {version_h}: {exc}")
 
             # SM100 headers check
             sm100_header = cutlass_path / "include" / "cutlass" / "arch" / "sm100_smem_selector.h"
@@ -1041,8 +1074,10 @@ class PerformanceCoreBase:
                     result["transformer_engine"]["cutlass_symlink"] = cutlass_link.is_symlink()
                     try:
                         result["transformer_engine"]["cutlass_symlink_target"] = str(cutlass_link.resolve())
-                    except Exception:
-                        pass
+                    except (OSError, RuntimeError) as exc:
+                        result["warnings"].append(
+                            f"Failed to resolve transformer_engine CUTLASS symlink {cutlass_link}: {exc}"
+                        )
                     sm100_header_te = cutlass_link / "include" / "cutlass" / "arch" / "sm100_smem_selector.h"
                     result["transformer_engine"]["cutlass_sm100_headers"] = sm100_header_te.exists()
 
@@ -1399,6 +1434,7 @@ class PerformanceCoreBase:
         numa_nodes: List[Dict[str, Any]] = []
         tlb_info: List[str] = []
         errors: List[str] = []
+        warnings: List[str] = []
 
         try:
             with open("/proc/cpuinfo", "r", encoding="utf-8") as handle:
@@ -1441,9 +1477,10 @@ class PerformanceCoreBase:
                 for line in result.stdout.splitlines():
                     if "node" in line and "cpus" in line:
                         numa_nodes.append({"raw": line.strip()})
-        except Exception:
-            # numactl optional
-            pass
+            elif result.stderr.strip():
+                warnings.append(f"numactl unavailable or failed: {result.stderr.strip()}")
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            warnings.append(f"numactl unavailable or failed: {exc}")
 
         try:
             result = subprocess.run(["cpuid", "-1"], capture_output=True, text=True, timeout=5)
@@ -1451,8 +1488,10 @@ class PerformanceCoreBase:
                 for line in result.stdout.splitlines():
                     if "TLB" in line or "tlb" in line:
                         tlb_info.append(line.strip())
-        except Exception:
-            pass
+            elif result.stderr.strip():
+                warnings.append(f"cpuid unavailable or failed: {result.stderr.strip()}")
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            warnings.append(f"cpuid unavailable or failed: {exc}")
 
         recommendations = [
             "Use numactl --localalloc for NUMA-aware allocation",
@@ -1468,6 +1507,7 @@ class PerformanceCoreBase:
             "tlb": tlb_info,
             "recommendations": recommendations,
             "errors": errors,
+            "warnings": warnings,
         }
 
     def get_system_parameters(self) -> dict:
@@ -1808,6 +1848,8 @@ class PerformanceCoreBase:
                 "error": "model_params_b is required for vLLM config generation; pass --model-params-b/--model-size.",
             }
         try:
+            from dataclasses import asdict, is_dataclass
+
             from core.optimization.parallelism_planner.distributed_training import VLLMConfigGenerator
 
             generator = VLLMConfigGenerator()
@@ -1823,7 +1865,13 @@ class PerformanceCoreBase:
                 max_seq_length=max_seq_length,
                 quantization=quantization,
             )
-            return {"success": True, "vllm_config": config.to_dict() if hasattr(config, "to_dict") else config}
+            if hasattr(config, "to_dict"):
+                payload = config.to_dict()
+            elif is_dataclass(config):
+                payload = asdict(config)
+            else:
+                payload = config
+            return {"success": True, "vllm_config": payload}
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 

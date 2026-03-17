@@ -10,8 +10,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
@@ -110,8 +108,8 @@ class OptimizedKernelLaunchesBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark-specific config."""
         return BenchmarkConfig(
-            iterations=50,
-            warmup=10,
+            iterations=30,
+            warmup=5,
             ncu_replay_mode="application",
             nsys_timeout_seconds=1200,
             nsys_preset_override="light",
@@ -121,15 +119,15 @@ class OptimizedKernelLaunchesBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_graph_metrics
-        return compute_graph_metrics(
-            baseline_launch_overhead_us=getattr(self, '_baseline_launch_us', 10.0),
-            graph_launch_overhead_us=getattr(self, '_graph_launch_us', 1.0),
-            num_nodes=getattr(self, 'num_nodes', 10),
-            num_iterations=getattr(self, 'num_iterations', 100),
-        )
+        """Return structural graph-capture metrics without invented launch-overhead numbers."""
+        from ch12.graph_metrics_common import compute_ch12_workload_metrics
 
+        return compute_ch12_workload_metrics(
+            uses_cuda_graph=True,
+            num_iterations=self.iterations,
+            workload_elements=float(self.size[0] * self.size[1]),
+            num_nodes=3 * self.iterations,
+        )
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
         if self.x_template is None:
@@ -145,7 +143,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return OptimizedKernelLaunchesBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

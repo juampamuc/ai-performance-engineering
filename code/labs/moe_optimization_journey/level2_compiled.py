@@ -22,5 +22,3 @@ def get_benchmark() -> Level2Compiled:
     return Level2Compiled()
 
 
-if __name__ == "__main__":
-    run_level(2)

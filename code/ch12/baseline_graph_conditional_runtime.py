@@ -17,8 +17,6 @@ import torch
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
@@ -110,22 +108,15 @@ class BaselineGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return baseline graph metrics using standard helpers."""
-        from core.benchmark.metrics import compute_graph_metrics
-        
-        # Baseline has full launch overhead per iteration
-        num_nodes = (2 * self.num_loops) + 3
-        baseline_launch_us = 8.0 * num_nodes  # ~8us per tiny launch
-        
-        metrics = compute_graph_metrics(
-            baseline_launch_overhead_us=baseline_launch_us,
-            graph_launch_overhead_us=baseline_launch_us,  # Same as baseline (no graph)
-            num_nodes=num_nodes,
-            num_iterations=100,
-        )
-        metrics["graph.uses_cuda_graph"] = 0.0
-        return metrics
+        """Return structural conditional-launch metrics without invented timings."""
+        from ch12.graph_metrics_common import compute_ch12_workload_metrics
 
+        return compute_ch12_workload_metrics(
+            uses_cuda_graph=False,
+            num_iterations=self.num_loops,
+            workload_elements=float(self.batch_size * self.seq_len * self.hidden_dim),
+            num_nodes=(2 * self.num_loops) + 3,
+        )
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""
         return (0.1, 1.0)
@@ -153,7 +144,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselineGraphBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

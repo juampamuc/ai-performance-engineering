@@ -31,7 +31,25 @@ Presets:
 - `common-answer-fast`: the fastest useful answer bundle; NCCL, vLLM concurrency, vLLM request-rate, GEMM, GPU STREAM, fio, quick nvbandwidth, scorecard, coverage, MLPerf alignment.
 - `core-system`: the standard full single-node/system bundle.
 - `modern-llm`: the canonical full bundle with advanced LLM/distributed signals.
+- `fabric-systems`: `modern-llm` plus the fabric capability matrix, verification ladder, AI-correlation artifact, and fabric scorecard. This preset defaults to capability-aware partial completion instead of strict canonical completeness gating.
 - `multinode-readiness`: checks contract and environment only; no workloads.
+
+Dedicated fabric entrypoint:
+
+```bash
+python -m cli.aisp cluster fabric-eval \
+  --run-id <run_id> \
+  --hosts <h1,h2> \
+  --labels <l1,l2> \
+  --ssh-user <user> \
+  --ssh-key <key>
+```
+
+The dedicated fabric path defaults to capability-aware partial completion. Use `--extra-arg --strict-canonical-completeness` only when you explicitly want the broader publish-grade completeness gates.
+
+Fabric handbook:
+- `cluster/fabric/README.md`
+- `cluster/fabric/fabric_command_catalog.json`
 
 ## Declarative BenchmarkRuns
 When you need the benchmarking service contract instead of just the scripts:
@@ -109,6 +127,7 @@ That writes:
 - `cluster/runs/<run_id>/structured/<run_id>_multinode_readiness.json`
 
 Use `modern-llm` only after readiness is green.
+Use `fabric-systems` or `cluster fabric-eval` when the primary goal is NVLink, InfiniBand, or Spectrum-X characterization rather than generic system bring-up.
 
 ## Optional Export
 `python -m cli.aisp cluster build-canonical-package ...` is optional. Most users can ignore it. It only exists to export already-produced runs into a clean shareable bundle after collection/promotion are already done.

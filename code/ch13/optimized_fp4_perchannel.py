@@ -2,50 +2,54 @@
 
 from __future__ import annotations
 
-import ctypes
-from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
 
+from ch13.te_runtime_common import ensure_te_runtime_initialized
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.env import apply_env_defaults
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
     WorkloadMetadata,
 )
 
-
-apply_env_defaults()
-
-
-def _preload_torch_cuda_symbols() -> None:
-    """Ensure torch CUDA shared objects are loaded with RTLD_GLOBAL."""
-    torch_lib_dir = Path(torch.__file__).resolve().parent / "lib"
-    libs = [
-        "libtorch_cuda.so",
-        "libtorch_cuda_linalg.so",
-        "libtorch_nvshmem.so",
-        "libc10_cuda.so",
-    ]
-    for name in libs:
-        candidate = torch_lib_dir / name
-        if candidate.exists():
-            ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
+TELinear: Any | None = None
+fp8_autocast: Any | None = None
+is_nvfp4_available: Any | None = None
+te_recipe: Any | None = None
+TE_IMPORT_ERROR: Optional[ImportError] = None
 
 
-_preload_torch_cuda_symbols()
-
-try:
-    from transformer_engine.pytorch import Linear as TELinear, fp8_autocast, is_nvfp4_available
-    from transformer_engine.common import recipe as te_recipe
-
-    TE_AVAILABLE = True
-except ImportError as exc:  # pragma: no cover
-    TE_AVAILABLE = False
-    TE_IMPORT_ERROR = exc
+def _load_transformer_engine() -> tuple[Any, Any, Any, Any]:
+    global TELinear, fp8_autocast, is_nvfp4_available, te_recipe, TE_IMPORT_ERROR
+    if (
+        TELinear is not None
+        and fp8_autocast is not None
+        and is_nvfp4_available is not None
+        and te_recipe is not None
+    ):
+        return TELinear, fp8_autocast, is_nvfp4_available, te_recipe
+    ensure_te_runtime_initialized()
+    try:
+        from transformer_engine.pytorch import (
+            Linear as te_linear,
+            fp8_autocast as te_fp8_autocast,
+            is_nvfp4_available as te_is_nvfp4_available,
+        )
+        from transformer_engine.common import recipe as te_recipe_module
+    except ImportError as exc:  # pragma: no cover
+        TE_IMPORT_ERROR = exc
+        raise RuntimeError(
+            "SKIPPED: Transformer Engine is required for optimized_fp4_perchannel. "
+            f"(import error: {exc})"
+        ) from exc
+    TELinear = te_linear
+    fp8_autocast = te_fp8_autocast
+    is_nvfp4_available = te_is_nvfp4_available
+    te_recipe = te_recipe_module
+    return TELinear, fp8_autocast, is_nvfp4_available, te_recipe
 
 
 def _apply_per_channel_scaling(linear: nn.Module) -> torch.Tensor:
@@ -67,8 +71,9 @@ class FP4PerChannelMLP(nn.Module):
 
     def __init__(self, hidden_dim: int) -> None:
         super().__init__()
-        self.fc1 = TELinear(hidden_dim, hidden_dim * 2, bias=True)
-        self.fc2 = TELinear(hidden_dim * 2, hidden_dim, bias=True)
+        te_linear, _, _, _ = _load_transformer_engine()
+        self.fc1 = te_linear(hidden_dim, hidden_dim * 2, bias=True)
+        self.fc2 = te_linear(hidden_dim * 2, hidden_dim, bias=True)
         self.activation = nn.GELU()
         self.fc1_scale: Optional[torch.Tensor] = None
         self.fc2_scale: Optional[torch.Tensor] = None
@@ -116,15 +121,11 @@ class OptimizedFP4PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def setup(self) -> None:
-        if not TE_AVAILABLE:
-            raise RuntimeError(
-                "SKIPPED: Transformer Engine is required for optimized_fp4_perchannel. "
-                f"(import error: {TE_IMPORT_ERROR})"
-            )
-        if not is_nvfp4_available():
+        _, fp8_autocast_fn, is_nvfp4_available_fn, te_recipe_module = _load_transformer_engine()
+        if not is_nvfp4_available_fn():
             raise RuntimeError("SKIPPED: NVFP4 kernels unavailable on this hardware/driver.")
 
-        self.fp4_recipe = te_recipe.NVFP4BlockScaling(
+        self.fp4_recipe = te_recipe_module.NVFP4BlockScaling(
             disable_rht=True,
             disable_stochastic_rounding=True,
         )
@@ -162,13 +163,14 @@ class OptimizedFP4PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._verify_input = self.inputs.detach().clone()
 
         for _ in range(3):
-            with torch.no_grad(), fp8_autocast(enabled=True, fp8_recipe=self.fp4_recipe):
+            with torch.no_grad(), fp8_autocast_fn(enabled=True, fp8_recipe=self.fp4_recipe):
                 _ = self.model(self.inputs)
 
     def benchmark_fn(self) -> None:
         if self.model is None or self.inputs is None or self.fp4_recipe is None:
             raise RuntimeError("Benchmark not initialized")
-        with torch.no_grad(), fp8_autocast(enabled=True, fp8_recipe=self.fp4_recipe):
+        _, fp8_autocast_fn, _, _ = _load_transformer_engine()
+        with torch.no_grad(), fp8_autocast_fn(enabled=True, fp8_recipe=self.fp4_recipe):
             self.output = self.model(self.inputs)
         if self._verify_input is None or self.output is None:
             raise RuntimeError("Verification input/output not initialized")
@@ -212,8 +214,3 @@ class OptimizedFP4PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return OptimizedFP4PerChannelBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

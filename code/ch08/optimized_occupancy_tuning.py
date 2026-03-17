@@ -1,4 +1,4 @@
-"""Optimized occupancy tuning with higher ILP (unroll) at default block size."""
+"""Optimized occupancy tuning by increasing CTA size only."""
 
 from __future__ import annotations
 
@@ -9,24 +9,20 @@ from ch08.baseline_occupancy_tuning import OccupancyBinaryBenchmark
 
 
 class OptimizedOccupancyTuningBenchmark(OccupancyBinaryBenchmark):
-    """Optimize occupancy: larger block (256), unroll (8), no heavy smem.
-    
-    Baseline artificially depresses occupancy with 45KB smem and small block.
-    This optimized version removes that constraint and uses ILP via unrolling.
-    """
+    """Optimize occupancy by increasing block size while holding other knobs fixed."""
 
     def __init__(self) -> None:
         super().__init__(
-            friendly_name="Occupancy Tuning (block=256, unroll=8, no smem)",
+            friendly_name="Occupancy Tuning (block=256)",
             run_args=[
                 "--block-size",
                 "256",
                 "--smem-bytes",
-                "0",  # No heavy smem - allows higher occupancy
+                "0",
                 "--unroll",
-                "8",  # ILP via loop unrolling
+                "1",
                 "--inner-iters",
-                "1",  # Same work as baseline
+                "1",
                 "--reps",
                 "60",
             ],
@@ -37,8 +33,8 @@ class OptimizedOccupancyTuningBenchmark(OccupancyBinaryBenchmark):
         """Return optimization metrics for occupancy_tuning."""
         from core.benchmark.metrics import compute_speedup_metrics
         return compute_speedup_metrics(
-            baseline_ms=getattr(self, '_baseline_ms', 1.0),
-            optimized_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            baseline_ms=None,
+            optimized_ms=getattr(self, '_last_elapsed_ms', None),
             name="occupancy_tuning",
         )
 
@@ -47,8 +43,3 @@ class OptimizedOccupancyTuningBenchmark(OccupancyBinaryBenchmark):
 def get_benchmark() -> OptimizedOccupancyTuningBenchmark:
     """Factory for discover_benchmarks()."""
     return OptimizedOccupancyTuningBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

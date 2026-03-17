@@ -39,6 +39,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+from core.harness.triton_cache_utils import (
+    get_triton_runtime_env_overrides,
+    reset_triton_runtime_cache,
+)
+
 
 def _emit_runner_warning(message: str, **details: Any) -> None:
     payload: Dict[str, Any] = {"event": "isolated_runner_warning", "message": message}
@@ -50,6 +55,27 @@ def _emit_runner_warning(message: str, **details: Any) -> None:
             print(f"[isolated_runner_warning] {message}", file=sys.stderr)
         except Exception:
             pass
+
+
+def _apply_owner_markers_from_argv(argv: List[str]) -> None:
+    """Mirror owner markers from argv into the process environment.
+
+    `/proc/<pid>/environ` can be transiently unreadable while a process is still
+    visible to NVML. Passing the owner markers in argv gives the validator a
+    second, exec-time-readable ownership channel for same-run worker detection.
+    """
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == "--aisp-owner-run-id" and i + 1 < len(argv):
+            os.environ["AISP_BENCHMARK_OWNER_RUN_ID"] = argv[i + 1]
+            i += 2
+            continue
+        if token == "--aisp-owner-pid" and i + 1 < len(argv):
+            os.environ["AISP_BENCHMARK_OWNER_PID"] = argv[i + 1]
+            i += 2
+            continue
+        i += 1
 
 
 def reset_cuda_state() -> None:
@@ -86,6 +112,9 @@ def reset_cuda_state() -> None:
                 torch._inductor.cudagraph_trees.reset_cudagraph_trees()
             except Exception as exc:
                 _emit_runner_warning("Failed to reset torch._inductor cudagraph trees", error=str(exc))
+        reset_triton_runtime_cache(
+            lambda message, exc: _emit_runner_warning(message, error=str(exc))
+        )
     except ImportError as exc:
         _emit_runner_warning(
             "PyTorch import unavailable during isolated runner CUDA reset",
@@ -320,6 +349,7 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
 
             # Run through the real harness (includes all protections)
             bench_result = harness.benchmark(benchmark, name=benchmark_name)
+            bench_result.runtime_env.update(get_triton_runtime_env_overrides())
 
             # If the benchmark already failed, propagate its errors without
             # attempting verification extraction (avoid masking root cause).
@@ -517,6 +547,7 @@ def _make_success_response(
 def main() -> None:
     """Main entry point - read JSON from stdin, run benchmark, write JSON to stdout."""
     try:
+        _apply_owner_markers_from_argv(sys.argv[1:])
         # Read input JSON from stdin
         input_json = sys.stdin.read()
         input_data = json.loads(input_json)

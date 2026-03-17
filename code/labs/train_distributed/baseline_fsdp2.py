@@ -181,10 +181,6 @@ def main():
     dist.destroy_process_group()
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     # Scale up by switching to a larger config (ex: tinyllama_config.json)

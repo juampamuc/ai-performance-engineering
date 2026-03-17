@@ -311,17 +311,27 @@ class PersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return TMA-specific metrics."""
+        """Return numeric workload metrics for the persistent TMA kernel."""
+        from core.benchmark.metrics import compute_gemm_metrics
+
         num_sms = torch.cuda.get_device_properties(self.device.index or 0).multi_processor_count
         scheduled_programs = persistent_program_count(self.M, self.N, BLOCK_M, BLOCK_N, num_sms)
-        return {
-            "matrix_size": f"{self.M}x{self.N}x{self.K}",
-            "tma_enabled": True,
-            "dtype": "float16",
-            "scheduled_programs": float(scheduled_programs),
-            "tile_count": float(persistent_tile_count(self.M, self.N, BLOCK_M, BLOCK_N)),
-            "programs_per_sm": float(scheduled_programs / num_sms),
-        }
+        tile_count = persistent_tile_count(self.M, self.N, BLOCK_M, BLOCK_N)
+        metrics = compute_gemm_metrics(
+            m=self.M,
+            n=self.N,
+            k=self.K,
+            precision="fp16",
+            bytes_per_element=2,
+        )
+        metrics["gemm.uses_tma"] = 1.0
+        metrics["gemm.persistent_kernel"] = 1.0
+        metrics["gemm.scheduled_programs"] = float(scheduled_programs)
+        metrics["gemm.tile_count"] = float(tile_count)
+        metrics["gemm.programs_per_sm"] = float(scheduled_programs / num_sms)
+        metrics["gemm.num_stages"] = float(NUM_STAGES)
+        metrics["gemm.num_warps"] = float(NUM_WARPS)
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if not TRITON_AVAILABLE:
@@ -335,23 +345,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return PersistentMatmulTMABenchmark()
 
-
-if __name__ == "__main__":
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
-    
-    # Test correctness
-    M, N, K = 256, 256, 256
-    a = torch.randn(M, K, device='cuda', dtype=torch.float16)
-    b = torch.randn(K, N, device='cuda', dtype=torch.float16)
-    
-    # Run TMA matmul
-    c = run_optimized(M, N, K)
-    
-    # Verify
-    c_ref = torch.matmul(a, b)
-    # Note: We don't verify here since run_optimized creates its own tensors
-    
-    print(f"✓ TMA persistent matmul completed")
-    print(f"  Output shape: {c.shape}")
-    print(f"  Output mean: {c.mean().item():.4f}")

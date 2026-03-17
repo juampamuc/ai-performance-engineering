@@ -9,12 +9,12 @@ There are only two artifact surfaces that matter:
 - `cluster/field-report*.md` plus `cluster/published/current/structured/` and `cluster/published/current/figures/`: the published canonical package.
 
 Current published package:
-- Canonical localhost package: `2026-03-05_localhost_modern_profile_r24_full20b`
-- Archived comparison baseline: `2026-03-04_localhost_modern_profile_r22_fastcanon` in `cluster/archive/runs/2026-03-04_localhost_modern_profile_r22_fastcanon/`
+- Canonical localhost package: `2026-03-17_localhost_fabric_canonical`
+- Preserved historical localhost baseline: `2026-03-08_localhost_modern_profile_r32_full20b`
 
 Interpretation:
-- `r24` is what the report package points at.
-- `r22` is preserved only for historical delta work and does not remain in the live publication surfaces.
+- `2026-03-17_localhost_fabric_canonical` is what the report package points at.
+- `2026-03-08_localhost_modern_profile_r32_full20b` is preserved only for historical delta work and does not remain in the live publication surfaces.
 
 ## 1) Routine Single-Node Evaluation
 Use this for the usual "tell me how this system behaves" ask:
@@ -62,6 +62,55 @@ GPU benchmark validity rules:
 - clock locking is mandatory
 - missing clock-lock metadata invalidates the run
 - profiling and structured artifacts must be non-empty and semantically valid, not just present
+
+## 2b) Canonical Fabric Package
+Use this when the cluster question is specifically about NVLink, InfiniBand, or Spectrum-X / RoCE:
+
+```bash
+python -m cli.aisp cluster fabric-eval \
+  --run-id <run_id> \
+  --hosts <h1,h2> \
+  --labels <l1,l2> \
+  --ssh-user <user> \
+  --ssh-key <key> \
+  --primary-label <l1>
+```
+
+Default behavior is capability-aware partial completion. For fabric-only bring-up, the entrypoint records `not_present` and `not_configured` states structurally without inheriting the broader strict canonical completeness gate.
+
+Optional publish-grade gate:
+
+```bash
+python -m cli.aisp cluster fabric-eval \
+  --run-id <run_id> \
+  --hosts <h1,h2> \
+  --labels <l1,l2> \
+  --ssh-user <user> \
+  --ssh-key <key> \
+  --primary-label <l1> \
+  --nmx-url https://<your-nmx-host> \
+  --require-management-plane
+```
+
+Expected fabric outputs:
+- `<run_id>_fabric_command_catalog.json`
+- `<run_id>_fabric_capability_matrix.json`
+- `<run_id>_fabric_verification.json`
+- `<run_id>_fabric_ai_correlation.json`
+- `<run_id>_fabric_scorecard.json`
+- `<run_id>_fabric_scorecard.md`
+
+Management-plane inputs:
+- `--nmx-url https://<your-nmx-host>`
+- `--nmx-token <token>`
+- `--ib-mgmt-host <host>`
+- `--ib-mgmt-user <user>`
+- `--ib-mgmt-ssh-key <path>`
+- `--cumulus-hosts <host1,host2>`
+- `--cumulus-user <user>`
+- `--cumulus-ssh-key <path>`
+
+If those endpoints are missing, the run records `not_configured` instead of silently dropping the control plane.
 
 ## 3) Multi-Node Readiness Before First Workload Launch
 Do this before the first real multi-node run:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import List, Optional
 
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.profiling.nvtx_helper import (
     canonicalize_nvtx_name,
@@ -14,11 +16,7 @@ from core.profiling.nvtx_helper import (
     nvtx_range,
 )
 
-
-def resolve_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch11")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for ch11")
 
 
 class StridedStreamBaseline(VerificationPayloadMixin, BaseBenchmark):

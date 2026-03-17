@@ -403,51 +403,6 @@ class SlidingWindowCausalAttention(nn.Module):
 # Main
 #============================================================================
 
-if __name__ == "__main__":
-    print("FlexAttention Block Sparsity Benchmark")
-    print("=" * 60)
-    
-    if not torch.cuda.is_available():
-        print("CUDA not available!")
-        exit(1)
-    
-    device = torch.device("cuda")
-    print(f"Device: {torch.cuda.get_device_name()}")
-    print()
-    
-    # Run benchmarks
-    benchmark = FlexAttentionBenchmark(
-        batch_size=2,
-        num_heads=32,
-        head_dim=128,
-        seq_len=4096,
-        dtype=torch.bfloat16,
-        device="cuda",
-    )
-    
-    print(f"Config: B={benchmark.batch_size}, H={benchmark.num_heads}, "
-          f"D={benchmark.head_dim}, S={benchmark.seq_len}")
-    print()
-    
-    results = benchmark.run_benchmarks()
-    
-    # Print results
-    print(f"{'Pattern':<30} {'Time (ms)':<12} {'TFLOPS':<10} {'Sparsity':<10}")
-    print("-" * 62)
-    
-    baseline_ms = results[0]["elapsed_ms"]
-    for r in results:
-        if "error" in r:
-            print(f"{r['name']:<30} {r['error']}")
-        else:
-            speedup = baseline_ms / r["elapsed_ms"]
-            print(f"{r['name']:<30} {r['elapsed_ms']:<12.3f} {r['tflops']:<10.2f} {r['sparsity_pct']:<10.1f}")
-    
-    print()
-    print("Note: Higher sparsity = less computation, but benefits depend on pattern.")
-    print("Sliding window is ideal for long sequences with local dependencies.")
-
-
 #============================================================================
 # Benchmark Harness Integration
 #============================================================================
@@ -563,7 +518,7 @@ class FlexAttentionSparseDemoBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_triton_metrics
         return compute_triton_metrics(
             num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             block_size=getattr(self, 'BLOCK_SIZE', 1024),
             num_warps=getattr(self, 'num_warps', 4),
         )

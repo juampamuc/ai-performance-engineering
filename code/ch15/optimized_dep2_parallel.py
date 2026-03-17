@@ -7,7 +7,7 @@ from typing import Optional, Callable
 import torch
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from ch15.dep2_parallel_common import Dep2Config, Dep2Workload
 
 

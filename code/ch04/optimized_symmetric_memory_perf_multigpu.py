@@ -23,7 +23,7 @@ from core.harness.benchmark_harness import (
 )
 from core.benchmark.cuda_event_timing import max_elapsed_ms
 from core.benchmark.metrics import compute_memory_transfer_metrics
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.optimization.symmetric_memory_patch import (
     SymmetricMemoryHandle,
     create_symmetric_memory_handle,
@@ -282,6 +282,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedSymmetricMemoryPerfBenchmark(size_mb=0.0625)
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

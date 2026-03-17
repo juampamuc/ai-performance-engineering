@@ -2,9 +2,9 @@
 
 Pairs with: baseline_inference_monolithic.py
 
-This variant keeps the same prefill+decode workload but reduces Python overhead
-by running decode in a single call (instead of per-token calls) and avoids
-explicit device-wide synchronizations inside the hot path.
+This variant keeps the same prefill+autoregressive decode workload as the
+baseline, but routes decode through a shared helper that reuses an output
+buffer and avoids the baseline's repeated list growth inside the hot path.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import torch
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata  # noqa: E402
 from ch15.inference_monolithic_common import SimpleLLM
-from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
+from core.benchmark.verification_mixin import VerificationPayloadMixin  # noqa: E402
 
 
 class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -104,8 +104,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return OptimizedInferenceMonolithicBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

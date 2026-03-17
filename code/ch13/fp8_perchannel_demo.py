@@ -527,8 +527,8 @@ class FP8PerChannelDemoBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=None,
+            reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
             precision_type="fp8",
         )
 
@@ -543,50 +543,3 @@ def get_benchmark() -> BaseBenchmark:
     return FP8PerChannelDemoBenchmark()
 
 
-if __name__ == "__main__":
-    print("FP8 Per-Channel vs Per-Tensor Scaling Comparison")
-    print("=" * 60)
-    
-    if not torch.cuda.is_available():
-        print("CUDA not available!")
-        exit(1)
-    
-    device = torch.device("cuda")
-    print(f"Device: {torch.cuda.get_device_name()}")
-    print()
-    
-    # Create benchmark
-    benchmark = FP8PerChannelBenchmark(
-        batch_size=32,
-        seq_len=512,
-        in_features=4096,
-        out_features=4096,
-        dtype=torch.float32,
-        device="cuda",
-    )
-    
-    # Measure accuracy
-    print("Accuracy Comparison (lower = better):")
-    print("-" * 40)
-    accuracy = benchmark.measure_accuracy(num_samples=50)
-    print(f"  Per-Tensor Error: {accuracy['per_tensor_error_pct']:.4f}%")
-    print(f"  Per-Channel Error: {accuracy['per_channel_error_pct']:.4f}%")
-    print()
-    
-    # Measure throughput
-    print("Throughput Comparison:")
-    print("-" * 40)
-    throughput = benchmark.measure_throughput()
-    for name, stats in throughput.items():
-        print(f"  {name:<15}: {stats['elapsed_ms']:.3f} ms, {stats['tflops']:.2f} TFLOPS")
-    print()
-    
-    # Summary
-    print("Summary:")
-    print("-" * 40)
-    accuracy_improvement = accuracy['per_tensor_error_pct'] / accuracy['per_channel_error_pct']
-    print(f"  Per-channel is {accuracy_improvement:.1f}x more accurate")
-    print(f"  Per-channel overhead: ~{100 * (throughput['per_channel']['elapsed_ms'] - throughput['per_tensor']['elapsed_ms']) / throughput['per_tensor']['elapsed_ms']:.1f}%")
-    print()
-    print("Note: Per-channel scaling is recommended when accuracy matters.")
-    print("The overhead is minimal compared to the accuracy benefits.")

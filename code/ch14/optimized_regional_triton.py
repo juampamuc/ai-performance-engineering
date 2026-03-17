@@ -183,7 +183,7 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         return compute_triton_metrics(
             num_elements=getattr(self, "N", getattr(self, "num_elements", 1024)),
-            elapsed_ms=getattr(self, "_last_elapsed_ms", 1.0),
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
             block_size=getattr(self, "BLOCK_SIZE", 1024),
             num_warps=getattr(self, "num_warps", 4),
         )
@@ -198,7 +198,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedRegionalTritonBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

@@ -1,6 +1,21 @@
+import sys
+import os
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+import os.path
+
+from core.harness.benchmark_harness import BenchmarkConfig, LaunchVia, TorchrunLaunchSpec
+from core.harness import run_benchmarks
 from core.harness.run_benchmarks import (
+    _build_torchrun_profile_command,
     _collect_required_profiler_failures,
     _format_required_profiler_failure,
+    _resolve_profile_torchrun_spec,
+    profile_python_benchmark,
+    _run_profile_subprocess,
+    _temporary_python_profile_launch,
 )
 
 
@@ -51,3 +66,355 @@ def test_format_required_profiler_failure_is_explicit() -> None:
         "Required profilers did not succeed: "
         "baseline:torch:failed, optimized:nsys:skipped"
     )
+
+
+def test_temporary_python_profile_launch_uses_python_wrapper_by_default(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    chapter_dir = repo_root / "ch03"
+    chapter_dir.mkdir(parents=True)
+    benchmark = SimpleNamespace(profile_env_overrides={"AISP_TEST_OVERRIDE": "1"})
+
+    with _temporary_python_profile_launch(
+        "print('ok')\n",
+        chapter_dir=chapter_dir,
+        repo_root=repo_root,
+        config=None,
+        benchmark=benchmark,
+    ) as (wrapper_path, command, env, use_torchrun):
+        assert wrapper_path.exists()
+        assert command == [sys.executable, str(wrapper_path)]
+        assert use_torchrun is False
+        assert env["AISP_TEST_OVERRIDE"] == "1"
+        assert env["TORCH_DISABLE_ADDR2LINE"] == "1"
+        pythonpath_entries = [entry for entry in env["PYTHONPATH"].split(os.pathsep) if entry]
+        assert str(repo_root) in pythonpath_entries
+        assert str(chapter_dir) in pythonpath_entries
+
+
+def test_temporary_python_profile_launch_honors_torchrun_when_allowed(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    chapter_dir = repo_root / "ch11"
+    chapter_dir.mkdir(parents=True)
+    config = BenchmarkConfig(
+        launch_via=LaunchVia.TORCHRUN,
+        nproc_per_node=2,
+        profile_env_overrides={"AISP_CONFIG_OVERRIDE": "1"},
+    )
+
+    with _temporary_python_profile_launch(
+        "print('ok')\n",
+        chapter_dir=chapter_dir,
+        repo_root=repo_root,
+        config=config,
+        benchmark=SimpleNamespace(),
+    ) as (wrapper_path, command, env, use_torchrun):
+        assert wrapper_path.exists()
+        assert os.path.basename(command[0]) == "torchrun" or command[:3] == [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+        ]
+        assert str(wrapper_path) in command
+        assert use_torchrun is True
+        assert env["AISP_CONFIG_OVERRIDE"] == "1"
+
+
+def test_temporary_python_profile_launch_can_disable_torchrun(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    chapter_dir = repo_root / "ch11"
+    chapter_dir.mkdir(parents=True)
+    config = BenchmarkConfig(launch_via=LaunchVia.TORCHRUN, nproc_per_node=2)
+
+    with _temporary_python_profile_launch(
+        "print('ok')\n",
+        chapter_dir=chapter_dir,
+        repo_root=repo_root,
+        config=config,
+        benchmark=SimpleNamespace(),
+        allow_torchrun=False,
+    ) as (wrapper_path, command, _env, use_torchrun):
+        assert wrapper_path.exists()
+        assert command == [sys.executable, str(wrapper_path)]
+        assert use_torchrun is False
+
+
+def test_resolve_profile_torchrun_spec_prefers_benchmark_profile_spec(tmp_path: Path) -> None:
+    script_path = tmp_path / "demo.py"
+    script_path.write_text("print('ok')\n", encoding="utf-8")
+    config = BenchmarkConfig(launch_via=LaunchVia.TORCHRUN, nproc_per_node=1)
+
+    class _Bench:
+        def get_profile_torchrun_spec(self, *, profiler, config=None, output_path=None):
+            assert profiler == "torch"
+            assert output_path == tmp_path / "trace.json"
+            return TorchrunLaunchSpec(
+                script_path=script_path,
+                script_args=["--torch-profile-output", str(output_path)],
+            )
+
+    spec = _resolve_profile_torchrun_spec(
+        _Bench(),
+        profiler="torch",
+        config=config,
+        output_path=tmp_path / "trace.json",
+    )
+
+    assert spec is not None
+    assert spec.script_path == script_path
+    assert spec.script_args == ["--torch-profile-output", str(tmp_path / "trace.json")]
+
+
+def test_resolve_profile_torchrun_spec_falls_back_to_base_spec_for_nsys(tmp_path: Path) -> None:
+    script_path = tmp_path / "demo.py"
+    script_path.write_text("print('ok')\n", encoding="utf-8")
+    config = BenchmarkConfig(launch_via=LaunchVia.TORCHRUN, nproc_per_node=1)
+
+    class _Bench:
+        def get_torchrun_spec(self, _config):
+            return TorchrunLaunchSpec(script_path=script_path, script_args=["--skip-preflight"])
+
+    spec = _resolve_profile_torchrun_spec(
+        _Bench(),
+        profiler="nsys",
+        config=config,
+    )
+
+    assert spec is not None
+    assert spec.script_path == script_path
+    assert spec.script_args == ["--skip-preflight"]
+
+
+def test_build_torchrun_profile_command_bypasses_launcher_for_single_process(tmp_path: Path) -> None:
+    script_path = tmp_path / "demo.py"
+    script_path.write_text("print('ok')\n", encoding="utf-8")
+    config = BenchmarkConfig(
+        launch_via=LaunchVia.TORCHRUN,
+        nproc_per_node=1,
+        nnodes="1",
+        seed=123,
+    )
+    spec = TorchrunLaunchSpec(script_path=script_path, script_args=["--skip-preflight"])
+
+    command, env = _build_torchrun_profile_command(config, spec=spec)
+
+    assert command[:3] == [sys.executable, "-m", "core.harness.torchrun_wrapper"]
+    assert "--aisp-target-script" in command
+    assert str(script_path) in command
+    assert command[-1] == "--skip-preflight"
+    assert env["RANK"] == "0"
+    assert env["WORLD_SIZE"] == "1"
+    assert env["LOCAL_RANK"] == "0"
+
+
+def test_build_torchrun_profile_command_keeps_launcher_for_multi_process(tmp_path: Path) -> None:
+    script_path = tmp_path / "demo.py"
+    script_path.write_text("print('ok')\n", encoding="utf-8")
+    config = BenchmarkConfig(
+        launch_via=LaunchVia.TORCHRUN,
+        nproc_per_node=2,
+        nnodes="1",
+        seed=123,
+    )
+    spec = TorchrunLaunchSpec(script_path=script_path, script_args=["--skip-preflight"])
+
+    command, _env = _build_torchrun_profile_command(config, spec=spec)
+
+    assert "--nproc_per_node" in command
+    assert "2" in command
+    assert "-m" in command
+    assert "core.harness.torchrun_wrapper" in command
+
+
+def test_profile_python_benchmark_retries_direct_wrapper_once(tmp_path: Path) -> None:
+    bench_path = tmp_path / "demo.py"
+    bench_path.write_text("print('ok')\n", encoding="utf-8")
+    output_dir = tmp_path / "profiles"
+    config = BenchmarkConfig(launch_via=LaunchVia.TORCHRUN, nproc_per_node=1, nnodes="1")
+    report_path = output_dir / "demo__baseline.nsys-rep"
+
+    class _Bench:
+        def get_profile_torchrun_spec(self, *, profiler, config=None, output_path=None):
+            assert profiler == "nsys"
+            return TorchrunLaunchSpec(script_path=bench_path, script_args=["--skip-preflight"])
+
+    class _Automation:
+        def __init__(self, _output_dir):
+            self.calls = 0
+
+        def profile_nsys(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return None
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("rep", encoding="utf-8")
+            return report_path
+
+    automation = _Automation(output_dir)
+
+    with (
+        patch.object(run_benchmarks, "check_nsys_available", return_value=True),
+        patch("core.profiling.nsight_automation.NsightAutomation", return_value=automation),
+        patch.object(run_benchmarks.time, "sleep", return_value=None),
+    ):
+        report = profile_python_benchmark(
+            _Bench(),
+            bench_path,
+            bench_path.parent,
+            output_dir,
+            config=config,
+            variant="baseline",
+            output_stem="demo",
+        )
+
+    assert report == report_path
+    assert automation.calls == 2
+
+
+def test_profile_python_benchmark_falls_back_to_clean_helper_retry(tmp_path: Path) -> None:
+    bench_path = tmp_path / "demo.py"
+    bench_path.write_text("print('ok')\n", encoding="utf-8")
+    output_dir = tmp_path / "profiles"
+    config = BenchmarkConfig(launch_via=LaunchVia.TORCHRUN, nproc_per_node=1, nnodes="1")
+    report_path = output_dir / "demo__baseline.nsys-rep"
+
+    class _Bench:
+        def get_profile_torchrun_spec(self, *, profiler, config=None, output_path=None):
+            assert profiler == "nsys"
+            return TorchrunLaunchSpec(script_path=bench_path, script_args=["--skip-preflight"])
+
+    class _Automation:
+        def __init__(self, _output_dir):
+            self.calls = 0
+
+        def profile_nsys(self, **_kwargs):
+            self.calls += 1
+            return None
+
+    def _fake_helper_run(args, **kwargs):
+        result_idx = args.index("--result") + 1
+        result_file = Path(args[result_idx])
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("rep", encoding="utf-8")
+        result_file.write_text(
+            json.dumps({"report": str(report_path), "last_error": None}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    automation = _Automation(output_dir)
+
+    with (
+        patch.object(run_benchmarks, "check_nsys_available", return_value=True),
+        patch("core.profiling.nsight_automation.NsightAutomation", return_value=automation),
+        patch.object(run_benchmarks.subprocess, "run", side_effect=_fake_helper_run),
+        patch.object(run_benchmarks.time, "sleep", return_value=None),
+    ):
+        report = profile_python_benchmark(
+            _Bench(),
+            bench_path,
+            bench_path.parent,
+            output_dir,
+            config=config,
+            variant="baseline",
+            output_stem="demo",
+        )
+
+    assert report == report_path
+    assert automation.calls == 2
+
+
+def test_run_profile_subprocess_captures_output_and_writes_logs(tmp_path: Path) -> None:
+    log_base = tmp_path / "captured"
+
+    result = _run_profile_subprocess(
+        command=[
+            sys.executable,
+            "-c",
+            "import sys; print('stdout-line'); sys.stderr.write('stderr-line\\n')",
+        ],
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=5.0,
+        log_base=log_base,
+        terminate_reason="captured",
+        capture_output=True,
+        timeout_collect_error_message="timeout follow-up failed",
+        wait_error_message="communicate failed",
+    )
+
+    assert result.process.returncode == 0
+    assert result.timed_out is False
+    assert result.failure_warning is None
+    assert result.stdout_log.read_text() == "stdout-line\n"
+    assert result.stderr_log.read_text() == "stderr-line\n"
+    assert json.loads(log_base.with_suffix(".command.json").read_text())["command"][0] == sys.executable
+
+
+def test_run_profile_subprocess_streams_output_to_logs(tmp_path: Path) -> None:
+    log_base = tmp_path / "streamed"
+
+    result = _run_profile_subprocess(
+        command=[
+            sys.executable,
+            "-c",
+            "import sys; print('stream-stdout'); sys.stderr.write('stream-stderr\\n')",
+        ],
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=5.0,
+        log_base=log_base,
+        terminate_reason="streamed",
+        capture_output=False,
+        timeout_collect_error_message="timeout follow-up failed",
+        wait_error_message="wait failed",
+    )
+
+    assert result.process.returncode == 0
+    assert result.timed_out is False
+    assert result.failure_warning is None
+    assert result.stdout_log.read_text() == "stream-stdout\n"
+    assert result.stderr_log.read_text() == "stream-stderr\n"
+    assert json.loads(log_base.with_suffix(".command.json").read_text())["command"][0] == sys.executable
+
+
+def test_profile_cuda_executable_ncu_uses_shared_subprocess_runner(tmp_path: Path) -> None:
+    executable = tmp_path / "demo_exec"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    class _ProfilerConfig:
+        nvtx_includes: list[str] = []
+
+        @staticmethod
+        def get_ncu_command_for_target(
+            _output_prefix: str,
+            _target: list[str],
+            metrics: list[str] | None = None,
+            nvtx_includes: list[str] | None = None,
+        ) -> list[str]:
+            return ["ncu", "--set", "basic", str(executable)]
+
+    fake_result = SimpleNamespace(
+        process=SimpleNamespace(returncode=0),
+        stdout_log=tmp_path / "stdout.log",
+        stderr_log=tmp_path / "stderr.log",
+        timed_out=False,
+        failure_warning=None,
+    )
+
+    with (
+        patch.object(run_benchmarks, "check_ncu_available", return_value=True),
+        patch.object(run_benchmarks, "build_profiler_config_from_benchmark", return_value=_ProfilerConfig()),
+        patch.object(run_benchmarks, "_run_profile_subprocess", return_value=fake_result) as run_mock,
+    ):
+        result = run_benchmarks.profile_cuda_executable_ncu(
+            executable,
+            chapter_dir=tmp_path,
+            output_dir=tmp_path / "profiles",
+            config=BenchmarkConfig(),
+        )
+
+    assert result is None
+    run_mock.assert_called_once()
+    assert run_mock.call_args.kwargs["command"] == ["ncu", "--force-overwrite", "--set", "basic", str(executable)]
+    assert run_mock.call_args.kwargs["capture_output"] is True

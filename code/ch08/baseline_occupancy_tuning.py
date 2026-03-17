@@ -26,9 +26,9 @@ class OccupancyBinaryBenchmark(CudaBinaryBenchmark):
         chapter_dir = Path(__file__).parent
         args = run_args or [
             "--block-size",
-            "32",
+            "128",
             "--smem-bytes",
-            "45000",
+            "0",
             "--unroll",
             "1",
             "--inner-iters",
@@ -45,7 +45,6 @@ class OccupancyBinaryBenchmark(CudaBinaryBenchmark):
             iterations=3,
             warmup=5,
             timeout_seconds=90,
-            # Baseline: small block, heavy shared memory to depress occupancy.
             run_args=args,
             workload_params={"batch_size": 1, **signature_params},
             time_regex=r"avg_kernel_ms=([0-9]+\.?[0-9]*)",  # Parse kernel time from binary output.
@@ -120,14 +119,14 @@ class OccupancyBinaryBenchmark(CudaBinaryBenchmark):
 
 class BaselineOccupancyTuningBenchmark(OccupancyBinaryBenchmark):
     def __init__(self) -> None:
-        super().__init__(friendly_name="Occupancy Tuning (baseline)")
+        super().__init__(friendly_name="Occupancy Tuning (block=128)")
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return optimization metrics for occupancy_tuning."""
         from core.benchmark.metrics import compute_speedup_metrics
         return compute_speedup_metrics(
-            baseline_ms=getattr(self, '_baseline_ms', 1.0),
-            optimized_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            baseline_ms=getattr(self, '_last_elapsed_ms', None),
+            optimized_ms=None,
             name="occupancy_tuning",
         )
 
@@ -135,8 +134,3 @@ class BaselineOccupancyTuningBenchmark(OccupancyBinaryBenchmark):
 def get_benchmark() -> BaselineOccupancyTuningBenchmark:
     """Factory for discover_benchmarks()."""
     return BaselineOccupancyTuningBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

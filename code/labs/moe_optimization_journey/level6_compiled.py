@@ -24,5 +24,3 @@ def get_benchmark() -> Level6Compiled:
     return Level6Compiled()
 
 
-if __name__ == "__main__":
-    run_level(6)

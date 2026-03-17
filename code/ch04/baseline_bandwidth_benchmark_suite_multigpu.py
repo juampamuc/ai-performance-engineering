@@ -6,7 +6,7 @@ import torch
 
 from core.benchmark.gpu_requirements import require_min_gpus
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 import os
 import time
@@ -147,6 +147,3 @@ def get_benchmark() -> BaseBenchmark:
     return BandwidthSuiteMultiGPU()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

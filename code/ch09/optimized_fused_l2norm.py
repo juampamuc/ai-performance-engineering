@@ -5,7 +5,7 @@ from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
@@ -38,13 +38,7 @@ class OptimizedFusedL2NormBenchmark(CudaBinaryBenchmark):
         """Return roofline metrics."""
         return None
 
-
-
 def get_benchmark() -> OptimizedFusedL2NormBenchmark:
     """Factory for discover_benchmarks()."""
     return OptimizedFusedL2NormBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

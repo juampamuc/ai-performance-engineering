@@ -9,8 +9,8 @@ Key optimizations over basic tcgen05:
 3. Reduced barrier waits (no-wait pipeline pattern)
 
 Compare against:
-- baseline_matmul_tcgen05.py (cuBLAS) - The gold standard
-- optimized_matmul_tcgen05.py (basic tcgen05) - Single-stage version
+- optimized_matmul_tcgen05_vs_cublas.py (cuBLAS) - The library reference path
+- baseline_matmul_tcgen05_vs_cublas.py (custom tcgen05) - Single-stage custom kernel
 
 EDUCATIONAL VALUE: Shows the progression from basic tensor core kernel
 to a pipelined implementation with overlap.
@@ -23,6 +23,7 @@ from typing import Optional
 import torch
 
 from ch10.matmul_extension_tcgen05 import load_matmul_tcgen05_module
+from core.common.device_utils import require_cuda_device
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.tcgen05_requirements import check_tcgen05_support
@@ -41,7 +42,7 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
         )
         self._tcgen05_available = available
         self._skip_reason = reason or "SKIPPED: tcgen05 matmul unavailable"
-        self.device = torch.device("cuda")
+        self.device = require_cuda_device("CUDA required for ch10")
         # Match baseline for fair comparison (larger size reduces CPU overhead noise).
         self.n = 12288
         self.size = self.n
@@ -98,15 +99,20 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
         return BenchmarkConfig(iterations=20, warmup=5)
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics."""
-        # Calculate theoretical TFLOPS
-        flops = 2 * self.size ** 3  # GEMM is 2*M*N*K FLOPs
-        return {
-            "matrix_size": self.size,
-            "theoretical_flops": flops,
-            "optimization": "pipelined tcgen05 (no-wait async overlap)",
-            "pipelined_kernel_available": True,
-        }
+        """Report the actual tcgen05 GEMM workload for the no-wait pipeline."""
+        from core.benchmark.metrics import compute_gemm_metrics
+
+        metrics = compute_gemm_metrics(
+            m=self.size,
+            n=self.size,
+            k=self.size,
+            precision="fp16",
+            bytes_per_element=2,
+        )
+        metrics["gemm.uses_tcgen05"] = 1.0
+        metrics["gemm.pipeline_stages"] = 2.0
+        metrics["gemm.no_wait_pipeline"] = 1.0
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if not self._tcgen05_available:
@@ -118,8 +124,3 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
 
 def get_benchmark() -> OptimizedMatmulTCGen05PipelinedBenchmark:
     return OptimizedMatmulTCGen05PipelinedBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

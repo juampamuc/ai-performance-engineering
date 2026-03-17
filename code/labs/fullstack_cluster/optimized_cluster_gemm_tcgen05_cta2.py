@@ -35,6 +35,3 @@ def get_benchmark() -> OptimizedCapstoneGemmTCGen05CTA2Benchmark:
     return OptimizedCapstoneGemmTCGen05CTA2Benchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

@@ -1,18 +1,17 @@
-"""Optimized: Dynamic quantized KV cache with adaptive bit-widths.
+"""Optimized: Adaptive-bitwidth quantized KV cache refresh.
 
 Chapter 19: Blackwell-Native Precision Operations
 
-The optimized version uses quantization to reduce memory traffic:
+The optimized version keeps the same refresh cadence and tensor footprint as
+the baseline, but replaces the FP32 cache refresh with quantized refresh:
 - INT8 for early tokens (highest precision)
 - INT6 for middle tokens
 - INT4 for late tokens (minimal memory)
 
-This provides 4-8x memory reduction vs full FP32 baseline.
+This reduces memory traffic while preserving the full-cache update pattern.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from ch19.baseline_dynamic_quantized_cache import (  # noqa: E402
     _DynamicQuantizedCacheBenchmark,
@@ -20,12 +19,12 @@ from ch19.baseline_dynamic_quantized_cache import (  # noqa: E402
 
 
 class OptimizedDynamicQuantizedCacheBenchmark(_DynamicQuantizedCacheBenchmark):
-    """Optimized: Quantized KV cache (less memory traffic).
-    
-    Uses adaptive bit-widths:
-    - INT8 for early tokens (highest precision needed)
-    - INT6 for middle tokens 
-    - INT4 for late tokens (memory savings)
+    """Optimized: adaptive-bitwidth quantized refresh over the same KV cache.
+
+    The benchmark intentionally keeps the same number of steps and cache shape as
+    the baseline FP32 refresh. The optimization is algorithmic: refresh
+    pre-quantized cache pages with fewer bytes per step while keeping the same
+    logical cache footprint and cadence.
     """
 
     def __init__(self) -> None:
@@ -36,8 +35,3 @@ class OptimizedDynamicQuantizedCacheBenchmark(_DynamicQuantizedCacheBenchmark):
 
 def get_benchmark():
     return OptimizedDynamicQuantizedCacheBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

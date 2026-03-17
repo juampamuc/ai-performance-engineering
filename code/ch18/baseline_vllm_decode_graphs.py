@@ -302,5 +302,3 @@ def get_benchmark() -> BaseBenchmark:
     return VLLMDecodeGraphsBenchmark()
 
 
-if __name__ == "__main__":
-    main()

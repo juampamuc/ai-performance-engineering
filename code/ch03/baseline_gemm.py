@@ -1,8 +1,8 @@
-"""Baseline GEMM that serializes micro-batches with CPU synchronization.
+"""Baseline control GEMM that serializes many small launches.
 
-This benchmark demonstrates inefficient kernel scheduling - splitting a large
-matmul into many small operations with CPU synchronization between each.
-The optimized version shows how a single fused operation is faster.
+This is a Chapter 3 host/runtime control workload rather than a NUMA-specific
+kernel study. It keeps the math fixed while fragmenting the launch pattern so
+host-side scheduling overhead is measurable.
 """
 
 from __future__ import annotations
@@ -16,7 +16,21 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
 class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Splits a large GEMM into many small kernels with extra CPU sync."""
+    """Control workload with many small GEMM launches."""
+
+    story_metadata = {
+        "pair_role": "control",
+        "variant_role": "baseline",
+        "chapter_alignment": "supplementary",
+        "chapter_native_exemplar": False,
+        "control_reason": (
+            "Quantifies Chapter 3 host/runtime launch overhead without claiming a "
+            "NUMA-local math-kernel optimization."
+        ),
+        "comparison_axis": "fragmented_vs_amortized_launches",
+        "execution_pattern": "fragmented_gemm_launches",
+        "chapter_native_targets": ["pageable_copy", "rack_prep", "docker", "kubernetes"],
+    }
 
     def __init__(self):
         super().__init__()
@@ -50,11 +64,10 @@ class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._synchronize()
 
     def benchmark_fn(self) -> None:
-        """Compute C = A @ B using blocked micro-batches with CPU sync.
-        
-        This simulates poor kernel scheduling where we launch many small
-        kernels with CPU synchronization between each, rather than a single
-        large optimized operation.
+        """Compute C = A @ B using blocked micro-batches.
+
+        The intent is to expose host/runtime launch overhead around a fixed
+        GEMM, not to demonstrate a Chapter 3-specific math-kernel trick.
         """
         from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
 
@@ -110,10 +123,19 @@ class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_system_config_metrics
-        return compute_system_config_metrics(
+        metrics = compute_system_config_metrics(
             numa_nodes=getattr(self, 'numa_nodes', 0),
             cpu_cores=getattr(self, 'cpu_cores', 64),
         )
+        metrics.update(
+            {
+                "story.control_pair": 1.0,
+                "story.chapter_native_exemplar": 0.0,
+                "launch.gemm_calls_per_iteration": float(self.num_blocks),
+                "launch.block_k": float(self.block_size),
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.left is None or self.right is None:

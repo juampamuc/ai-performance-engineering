@@ -110,8 +110,8 @@ class BaselineDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_stream_metrics
         return compute_stream_metrics(
-            sequential_time_ms=getattr(self, '_sequential_ms', 10.0),
-            overlapped_time_ms=getattr(self, '_overlapped_ms', 5.0),
+            sequential_time_ms=getattr(self, '_last_elapsed_ms', None),
+            overlapped_time_ms=None,
             num_streams=getattr(self, 'num_streams', 4),
             num_operations=getattr(self, 'num_operations', 4),
         )

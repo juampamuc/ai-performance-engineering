@@ -21,7 +21,7 @@ class BaselineLaunchBoundsGmemBenchmark(CudaBinaryBenchmark):
             warmup=5,
             timeout_seconds=180,
             workload_params={
-                "N": 1024 * 64,
+                "N": 1024 * 1024,
                 "dtype": "float32",
                 "batch_size": 1,
             },
@@ -34,8 +34,3 @@ class BaselineLaunchBoundsGmemBenchmark(CudaBinaryBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return BaselineLaunchBoundsGmemBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

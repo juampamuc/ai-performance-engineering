@@ -33,12 +33,17 @@ class BaselineWarpSpecPingPongBenchmark(CudaBinaryBenchmark):
         self.num_stages = 1
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return honest pipeline metadata for the single-stage baseline."""
-        return {
-            "pipeline.num_stages": float(self.num_stages),
-            "pipeline.consumer_warps": 2.0,
-            "pipeline.pingpong_enabled": 0.0,
-        }
+        """Return honest warp-role pipeline metadata for the single-stage baseline."""
+        from ch10.benchmark_metrics_common import compute_warp_specialization_metrics
+
+        return compute_warp_specialization_metrics(
+            self._workload_params,
+            num_stages=self.num_stages,
+            producer_warps=1,
+            compute_warps=1,
+            consumer_warps=1,
+            pingpong_enabled=False,
+        )
 
     def get_input_signature(self) -> dict:
         """Signature for the single-stage warp-role pipeline."""
@@ -58,8 +63,3 @@ def get_benchmark() -> BaselineWarpSpecPingPongBenchmark:
     """Factory for discover_benchmarks()."""
     return BaselineWarpSpecPingPongBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

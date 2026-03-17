@@ -605,7 +605,8 @@ def force_tensor_evaluation(tensors: Dict[str, Any]) -> None:
     """
     if torch is None:
         return
-    
+
+    materialization_failures: List[str] = []
     for name, tensor in tensors.items():
         if isinstance(tensor, torch.Tensor):
             # Sync ensures any pending operations complete
@@ -616,8 +617,19 @@ def force_tensor_evaluation(tensors: Dict[str, Any]) -> None:
             if tensor.numel() > 0:
                 try:
                     _ = tensor.flatten()[0].item()
-                except Exception:
-                    pass  # Some tensors may not support .item()
+                except Exception as exc:
+                    materialization_failures.append(f"{name}: {exc}")
+
+    if materialization_failures:
+        sample = ", ".join(materialization_failures[:3])
+        extra = "" if len(materialization_failures) <= 3 else f" (+{len(materialization_failures) - 3} more)"
+        _emit_validity_limitation_once(
+            "force_tensor_evaluation_item_failure",
+            (
+                "force_tensor_evaluation could not materialize one or more tensors via .item(); "
+                f"lazy-evaluation protection may be incomplete. Affected tensors: {sample}{extra}"
+            ),
+        )
 
 
 # =============================================================================
@@ -816,8 +828,11 @@ def _list_foreign_cuda_compute_processes(
     finally:
         try:
             pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            _emit_validity_warning(
+                "Failed to shut down NVML after foreign CUDA process inspection",
+                exc=exc,
+            )
     return foreign, None
 
 
@@ -932,6 +947,32 @@ def _read_process_environ_value(
     return None
 
 
+def _read_process_cmdline_arg_value(
+    pid: int,
+    flag: str,
+    proc_root: Path = Path("/proc"),
+) -> Optional[str]:
+    """Return a flag value from `/proc/<pid>/cmdline` when present."""
+    cmdline_path = proc_root / str(int(pid)) / "cmdline"
+    try:
+        raw = cmdline_path.read_bytes()
+    except Exception:
+        return None
+
+    tokens = [
+        token.decode("utf-8", errors="ignore")
+        for token in raw.split(b"\0")
+        if token
+    ]
+    prefix = f"{flag}="
+    for idx, token in enumerate(tokens):
+        if token == flag and idx + 1 < len(tokens):
+            return tokens[idx + 1]
+        if token.startswith(prefix):
+            return token[len(prefix) :]
+    return None
+
+
 def validate_environment(
     *,
     device: Optional["torch.device"] = None,
@@ -1005,19 +1046,55 @@ def validate_environment(
                     owned_process_lineage = _collect_process_lineage_pids(os.getpid())
                     owned_related_pids = owned_process_tree | owned_process_lineage
                     owned_run_marker = str(probe.env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+                    owned_owner_pid = str(probe.env.get("AISP_BENCHMARK_OWNER_PID", "")).strip()
+                    owned_owner_related_pids: Set[int] = set()
                     if owned_run_marker:
                         details["owned_benchmark_run_id"] = owned_run_marker
+                    if owned_owner_pid:
+                        details["owned_benchmark_owner_pid"] = owned_owner_pid
+                        try:
+                            owner_pid_int = int(owned_owner_pid)
+                        except ValueError:
+                            owner_pid_int = None
+                        if owner_pid_int is not None and owner_pid_int > 0:
+                            owned_owner_related_pids = _collect_process_tree_pids(owner_pid_int)
+                            owned_owner_related_pids.update(
+                                _collect_process_lineage_pids(owner_pid_int)
+                            )
                     foreign_procs = [
                         proc
                         for proc in foreign_procs
                         if int(proc.get("pid", -1)) not in owned_related_pids
+                        and int(proc.get("pid", -1)) not in owned_owner_related_pids
                         and (
                             not owned_run_marker
-                            or _read_process_environ_value(
-                                int(proc.get("pid", -1)),
-                                "AISP_BENCHMARK_OWNER_RUN_ID",
+                            or (
+                                _read_process_environ_value(
+                                    int(proc.get("pid", -1)),
+                                    "AISP_BENCHMARK_OWNER_RUN_ID",
+                                )
+                                != owned_run_marker
+                                and _read_process_cmdline_arg_value(
+                                    int(proc.get("pid", -1)),
+                                    "--aisp-owner-run-id",
+                                )
+                                != owned_run_marker
                             )
-                            != owned_run_marker
+                        )
+                        and (
+                            not owned_owner_pid
+                            or (
+                                _read_process_environ_value(
+                                    int(proc.get("pid", -1)),
+                                    "AISP_BENCHMARK_OWNER_PID",
+                                )
+                                != owned_owner_pid
+                                and _read_process_cmdline_arg_value(
+                                    int(proc.get("pid", -1)),
+                                    "--aisp-owner-pid",
+                                )
+                                != owned_owner_pid
+                            )
                         )
                         and _pid_is_live_process(int(proc.get("pid", -1)))
                     ]

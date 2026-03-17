@@ -82,7 +82,3 @@ def get_benchmark() -> BaseBenchmark:
     return TopologyProbeBenchmark()
 
 
-if __name__ == "__main__":
-    bench = get_benchmark()
-    bench.benchmark_fn()
-    print(json.dumps(bench.get_custom_metrics() or {}, indent=2))

@@ -20,5 +20,3 @@ def get_benchmark() -> Level5ExpertParallel:
     return Level5ExpertParallel()
 
 
-if __name__ == "__main__":
-    run_level(5)

@@ -147,5 +147,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineExpertParallelMultigpuBenchmark()
 
 
-if __name__ == "__main__":
-    main()

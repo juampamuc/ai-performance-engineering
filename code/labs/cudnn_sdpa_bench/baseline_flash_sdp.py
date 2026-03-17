@@ -225,6 +225,3 @@ def _parse_cli_backend(argv: Optional[list[str]] = None) -> Optional[str]:
     return args.backend
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

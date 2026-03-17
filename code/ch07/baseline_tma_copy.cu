@@ -26,7 +26,6 @@ namespace {
 constexpr int kThreadsPerBlock = 256;
 constexpr int kLookahead = 64;
 constexpr int kElements = 1 << 25;  // 33,554,432 elements (~128 MB)
-constexpr int kRedundantReads = 8;
 constexpr bool kValidateOutput = false;
 
 __host__ __device__ __forceinline__ float combine_values(float center, float near_val, float far_val) {
@@ -38,23 +37,13 @@ __global__ void naive_neighbor_copy_kernel(const float* __restrict__ src,
                                            float* __restrict__ dst,
                                            int n) {
     const int stride = blockDim.x * gridDim.x;
-    const volatile float* vol_src = reinterpret_cast<const volatile float*>(src);
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     while (idx < n) {
-        float center = 0.0f;
-#pragma unroll
-        for (int repeat = 0; repeat < kRedundantReads; ++repeat) {
-            center = vol_src[idx];
-        }
+        const float center = src[idx];
         const int near_idx = (idx + 1 < n) ? (idx + 1) : (n - 1);
         const int far_idx = (idx + kLookahead < n) ? (idx + kLookahead) : (n - 1);
-        float near_val = 0.0f;
-        float far_val = 0.0f;
-#pragma unroll
-        for (int repeat = 0; repeat < kRedundantReads; ++repeat) {
-            near_val = vol_src[near_idx];
-            far_val = vol_src[far_idx];
-        }
+        const float near_val = src[near_idx];
+        const float far_val = src[far_idx];
         dst[idx] = combine_values(center, near_val, far_val);
         idx += stride;
     }
@@ -91,7 +80,7 @@ int main() {
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     // Warmup
-    CUDA_CHECK(cudaMemcpyAsync(d_src, h_input, bytes, cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpy(d_src, h_input, bytes, cudaMemcpyHostToDevice));
     naive_neighbor_copy_kernel<<<grid, kThreadsPerBlock, 0, stream>>>(d_src, d_dst, kElements);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -103,8 +92,7 @@ int main() {
     constexpr int kIterations = 20;
     CUDA_CHECK(cudaEventRecord(start, stream));
     for (int iter = 0; iter < kIterations; ++iter) {
-        NVTX_RANGE("transfer_async:h2d");
-        CUDA_CHECK(cudaMemcpyAsync(d_src, h_input, bytes, cudaMemcpyHostToDevice, stream));
+        NVTX_RANGE("compute_kernel:naive_neighbor_copy_kernel");
         naive_neighbor_copy_kernel<<<grid, kThreadsPerBlock, 0, stream>>>(d_src, d_dst, kElements);
         CUDA_CHECK(cudaGetLastError());
     }

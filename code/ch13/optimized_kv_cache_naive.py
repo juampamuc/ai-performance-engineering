@@ -274,7 +274,7 @@ class OptimizedKVCachePagedBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
             inputs={"input": self._verify_input},
-            output=self.output,
+            output=self.output.float(),
             batch_size=self._verify_input.shape[0],
             parameter_count=self.parameter_count,
             precision_flags={
@@ -283,7 +283,7 @@ class OptimizedKVCachePagedBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(1.0, 100.0),
+            output_tolerance=(5e-2, 5e-1),
         )
 
     
@@ -314,8 +314,8 @@ class OptimizedKVCachePagedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=None,
+            reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
             precision_type="fp8",
         )
 
@@ -327,8 +327,7 @@ class OptimizedKVCachePagedBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""
-        # Different KV cache algorithms produce different outputs
-        return (1.0, 100.0)
+        return (5e-2, 5e-1)
 
 
 def get_benchmark() -> OptimizedKVCachePagedBenchmark:

@@ -190,6 +190,44 @@ _COMMON_EVAL_PRESETS: Dict[str, Dict[str, Any]] = {
             "mlperf_alignment",
         ],
     },
+    "fabric-systems": {
+        "description": (
+            "Canonical AI fabric evaluation bundle: modern-llm runtime coverage plus "
+            "fabric inventory, management-plane verification, runtime link checks, "
+            "and AI-workload correlation across NVLink, InfiniBand, and Spectrum-X / RoCE."
+        ),
+        "extra_args": [
+            "--modern-llm-profile",
+            "--no-strict-canonical-completeness",
+            "--run-fabric-eval",
+        ],
+        "artifact_roles": [
+            "meta",
+            "manifest",
+            "suite_steps",
+            "nccl_allreduce",
+            "vllm_concurrency_sweep",
+            "vllm_request_rate_sweep",
+            "gemm_sanity",
+            "gpu_stream",
+            "fio",
+            "nvbandwidth",
+            "allreduce_stability",
+            "allreduce_latency_comp",
+            "allgather_control_plane",
+            "nccl_alltoall",
+            "nccl_algo_comparison",
+            "train_step",
+            "fabric_command_catalog",
+            "fabric_capability_matrix",
+            "fabric_verification",
+            "fabric_ai_correlation",
+            "fabric_scorecard",
+            "cluster_scorecard",
+            "benchmark_coverage_analysis",
+            "mlperf_alignment",
+        ],
+    },
     "multinode-readiness": {
         "description": (
             "Fail-fast multi-node contract validation only. Produces readiness evidence without running workloads."
@@ -352,6 +390,14 @@ def run_cluster_common_eval(
     oob_if: Optional[str] = None,
     socket_ifname: Optional[str] = None,
     nccl_ib_hca: Optional[str] = None,
+    nmx_url: Optional[str] = None,
+    nmx_token: Optional[str] = None,
+    ib_mgmt_host: Optional[str] = None,
+    ib_mgmt_user: Optional[str] = None,
+    ib_mgmt_ssh_key: Optional[str] = None,
+    cumulus_hosts: Optional[List[str]] = None,
+    cumulus_user: Optional[str] = None,
+    cumulus_ssh_key: Optional[str] = None,
     primary_label: Optional[str] = None,
     coverage_baseline_run_id: Optional[str] = None,
     extra_args: Optional[List[str]] = None,
@@ -366,6 +412,24 @@ def run_cluster_common_eval(
         }
 
     merged_extra_args = [str(arg) for arg in preset_payload["extra_args"]]
+    if nmx_url:
+        merged_extra_args.extend(["--nmx-url", str(nmx_url)])
+    if nmx_token:
+        merged_extra_args.extend(["--nmx-token", str(nmx_token)])
+    if ib_mgmt_host:
+        merged_extra_args.extend(["--ib-mgmt-host", str(ib_mgmt_host)])
+    if ib_mgmt_user:
+        merged_extra_args.extend(["--ib-mgmt-user", str(ib_mgmt_user)])
+    if ib_mgmt_ssh_key:
+        merged_extra_args.extend(["--ib-mgmt-ssh-key", str(ib_mgmt_ssh_key)])
+    if cumulus_hosts:
+        normalized_cumulus_hosts = [str(host).strip() for host in cumulus_hosts if str(host).strip()]
+        if normalized_cumulus_hosts:
+            merged_extra_args.extend(["--cumulus-hosts", ",".join(normalized_cumulus_hosts)])
+    if cumulus_user:
+        merged_extra_args.extend(["--cumulus-user", str(cumulus_user)])
+    if cumulus_ssh_key:
+        merged_extra_args.extend(["--cumulus-ssh-key", str(cumulus_ssh_key)])
     if coverage_baseline_run_id:
         merged_extra_args.extend(["--coverage-baseline-run-id", str(coverage_baseline_run_id)])
     if extra_args:
@@ -391,6 +455,97 @@ def run_cluster_common_eval(
         "artifact_roles": list(preset_payload["artifact_roles"]),
         "coverage_baseline_run_id": coverage_baseline_run_id,
         **result,
+    }
+
+
+def run_cluster_fabric_eval(
+    *,
+    run_id: Optional[str] = None,
+    hosts: Optional[List[str]] = None,
+    labels: Optional[List[str]] = None,
+    ssh_user: Optional[str] = None,
+    ssh_key: Optional[str] = None,
+    oob_if: Optional[str] = None,
+    socket_ifname: Optional[str] = None,
+    nccl_ib_hca: Optional[str] = None,
+    nmx_url: Optional[str] = None,
+    nmx_token: Optional[str] = None,
+    ib_mgmt_host: Optional[str] = None,
+    ib_mgmt_user: Optional[str] = None,
+    ib_mgmt_ssh_key: Optional[str] = None,
+    cumulus_hosts: Optional[List[str]] = None,
+    cumulus_user: Optional[str] = None,
+    cumulus_ssh_key: Optional[str] = None,
+    primary_label: Optional[str] = None,
+    coverage_baseline_run_id: Optional[str] = None,
+    extra_args: Optional[List[str]] = None,
+    timeout_seconds: Optional[int] = None,
+    require_management_plane: bool = False,
+) -> Dict[str, Any]:
+    merged_extra_args = [str(arg) for arg in (extra_args or []) if str(arg).strip()]
+    if require_management_plane:
+        merged_extra_args.append("--require-management-plane")
+
+    result = run_cluster_common_eval(
+        preset="fabric-systems",
+        run_id=run_id,
+        hosts=hosts,
+        labels=labels,
+        ssh_user=ssh_user,
+        ssh_key=ssh_key,
+        oob_if=oob_if,
+        socket_ifname=socket_ifname,
+        nccl_ib_hca=nccl_ib_hca,
+        nmx_url=nmx_url,
+        nmx_token=nmx_token,
+        ib_mgmt_host=ib_mgmt_host,
+        ib_mgmt_user=ib_mgmt_user,
+        ib_mgmt_ssh_key=ib_mgmt_ssh_key,
+        cumulus_hosts=cumulus_hosts,
+        cumulus_user=cumulus_user,
+        cumulus_ssh_key=cumulus_ssh_key,
+        primary_label=primary_label,
+        coverage_baseline_run_id=coverage_baseline_run_id,
+        extra_args=merged_extra_args or None,
+        timeout_seconds=timeout_seconds,
+    )
+    return {
+        "entrypoint": "cluster.fabric-eval",
+        "require_management_plane": bool(require_management_plane),
+        **result,
+    }
+
+
+def build_cluster_nmx_partition_lab(
+    *,
+    nmx_url: Optional[str] = None,
+    nmx_token: Optional[str] = None,
+    alpha_name: str = "AlphaPartition",
+    beta_name: str = "BetaPartition",
+    alpha_size: int = 4,
+    beta_size: int = 4,
+) -> Dict[str, Any]:
+    from cluster.fabric import build_nmx_partition_lab_payload
+
+    url = (nmx_url or "").strip()
+    if not url:
+        return {
+            "success": False,
+            "error": "NMX URL is required. Pass --nmx-url to target the fabric management plane.",
+        }
+
+    payload = build_nmx_partition_lab_payload(
+        nmx_url=url,
+        nmx_token=nmx_token,
+        alpha_name=alpha_name,
+        beta_name=beta_name,
+        alpha_size=int(alpha_size),
+        beta_size=int(beta_size),
+    )
+    return {
+        "success": payload.get("status") != "error",
+        "entrypoint": "cluster.nmx-partition-lab",
+        **payload,
     }
 
 

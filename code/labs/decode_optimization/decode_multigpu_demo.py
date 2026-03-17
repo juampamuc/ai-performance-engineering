@@ -146,5 +146,3 @@ def get_benchmark() -> BaseBenchmark:
     return MultiGPUDecodeBenchmark()
 
 
-if __name__ == "__main__":
-    main()

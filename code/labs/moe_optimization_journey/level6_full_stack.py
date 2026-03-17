@@ -23,7 +23,7 @@ import torch.nn.functional as F
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from labs.moe_optimization_journey.moe_config import MoEConfig, get_config
+from labs.moe_optimization_journey import MoEConfig, get_config
 
 
 class CUDAGraphMoEExperts(nn.Module):
@@ -311,22 +311,3 @@ class Level6FullStack(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return Level6FullStack()
 
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("LEVEL 6: CUDA GRAPHS")
-    print("=" * 60)
-    
-    benchmark = Level6FullStack(get_config("small"))
-    benchmark.setup()
-    
-    times = []
-    for i in range(5):
-        benchmark.benchmark_fn()
-        times.append(benchmark.last_latency_ms)
-        print(f"  Run {i+1}: {benchmark.last_latency_ms:.1f} ms ({benchmark.last_tokens_per_sec:,.0f} tok/s)")
-    
-    avg = sum(times) / len(times)
-    print(f"\nMean: {avg:.1f} ms")
-    print(f"Tokens/sec: {benchmark.last_tokens_per_sec:,.0f}")
-    benchmark.teardown()

@@ -58,7 +58,7 @@ python -m cli.aisp demos labs-decode-multigpu --nproc-per-node 4 -- --iters 4 --
 | `baseline_decode.py`, `optimized_decode_pinned.py`, `optimized_decode_streams.py`, `optimized_decode_compile.py`, `optimized_decode_graph.py`, `optimized_decode_graph_full.py`, `optimized_decode_ultimate.py` | Serving-path decode variants that isolate host, stream, compile, and graph effects. |
 | `baseline_decode_hf_cache.py`, `optimized_decode_hf_cache.py` | Real HuggingFace decoder-loop comparison: dynamic cache + per-step EOS sync vs static cache + compiled decode + batched EOS polling. |
 | `baseline_decode_fp8.py`, `optimized_decode_fp8.py`, `baseline_decode_fp4.py`, `optimized_decode_fp4.py` | Prefill-focused low-precision decode comparisons on hardware that supports them. |
-| `baseline_decode_warp_specialized.py`, `optimized_decode_warp_specialized.py`, `triton_fused_decode.py` | Warp-specialized Triton decode path plus its eager correctness reference. |
+| `baseline_decode_warp_specialized.py`, `optimized_decode_warp_specialized.py` | Warp-specialized decode path plus its eager correctness reference. |
 | `baseline_decode_double_buffer_tma.py`, `optimized_decode_double_buffer_tma.py`, `decode_common.py`, `decode_multigpu_demo.py` | CUDA double-buffer/TMA path, shared helpers, and the multi-GPU NVLink-C2C demo. |
 
 ## Running the Benchmarks

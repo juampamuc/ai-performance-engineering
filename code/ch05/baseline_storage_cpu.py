@@ -1,4 +1,4 @@
-"""baseline_storage_cpu.py - CPU-mediated storage I/O (baseline)."""
+"""baseline_storage_cpu.py - Storage read with pageable CPU staging."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 
 
 class BaselineStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """CPU-mediated I/O - double copy overhead (storage→CPU→GPU)."""
+    """Storage -> pageable host -> GPU transfer on every benchmark iteration."""
 
     allowed_benchmark_fn_antipatterns = ("host_transfer",)
     
@@ -23,10 +23,10 @@ class BaselineStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.data: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.filepath: Optional[str] = None
+        self._host_template: Optional[np.ndarray] = None
         self.size_mb = 64  # Smaller for faster benchmark
         self.size = self.size_mb * 1024 * 1024 // 4  # float32 elements
-        # Storage IO benchmark - jitter check not applicable
-        bytes_per_iter = self.size * 4 * 2  # write + read
+        bytes_per_iter = self.size * 4  # read only; file is materialized in setup
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.size),
@@ -34,21 +34,20 @@ class BaselineStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: Initialize data and create temp file."""
+        """Setup: materialize a deterministic tensor to on-disk storage."""
         torch.manual_seed(42)
-        self.data = torch.randn(self.size, device=self.device, dtype=torch.float32)
+        self._host_template = np.random.default_rng(42).standard_normal(self.size, dtype=np.float32)
         
         f = tempfile.NamedTemporaryFile(suffix=".npy", delete=False)
         self.filepath = f.name
         f.close()
+        np.save(self.filepath, self._host_template)
         self._synchronize()
     
     def benchmark_fn(self) -> None:
-        """Benchmark: CPU-mediated I/O."""
-        assert self.data is not None and self.filepath is not None
+        """Benchmark: read the on-disk tensor through pageable host memory."""
+        assert self.filepath is not None
         with self._nvtx_range("storage_cpu"):
-            cpu_data = self.data.cpu().numpy()
-            np.save(self.filepath, cpu_data)
             cpu_loaded = np.load(self.filepath)
             self.data = torch.from_numpy(cpu_loaded).to(self.device)
         self.output = self.data.sum().unsqueeze(0)
@@ -74,6 +73,7 @@ class BaselineStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
             os.unlink(self.filepath)
         self.data = None
         self.filepath = None
+        self._host_template = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -95,7 +95,7 @@ class BaselineStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
         bytes_per_tensor = self.size * 4
         return compute_storage_path_metrics(
             bytes_read=bytes_per_tensor,
-            bytes_written=bytes_per_tensor,
+            bytes_written=0,
             file_count=1,
             uses_cpu_staging=True,
             simulates_gpu_direct=False,

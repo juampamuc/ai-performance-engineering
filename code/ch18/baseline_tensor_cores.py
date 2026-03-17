@@ -7,8 +7,6 @@ Implements BaseBenchmark for harness integration.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import torch
 
 from typing import Optional
@@ -17,8 +15,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
@@ -100,14 +96,14 @@ class BaselineTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_speculative_decoding_metrics
-        return compute_speculative_decoding_metrics(
-            draft_tokens=getattr(self, '_draft_tokens', 64),
-            accepted_tokens=getattr(self, '_accepted_tokens', 48),
-            draft_time_ms=getattr(self, '_draft_ms', 5.0),
-            verify_time_ms=getattr(self, '_verify_ms', 10.0),
-            num_rounds=getattr(self, '_num_rounds', 8),
+        from core.benchmark.metrics import compute_gemm_metrics
+        return compute_gemm_metrics(
+            self.size,
+            self.size,
+            self.size,
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
+            precision="fp32",
+            bytes_per_element=4,
         )
 
     def validate_result(self) -> Optional[str]:
@@ -123,8 +119,3 @@ class BaselineTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselineTensorCoresBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

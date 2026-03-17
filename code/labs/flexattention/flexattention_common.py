@@ -12,12 +12,14 @@ Key knobs exposed by the lab:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 import inspect
 import math
 from typing import Callable
 
 import torch
 from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+from core.common.device_utils import require_cuda_device
 
 
 @dataclass
@@ -30,12 +32,7 @@ class FlexAttentionInputs:
     block_mask: BlockMask
     rel_bias: torch.Tensor
 
-
-def resolve_device() -> torch.device:
-    """Require CUDA for flex attention benchmarks."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("FlexAttention labs require CUDA")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "FlexAttention labs require CUDA")
 
 
 def _make_doc_ids(batch: int, heads: int, seq_len: int, doc_span: int, device: torch.device) -> torch.Tensor:

@@ -1,4 +1,4 @@
-"""optimized_end_to_end_bandwidth.py - Optimized end-to-end bandwidth."""
+"""optimized_end_to_end_bandwidth.py - Compiled sequential end-to-end bandwidth."""
 
 from __future__ import annotations
 
@@ -39,13 +39,14 @@ class SimplePipeline(nn.Module):
 
 
 class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized end-to-end bandwidth - FP16 + optional compile."""
+    """Optimized end-to-end bandwidth using compile without changing batching semantics."""
     
     def __init__(self):
         super().__init__()
         self.model: Optional[nn.Module] = None
         self.inputs: Optional[list[torch.Tensor]] = None
         self.stacked_inputs: Optional[torch.Tensor] = None
+        self.outputs: Optional[list[torch.Tensor]] = None
         self.output: Optional[torch.Tensor] = None
         self.batch_size = 32
         self.hidden_dim = 1024
@@ -74,27 +75,21 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
             torch.manual_seed(42)
             torch.cuda.manual_seed_all(42)
             
-            # Keep workload equivalent to baseline (FP32), optimize by compiling
-            # and running the pipeline as a single larger batch.
+            # Keep workload equivalent to baseline (same FP32 inputs and per-batch
+            # sequencing) and isolate compile/runtime overhead removal.
             eager = SimplePipeline(hidden_dim=self.hidden_dim).to(self.device, dtype=torch.float32).eval()
             self.model = compile_model(eager, mode="max-autotune")
             self._used_compiled_model = True
 
-            # IMPORTANT: Avoid consuming RNG state before generating the real benchmark inputs.
-            # Baseline generates inputs immediately after model init; keep the same RNG sequence.
-            test_input = torch.zeros(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
-            for _ in range(3):
-                with torch.no_grad():
-                    _ = self.model(test_input)
-            
             self.inputs = [
                 torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32).contiguous()
                 for _ in range(self.num_batches)
             ]
             self.stacked_inputs = torch.stack(self.inputs, dim=0)
+            self.outputs = []
             self.output = None
             
-            for inp in self.inputs[:5]:
+            for inp in self.inputs[:3]:
                 with torch.no_grad():
                     _ = self.model(inp)
         except Exception:
@@ -103,14 +98,15 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
             raise
     
     def benchmark_fn(self) -> None:
-        assert self.model is not None and self.stacked_inputs is not None
+        assert self.model is not None and self.inputs is not None
         with self._nvtx_range("optimized_end_to_end_bandwidth"):
             with torch.no_grad():
-                flat = self.stacked_inputs.view(-1, self.stacked_inputs.shape[-1])
-                out = self.model(flat)
-                self.output = out.view(
-                    self.stacked_inputs.shape[0], self.stacked_inputs.shape[1], self.stacked_inputs.shape[2]
-                )
+                self.outputs = []
+                for inp in self.inputs:
+                    # torch.compile may reuse output storage across calls, so keep a
+                    # stable copy of each batch result for verification.
+                    self.outputs.append(self.model(inp).detach().clone())
+                self.output = torch.stack(self.outputs) if self.outputs else None
 
     def capture_verification_payload(self) -> None:
         if self.model is None or self.stacked_inputs is None or self.output is None:
@@ -127,6 +123,7 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.model = None
         self.inputs = None
         self.stacked_inputs = None
+        self.outputs = None
         torch.cuda.empty_cache()
         restore_inductor_cudagraph_features(self._inductor_cfg_state)
         self._inductor_cfg_state = None
@@ -148,10 +145,10 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_ai_optimization_metrics
         return compute_ai_optimization_metrics(
-            original_time_ms=getattr(self, '_original_ms', 10.0),
-            ai_optimized_time_ms=getattr(self, '_optimized_ms', 5.0),
-            suggestions_applied=getattr(self, '_suggestions_applied', 1),
-            suggestions_total=getattr(self, '_suggestions_total', 1),
+            original_time_ms=None,
+            ai_optimized_time_ms=getattr(self, '_last_elapsed_ms', None),
+            suggestions_applied=None,
+            suggestions_total=None,
         )
 
     def validate_result(self) -> Optional[str]:

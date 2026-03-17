@@ -35,6 +35,12 @@ def _minimal_result(*, gpu_metrics=None) -> BenchmarkResult:
     )
 
 
+def _minimal_result_with_runtime_env(runtime_env: dict[str, str]) -> BenchmarkResult:
+    result = _minimal_result()
+    result.runtime_env.update(runtime_env)
+    return result
+
+
 def test_benchmark_with_manifest_records_collection_warning_when_patch_fails(monkeypatch) -> None:
     class _BadHardware:
         def __setattr__(self, name, value):
@@ -106,6 +112,41 @@ def test_benchmark_with_manifest_leaves_collection_warnings_empty_when_patch_suc
     assert run.manifest.collection_warnings == []
 
 
+def test_benchmark_with_manifest_merges_runtime_env_into_manifest(monkeypatch) -> None:
+    harness = BenchmarkHarness(
+        mode=BenchmarkMode.CUSTOM,
+        config=BenchmarkConfig(
+            iterations=1,
+            warmup=5,
+            device=torch.device("cpu"),
+            use_subprocess=False,
+        ),
+    )
+    monkeypatch.setattr(
+        run_manifest_module,
+        "get_git_info",
+        lambda: {"commit": "deadbeef", "branch": "main", "dirty": False},
+    )
+    monkeypatch.setattr(
+        harness,
+        "benchmark",
+        lambda benchmark: _minimal_result_with_runtime_env(
+            {
+                "TRITON_CACHE_DIR": "/tmp/aisp-triton-cache/cache",
+                "TRITON_OVERRIDE_DIR": "/tmp/aisp-triton-cache/override",
+                "TRITON_DUMP_DIR": "/tmp/aisp-triton-cache/dump",
+            }
+        ),
+    )
+
+    run = harness.benchmark_with_manifest(object(), run_id="manifest_runtime_env")
+
+    assert run.manifest is not None
+    assert run.manifest.environment.relevant_env_vars["TRITON_CACHE_DIR"] == "/tmp/aisp-triton-cache/cache"
+    assert run.manifest.environment.relevant_env_vars["TRITON_OVERRIDE_DIR"] == "/tmp/aisp-triton-cache/override"
+    assert run.manifest.environment.relevant_env_vars["TRITON_DUMP_DIR"] == "/tmp/aisp-triton-cache/dump"
+
+
 def test_get_git_info_marks_repo_dirty_for_untracked_and_staged_changes(monkeypatch) -> None:
     responses = iter(
         [
@@ -170,6 +211,23 @@ def test_run_manifest_create_captures_runtime_capability_limitations(monkeypatch
     assert limitation.key == "cuda_allocator_reset_setting"
     assert limitation.component == "cuda_memory_pool_reset"
     assert limitation.detail == "Unrecognized CachingAllocator option: reset_allocator"
+
+
+def test_run_manifest_create_captures_triton_runtime_env_vars(monkeypatch) -> None:
+    monkeypatch.setattr(
+        run_manifest_module,
+        "get_git_info",
+        lambda: {"commit": "deadbeef", "branch": "main", "dirty": False},
+    )
+    monkeypatch.setenv("TRITON_CACHE_DIR", "/tmp/aisp-triton/cache")
+    monkeypatch.setenv("TRITON_OVERRIDE_DIR", "/tmp/aisp-triton/override")
+    monkeypatch.setenv("TRITON_DUMP_DIR", "/tmp/aisp-triton/dump")
+
+    manifest = RunManifest.create(config={"validity_profile": "strict"})
+
+    assert manifest.environment.relevant_env_vars["TRITON_CACHE_DIR"] == "/tmp/aisp-triton/cache"
+    assert manifest.environment.relevant_env_vars["TRITON_OVERRIDE_DIR"] == "/tmp/aisp-triton/override"
+    assert manifest.environment.relevant_env_vars["TRITON_DUMP_DIR"] == "/tmp/aisp-triton/dump"
 
 
 def test_run_manifest_finalize_refreshes_runtime_capability_limitations(monkeypatch) -> None:

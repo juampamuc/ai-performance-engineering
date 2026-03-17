@@ -108,32 +108,35 @@
       },
       "type": "python"
     },
-    "moe_readiness_multigpu": {
-      "example": "moe_readiness_multigpu",
+    "moe_hybrid_ep": {
+      "example": "moe_hybrid_ep",
       "metadata": {
-        "best_optimization": "optimized_moe_readiness_multigpu",
-        "best_optimization_file": "optimized_moe_readiness_multigpu.py",
-        "best_optimization_speedup": 1.0960903633714134,
-        "best_optimization_time_ms": 6220.498085021973,
-        "git_commit": "75cbbbcfaaac628797e7636c22f2adb10d4d072f",
-        "updated_at": "2025-12-08T19:40:47.886346"
+        "best_optimization": "optimized_moe_hybrid_ep",
+        "best_optimization_file": "optimized_moe_hybrid_ep.py",
+        "best_optimization_speedup": 1.0118526161168369,
+        "best_optimization_technique": "optimized_moe_hybrid_ep",
+        "best_optimization_time_ms": 9841.235160827637,
+        "optimization_goal": "speed"
       },
       "metrics": {
-        "baseline_p75_ms": 6818.228006362915,
-        "baseline_time_ms": 6818.228006362915,
-        "best_optimized_p75_ms": 6220.498085021973,
-        "best_optimized_speedup": 1.0960903633714134,
-        "best_optimized_time_ms": 6220.498085021973,
-        "best_speedup": 1.0960903633714134,
+        "baseline_p75_ms": 9957.879543304443,
+        "baseline_time_ms": 9957.879543304443,
+        "best_optimized_p75_ms": 9841.235160827637,
+        "best_optimized_speedup": 1.0118526161168369,
+        "best_optimized_time_ms": 9841.235160827637,
+        "best_speedup": 1.0118526161168369,
         "is_regression": false
       },
       "provenance": {
-        "git_commit": "75cbbbcfaaac628797e7636c22f2adb10d4d072f",
+        "git_commit": "7adca4bde1c98eca81be18acc253f6390de35494",
         "hardware_key": "b200",
-        "iterations": 0,
-        "profile_name": "none",
-        "timestamp": "2025-12-08T19:40:47.886346",
-        "warmup_iterations": 0
+        "profile_name": "minimal",
+        "timestamp": "2026-03-17T19:47:59.540270",
+        "iterations": 20,
+        "warmup_iterations": 5,
+        "execution_environment": "virtualized",
+        "validity_profile": "strict",
+        "dmi_product_name": "Standard PC (Q35 + ICH9, 2009)"
       },
       "type": "python"
     }

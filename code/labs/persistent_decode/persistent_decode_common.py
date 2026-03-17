@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Optional, Tuple
 
 import torch
+from core.common.device_utils import require_cuda_device
 
-
-def resolve_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for persistent decode lab")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA device required for persistent decode lab")
 
 
 def get_stream_priorities() -> Tuple[int, int]:

@@ -1,9 +1,12 @@
-"""Baseline AI optimization example: repeated CPU-bound orchestration."""
+"""Baseline AI pipeline with blocking storage reads and CPU-mediated transfers."""
 
 from __future__ import annotations
 
+import os
+import tempfile
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -13,20 +16,20 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 
 
 class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Runs several tiny blocks sequentially with CPU sync between them."""
+    """Reads activations from storage synchronously before every tiny inference block."""
+
+    allowed_benchmark_fn_antipatterns = ("host_transfer", "sync")
 
     def __init__(self):
         super().__init__()
-        self.blocks: Optional[nn.ModuleList] = None
-        self.inputs: Optional[torch.Tensor] = None
+        self.block: Optional[nn.Module] = None
+        self.inputs_path: Optional[str] = None
         self.output: Optional[torch.Tensor] = None
-        # Keep the work per block small enough that host orchestration dominates,
-        # but cap the block count so profiling stays tractable.
+        self._last_input: Optional[torch.Tensor] = None
         self.batch = 64
         self.hidden = 32
         self.num_blocks = 256
         self.parameter_count = 0
-        # Inference benchmark - jitter check not applicable
         tokens = self.batch * self.hidden * self.num_blocks
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -36,27 +39,39 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        # Initialize model weights after seeding for deterministic comparison
-        self.blocks = nn.ModuleList(TinyBlock(self.hidden).to(self.device).eval() for _ in range(self.num_blocks))
-        self.parameter_count = sum(p.numel() for p in self.blocks.parameters())
-        self.inputs = torch.randn(self.batch, self.hidden, device=self.device, dtype=torch.float32)
+        self.block = TinyBlock(self.hidden).to(self.device).eval()
+        self.parameter_count = sum(p.numel() for p in self.block.parameters())
+
+        host_batches = np.random.default_rng(42).standard_normal(
+            (self.num_blocks, self.batch, self.hidden),
+            dtype=np.float32,
+        )
+        f = tempfile.NamedTemporaryFile(suffix=".npy", delete=False)
+        self.inputs_path = f.name
+        f.close()
+        np.save(self.inputs_path, host_batches)
         self._synchronize()
 
     def benchmark_fn(self) -> None:
-        assert self.inputs is not None and self.blocks is not None
-        with self._nvtx_range("baseline_ai"):
+        assert self.block is not None and self.inputs_path is not None
+        host_batches = np.load(self.inputs_path)
+        out: Optional[torch.Tensor] = None
+        last_input: Optional[torch.Tensor] = None
+        with self._nvtx_range("baseline_ai_storage_pipeline"):
             with torch.inference_mode():
-                out = self.inputs
-                for block in self.blocks:
-                    out = block(out)
+                for step in range(self.num_blocks):
+                    device_batch = torch.from_numpy(host_batches[step]).to(self.device)
+                    out = self.block(device_batch)
+                    last_input = device_batch
                     self._synchronize()
-        self.output = out.detach()
-        if self.output is None:
+        if out is None or last_input is None:
             raise RuntimeError("benchmark_fn() must produce output")
+        self._last_input = last_input
+        self.output = out.detach()
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"inputs": self.inputs},
+            inputs={"inputs": self._last_input},
             output=self.output,
             batch_size=self.batch,
             parameter_count=self.parameter_count,
@@ -70,9 +85,12 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def teardown(self) -> None:
-        self.blocks = None
-        self.inputs = None
+        self.block = None
         self.output = None
+        self._last_input = None
+        if self.inputs_path and os.path.exists(self.inputs_path):
+            os.unlink(self.inputs_path)
+        self.inputs_path = None
         self.parameter_count = 0
         torch.cuda.empty_cache()
 
@@ -83,7 +101,6 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return metrics derived from the actual model/workload shape."""
         return compute_ai_workload_metrics(
             batch_size=self.batch,
             hidden_dim=self.hidden,
@@ -92,10 +109,9 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def validate_result(self) -> Optional[str]:
-        if self.inputs is None:
-            return "Inputs missing"
+        if self.block is None or self.inputs_path is None:
+            return "Model or storage inputs not initialized"
         return None
-
 
 
 def get_benchmark() -> BaseBenchmark:

@@ -806,6 +806,7 @@ def cluster_eval_suite(params: Dict[str, Any]) -> Dict[str, Any]:
     oob_if = _parse_str_param(params, "oob_if")
     socket_ifname = _parse_str_param(params, "socket_ifname")
     nccl_ib_hca = _parse_str_param(params, "nccl_ib_hca")
+    nmx_url = _parse_str_param(params, "nmx_url")
     primary_label = _parse_str_param(params, "primary_label")
     extra_args = _parse_list_param(params, "extra_args")
     timeout_seconds = _parse_optional_int_param(params, "timeout_seconds", minimum=1)
@@ -908,6 +909,14 @@ def cluster_common_eval(params: Dict[str, Any]) -> Dict[str, Any]:
     oob_if = _parse_str_param(params, "oob_if")
     socket_ifname = _parse_str_param(params, "socket_ifname")
     nccl_ib_hca = _parse_str_param(params, "nccl_ib_hca")
+    nmx_url = _parse_str_param(params, "nmx_url")
+    nmx_token = _parse_str_param(params, "nmx_token")
+    ib_mgmt_host = _parse_str_param(params, "ib_mgmt_host")
+    ib_mgmt_user = _parse_str_param(params, "ib_mgmt_user")
+    ib_mgmt_ssh_key = _parse_str_param(params, "ib_mgmt_ssh_key")
+    cumulus_hosts = _parse_list_param(params, "cumulus_hosts")
+    cumulus_user = _parse_str_param(params, "cumulus_user")
+    cumulus_ssh_key = _parse_str_param(params, "cumulus_ssh_key")
     primary_label = _parse_str_param(params, "primary_label")
     coverage_baseline_run_id = _parse_str_param(params, "coverage_baseline_run_id")
     extra_args = _parse_list_param(params, "extra_args")
@@ -923,10 +932,88 @@ def cluster_common_eval(params: Dict[str, Any]) -> Dict[str, Any]:
         oob_if=oob_if,
         socket_ifname=socket_ifname,
         nccl_ib_hca=nccl_ib_hca,
+        nmx_url=nmx_url,
+        nmx_token=nmx_token,
+        ib_mgmt_host=ib_mgmt_host,
+        ib_mgmt_user=ib_mgmt_user,
+        ib_mgmt_ssh_key=ib_mgmt_ssh_key,
+        cumulus_hosts=cumulus_hosts,
+        cumulus_user=cumulus_user,
+        cumulus_ssh_key=cumulus_ssh_key,
         primary_label=primary_label,
         coverage_baseline_run_id=coverage_baseline_run_id,
         extra_args=extra_args,
         timeout_seconds=timeout_seconds,
+    )
+
+
+def cluster_fabric_eval(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.cluster import run_cluster_fabric_eval
+
+    run_id = _parse_str_param(params, "run_id")
+    hosts = _parse_list_param(params, "hosts")
+    labels = _parse_list_param(params, "labels")
+    ssh_user = _parse_str_param(params, "ssh_user")
+    ssh_key = _parse_str_param(params, "ssh_key")
+    oob_if = _parse_str_param(params, "oob_if")
+    socket_ifname = _parse_str_param(params, "socket_ifname")
+    nccl_ib_hca = _parse_str_param(params, "nccl_ib_hca")
+    nmx_url = _parse_str_param(params, "nmx_url")
+    nmx_token = _parse_str_param(params, "nmx_token")
+    ib_mgmt_host = _parse_str_param(params, "ib_mgmt_host")
+    ib_mgmt_user = _parse_str_param(params, "ib_mgmt_user")
+    ib_mgmt_ssh_key = _parse_str_param(params, "ib_mgmt_ssh_key")
+    cumulus_hosts = _parse_list_param(params, "cumulus_hosts")
+    cumulus_user = _parse_str_param(params, "cumulus_user")
+    cumulus_ssh_key = _parse_str_param(params, "cumulus_ssh_key")
+    primary_label = _parse_str_param(params, "primary_label")
+    coverage_baseline_run_id = _parse_str_param(params, "coverage_baseline_run_id")
+    extra_args = _parse_list_param(params, "extra_args")
+    timeout_seconds = _parse_optional_int_param(params, "timeout_seconds", minimum=1)
+    require_management_plane = bool(params.get("require_management_plane", False))
+
+    return run_cluster_fabric_eval(
+        run_id=run_id,
+        hosts=hosts,
+        labels=labels,
+        ssh_user=ssh_user,
+        ssh_key=ssh_key,
+        oob_if=oob_if,
+        socket_ifname=socket_ifname,
+        nccl_ib_hca=nccl_ib_hca,
+        nmx_url=nmx_url,
+        nmx_token=nmx_token,
+        ib_mgmt_host=ib_mgmt_host,
+        ib_mgmt_user=ib_mgmt_user,
+        ib_mgmt_ssh_key=ib_mgmt_ssh_key,
+        cumulus_hosts=cumulus_hosts,
+        cumulus_user=cumulus_user,
+        cumulus_ssh_key=cumulus_ssh_key,
+        primary_label=primary_label,
+        coverage_baseline_run_id=coverage_baseline_run_id,
+        extra_args=extra_args,
+        timeout_seconds=timeout_seconds,
+        require_management_plane=require_management_plane,
+    )
+
+
+def cluster_nmx_partition_lab(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.cluster import build_cluster_nmx_partition_lab
+
+    nmx_url = _parse_str_param(params, "nmx_url")
+    nmx_token = _parse_str_param(params, "nmx_token")
+    alpha_name = _parse_str_param(params, "alpha_name") or "AlphaPartition"
+    beta_name = _parse_str_param(params, "beta_name") or "BetaPartition"
+    alpha_size = int(params.get("alpha_size", 4) or 4)
+    beta_size = int(params.get("beta_size", 4) or 4)
+
+    return build_cluster_nmx_partition_lab(
+        nmx_url=nmx_url,
+        nmx_token=nmx_token,
+        alpha_name=alpha_name,
+        beta_name=beta_name,
+        alpha_size=alpha_size,
+        beta_size=beta_size,
     )
 
 

@@ -19,6 +19,3 @@ def get_benchmark() -> AsyncInputPipelineBenchmark:
     return AsyncInputPipelineBenchmark(cfg, label="optimized_async_input_pipeline")
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

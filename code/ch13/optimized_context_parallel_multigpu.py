@@ -177,5 +177,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedContextParallelMultigpuBenchmark()
 
 
-if __name__ == "__main__":
-    main()

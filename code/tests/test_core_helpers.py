@@ -3,6 +3,7 @@ import inspect
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import mcp.mcp_server as mcp_server
 from core.harness.benchmark_harness import lock_gpu_clocks
@@ -520,6 +521,44 @@ def test_profile_nsys_nonzero_exit_accepts_usable_report(tmp_path: Path, monkeyp
     assert automation.last_run["returncode"] == 7
 
 
+def test_profile_nsys_zero_exit_waits_for_late_report(tmp_path: Path, monkeypatch):
+    import subprocess
+    from core.profiling.nsight_automation import NsightAutomation
+
+    automation = NsightAutomation(tmp_path)
+    automation.nsys_available = True
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.pid = 12345
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            _ = timeout
+            return ("", "")
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+
+    def _late_report(output_path: Path, settle_seconds: float = 5.0, poll_interval: float = 0.2) -> bool:
+        _ = settle_seconds, poll_interval
+        output_path.write_text("rep", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(automation, "_wait_for_output_artifact", _late_report)
+
+    result = automation.profile_nsys(
+        command=[sys.executable, "-c", "print('ok')"],
+        output_name="zero_exit_late_report",
+        timeout_seconds=30,
+    )
+
+    assert result == tmp_path / "zero_exit_late_report.nsys-rep"
+    assert result.exists()
+    assert automation.last_error is None
+    assert automation.last_run["output"] == str(result)
+    assert automation.last_run["returncode"] == 0
+
+
 def test_profile_nsys_mcp_schema_includes_safety_defaults():
     schema = mcp_server.TOOLS["profile_nsys"].input_schema
     props = schema["properties"]
@@ -567,6 +606,22 @@ def test_profile_compare_emits_pair_health_on_missing_profiles(tmp_path: Path):
     result = mcp_server.tool_profile_compare({"profiles_dir": str(tmp_path)})
     assert result.get("error")
     assert "pair_health" in result
+
+
+def test_profile_compare_surfaces_metric_analysis_warning(tmp_path: Path):
+    with (
+        patch.object(profile_insights, "assess_profile_pair_health", return_value={"status": "ok"}),
+        patch.object(profile_insights, "generate_flamegraph_comparison", return_value={"speedup": 1.0}),
+        patch.object(profile_insights, "compare_nsys_files", return_value={"metrics": [{"name": "gpu", "delta": 1.0}]}),
+        patch.object(profile_insights, "compare_ncu_files", return_value=None),
+        patch.object(profile_insights, "generate_side_by_side_report", return_value={"success": True}),
+        patch("core.perf_core_base.PerformanceCoreBase.compare_profiles", side_effect=RuntimeError("metric boom")),
+    ):
+        result = mcp_server.tool_profile_compare({"chapter": "ch11", "profiles_dir": str(tmp_path)})
+
+    assert result.get("chapter") == "ch11"
+    assert result.get("warnings")
+    assert any("Metric analysis unavailable for profile_compare chapter=ch11: metric boom" in warning for warning in result["warnings"])
 
 
 def test_collect_profile_role_files_materializes_role_symlinks_with_same_target(tmp_path: Path):

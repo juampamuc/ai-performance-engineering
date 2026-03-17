@@ -24,5 +24,3 @@ def get_benchmark() -> Level4Parallel:
     return Level4Parallel()
 
 
-if __name__ == "__main__":
-    run_level(4)

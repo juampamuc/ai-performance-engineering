@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Optional
-import warnings
 
 import torch
 import torch.nn as nn
@@ -27,10 +26,6 @@ class BaselineMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.input_dim = INPUT_DIM
         self.repetitions = REPETITIONS
         self.host_batches: list[torch.Tensor] = []
-        self._prev_threads: Optional[int] = None
-        self._prev_interop_threads: Optional[int] = None
-        self._threads_overridden = False
-        self._interop_overridden = False
         tokens = self.batch_size * self.input_dim * self.repetitions
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.repetitions),
@@ -45,27 +40,8 @@ class BaselineMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
     
-    @staticmethod
-    def _safe_set_thread_fn(setter, value: int, label: str, warn=True) -> bool:
-        """Try to set a torch threading knob without aborting the benchmark."""
-        try:
-            setter(value)
-            return True
-        except RuntimeError as err:
-            if warn:
-                warnings.warn(f"Unable to set {label} (continuing with defaults): {err}")
-            return False
-    
     def setup(self) -> None:
         torch.manual_seed(42)
-        self._prev_threads = torch.get_num_threads()
-        self._prev_interop_threads = torch.get_num_interop_threads()
-        self._threads_overridden = self._safe_set_thread_fn(
-            torch.set_num_threads, 1, "num_threads"
-        )
-        self._interop_overridden = self._safe_set_thread_fn(
-            torch.set_num_interop_threads, 1, "num_interop_threads"
-        )
         self.model = nn.Sequential(
             nn.Linear(self.input_dim, HIDDEN_DIM),
             nn.GELU(),
@@ -93,13 +69,13 @@ class BaselineMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
             with torch.no_grad():
                 for compressed in self.host_batches:
                     host_batch = compressed.to(dtype=torch.float32)
-                host_batch.mul_(1.0 / 255.0)
-                host_batch.add_(-0.5)
-                host_batch.mul_(2.0)
-                host_batch.tanh_()
-                device_batch = host_batch.to(self.device, dtype=torch.float32, non_blocking=False)
-                self._last_input = device_batch
-                self.output = self.model(device_batch)
+                    host_batch.mul_(1.0 / 255.0)
+                    host_batch.add_(-0.5)
+                    host_batch.mul_(2.0)
+                    host_batch.tanh_()
+                    device_batch = host_batch.to(self.device, dtype=torch.float32, non_blocking=False)
+                    self._last_input = device_batch
+                    self.output = self.model(device_batch)
         if self.output is None or self._last_input is None:
             raise RuntimeError("benchmark_fn() must produce output")
 
@@ -114,10 +90,6 @@ class BaselineMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def teardown(self) -> None:
-        if self._threads_overridden and self._prev_threads is not None:
-            self._safe_set_thread_fn(torch.set_num_threads, self._prev_threads, "num_threads", warn=False)
-        if self._interop_overridden and self._prev_interop_threads is not None:
-            self._safe_set_thread_fn(torch.set_num_interop_threads, self._prev_interop_threads, "num_interop_threads", warn=False)
         self.model = None
         self.host_batches = []
         super().teardown()
@@ -135,8 +107,8 @@ class BaselineMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),

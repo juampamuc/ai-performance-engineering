@@ -60,7 +60,7 @@ def test_non_lab_chapters_use_same_generic_canonicalization():
 
 def test_chapter_without_canonical_is_unchanged():
     baseline = Path("/tmp/ch10/baseline_matmul.py")
-    variant = Path("/tmp/ch10/optimized_matmul_tcgen05.py")
+    variant = Path("/tmp/ch10/optimized_matmul_tcgen05_vs_cublas.py")
     pairs = [(baseline, [variant], "matmul")]
 
     filtered, suppressed = _canonicalize_optimized_variants_for_full_sweep(

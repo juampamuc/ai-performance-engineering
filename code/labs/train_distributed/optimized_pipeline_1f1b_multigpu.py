@@ -92,10 +92,6 @@ def main():
     print(format_telemetry("optimized-1f1b", cumulative))
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "pipeline_1f1b_multigpu.py",

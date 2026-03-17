@@ -18,5 +18,3 @@ def get_benchmark() -> Level4Graphs:
     return Level4Graphs()
 
 
-if __name__ == "__main__":
-    run_level(4)

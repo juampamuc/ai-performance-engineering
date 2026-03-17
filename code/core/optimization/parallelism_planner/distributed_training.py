@@ -127,6 +127,28 @@ class VLLMConfig:
     estimated_throughput_tokens_s: float
     estimated_latency_ms: float
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize planner output for CLI/MCP/API surfaces."""
+        return {
+            "model": self.model,
+            "tensor_parallel_size": self.tensor_parallel_size,
+            "pipeline_parallel_size": self.pipeline_parallel_size,
+            "gpu_memory_utilization": self.gpu_memory_utilization,
+            "max_model_len": self.max_model_len,
+            "max_num_seqs": self.max_num_seqs,
+            "max_num_batched_tokens": self.max_num_batched_tokens,
+            "quantization": self.quantization,
+            "kv_cache_dtype": self.kv_cache_dtype,
+            "enforce_eager": self.enforce_eager,
+            "enable_chunked_prefill": self.enable_chunked_prefill,
+            "enable_prefix_caching": self.enable_prefix_caching,
+            "speculative_model": self.speculative_model,
+            "speculative_num_draft_tokens": self.speculative_num_draft_tokens,
+            "launch_command": self.launch_command,
+            "estimated_throughput_tokens_s": self.estimated_throughput_tokens_s,
+            "estimated_latency_ms": self.estimated_latency_ms,
+        }
+
 
 class NCCLTuningAdvisor:
     """Recommends optimal NCCL configuration for distributed training."""
@@ -682,10 +704,11 @@ class VLLMConfigGenerator:
         # KV cache memory and max sequences
         kv_cache_mem_gb = gpu_memory_gb * gpu_util - model_mem_gb / tp
         
-        # Rough KV cache size estimate
-        hidden_size = int((model_params_b * 1e9 / 100) ** 0.5 * 128)
-        num_layers = int(model_params_b * 1e9 / (hidden_size ** 2 * 12))
-        kv_per_token_bytes = 2 * num_layers * hidden_size * 2  # 2 for K and V
+        # Rough KV cache size estimate. Keep this heuristic simple and non-zero so
+        # the config generator remains usable for smaller models and dry-run sizing.
+        bytes_per_element = 1 if quantization == "fp8" else 2
+        num_layers = max(1, int(model_params_b * 1.2))
+        kv_per_token_bytes = max(1, 2 * num_layers * 8 * 128 * bytes_per_element)
         
         max_kv_tokens = int(kv_cache_mem_gb * 1e9 / kv_per_token_bytes)
         
@@ -920,6 +943,4 @@ __all__ = [
     "VLLMConfigGenerator",
     "CommunicationOverlapAnalyzer",
 ]
-
-
 

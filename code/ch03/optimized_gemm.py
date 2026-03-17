@@ -1,8 +1,8 @@
-"""Optimized GEMM that runs a fused tensor-core matmul in one launch.
+"""Optimized control GEMM that removes launch fragmentation with `torch.compile`.
 
-This benchmark demonstrates efficient kernel scheduling - using torch.compile
-to fuse operations and leverage tensor cores for a single large matmul.
-The baseline version shows how splitting into micro-batches is slower.
+This remains a Chapter 3 host/runtime control workload. The optimization is
+that `torch.compile(mode="reduce-overhead")` lets the runtime amortize the
+fragmented launch pattern into one compiled GEMM path without changing the math.
 """
 
 from __future__ import annotations
@@ -15,13 +15,29 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
 )
 
 
 class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Single large matmul captured inside torch.compile."""
+    """Control workload with one compiled GEMM call."""
+
+    story_metadata = {
+        "pair_role": "control",
+        "variant_role": "optimized",
+        "chapter_alignment": "supplementary",
+        "chapter_native_exemplar": False,
+        "control_reason": (
+            "Quantifies Chapter 3 host/runtime launch overhead without claiming a "
+            "NUMA-local math-kernel optimization."
+        ),
+        "comparison_axis": "fragmented_vs_amortized_launches",
+        "execution_pattern": "single_compiled_gemm_launch",
+        "optimization_mechanism": (
+            'use torch.compile(mode="reduce-overhead") to amortize launch '
+            "fragmentation while keeping math fixed"
+        ),
+        "chapter_native_targets": ["pageable_copy", "rack_prep", "docker", "kubernetes"],
+    }
 
     def __init__(self):
         super().__init__()
@@ -64,10 +80,11 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._synchronize()
 
     def benchmark_fn(self) -> None:
-        """Compute C = A @ B using a single fused matmul.
-        
-        This demonstrates efficient kernel scheduling where a single
-        optimized operation is used instead of many small ones.
+        """Compute C = A @ B using a single compiled matmul.
+
+        This keeps the GEMM identical to the baseline while using
+        `torch.compile(mode="reduce-overhead")` to remove the fragmented launch
+        pattern seen by the runtime.
         """
         assert self.left is not None and self.right is not None
         op = self.fn
@@ -100,15 +117,24 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=20, warmup=10)
+        return BenchmarkConfig(iterations=20, warmup=5)
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_system_config_metrics
-        return compute_system_config_metrics(
+        metrics = compute_system_config_metrics(
             numa_nodes=getattr(self, 'numa_nodes', 0),
             cpu_cores=getattr(self, 'cpu_cores', 64),
         )
+        metrics.update(
+            {
+                "story.control_pair": 1.0,
+                "story.chapter_native_exemplar": 0.0,
+                "launch.gemm_calls_per_iteration": 1.0,
+                "launch.block_k": float(self.k),
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.fn is None:
@@ -118,8 +144,3 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedGemmBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

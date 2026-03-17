@@ -107,7 +107,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineSpeculativeDecodeBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

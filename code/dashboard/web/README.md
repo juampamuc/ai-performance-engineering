@@ -41,40 +41,50 @@ npm start
 
 ```
 src/
-├── app/                 # Next.js App Router
-│   ├── layout.tsx       # Root layout with fonts and background
-│   ├── page.tsx         # Main dashboard page
-│   └── globals.css      # Tailwind + custom styles
-├── components/          # React components
-│   ├── Navigation.tsx   # Tab navigation
-│   ├── StatsCard.tsx    # Stat display cards
-│   ├── SpeedupChart.tsx # Bar chart for speedups
-│   ├── StatusChart.tsx  # Pie chart for status
-│   ├── BenchmarkTable.tsx # Sortable/filterable table
-│   ├── GpuCard.tsx      # GPU info display
-│   └── LLMInsights.tsx  # AI analysis display
-├── lib/                 # Utilities
-│   ├── api.ts           # API client functions
-│   └── utils.ts         # Helper functions
-└── types/               # TypeScript types
-    └── index.ts         # Type definitions
+├── app/                          # Next.js App Router routes
+│   ├── layout.tsx               # Root layout, fonts, animated background
+│   ├── page.tsx                 # Overview page
+│   ├── compare/page.tsx         # Benchmark compare workflow
+│   ├── profiler/page.tsx        # Profile pair browser + comparison UI
+│   ├── memory/page.tsx          # Memory route (currently marked coming soon)
+│   ├── multi-gpu/page.tsx       # Topology and multi-GPU views
+│   ├── history/page.tsx         # Historical benchmark runs
+│   ├── tier1/page.tsx           # Tier-1 benchmark surfaces
+│   ├── system/page.tsx          # System inspection / health tools
+│   ├── cluster/page.tsx         # Cluster eval + promotion tools
+│   ├── contracts/page.tsx       # BenchmarkRun contract surface
+│   └── globals.css              # Tailwind + dashboard design tokens
+├── components/
+│   ├── DashboardShell.tsx       # Shared shell + keyboard navigation
+│   ├── Navigation.tsx           # Route tab bar
+│   ├── StatsCard.tsx            # Stat display cards
+│   ├── SpeedupChart.tsx         # Speedup visualization
+│   ├── StatusChart.tsx          # Status breakdown visualization
+│   ├── BenchmarkTable.tsx       # Sortable/filterable benchmark table
+│   ├── GpuCard.tsx              # Live GPU telemetry card
+│   ├── SoftwareStackWidget.tsx  # Backend software snapshot
+│   ├── DependenciesWidget.tsx   # Dependency health widget
+│   └── tabs/AIAssistantTab.tsx  # MCP-backed AI assistant panel
+├── lib/
+│   ├── api.ts                   # API client functions
+│   ├── useGpuStream.ts          # GPU polling hook
+│   └── utils.ts                 # UI helper functions
+└── types/index.ts               # TypeScript types
 ```
 
 ## Features
 
-- **Overview Tab**: Stats, charts, GPU info, benchmark table
-- **LLM Insights Tab**: AI-powered analysis and recommendations
-- **Compare Tab**: Side-by-side benchmark comparison (coming soon)
-- **Roofline Tab**: Roofline model visualization (coming soon)
-- **Profiler Tab**: GPU flame graphs and kernels (coming soon)
-- **Memory Tab**: Memory timeline analysis (coming soon)
-- **Advanced Tab**: Cost calculator, what-if analysis (coming soon)
-- **Multi-GPU Tab**: NVLink topology (coming soon)
-- **History Tab**: Performance trends (coming soon)
+- **Overview**: stats, status/speedup charts, live GPU card, software/dependency widgets, benchmark table, and the AI assistant panel.
+- **Compare**: baseline-vs-candidate benchmark comparison workflow.
+- **Profiler**: profile-pair browser with Nsight-driven comparison views.
+- **Multi-GPU / History / Tier-1 / System / Cluster / Contracts**: dedicated routes for topology, run history, tier-1 coverage, system inspection, cluster operations, and BenchmarkRun contract surfacing.
+- **Memory**: route exists but is still explicitly labeled "Coming soon" in the UI.
 
 ## API Proxy
 
-The Next.js app proxies all `/api/*` requests to the Python backend at `http://localhost:6970`. Configure this in `next.config.js`.
+The Next.js app proxies all `/api/*` requests to the Python backend via `next.config.js`.
+By default that proxy targets `http://127.0.0.1:6970`, and you can override it with
+`BACKEND_HOST` / `BACKEND_PORT` (or their `NEXT_PUBLIC_...` variants).
 
 ## Benchmark Environment Mode Parity
 
@@ -94,9 +104,9 @@ Example backend payload:
 
 ## Styling
 
-Uses Tailwind CSS with custom design tokens matching the original dashboard aesthetic:
+Uses Tailwind CSS with custom design tokens matching the current dashboard shell:
 
-- Dark theme with glass-morphism effects
+- Dark-first palette with glass-morphism cards and animated gradient/grid backgrounds
 - Gradient backgrounds with subtle animation
 - Accent colors: Cyan (`#00f5d4`), Purple (`#9d4edd`), Pink (`#f72585`)
-- JetBrains Mono for code, Inter for UI text
+- Space Grotesk for UI text, JetBrains Mono for code

@@ -7,10 +7,19 @@ This file demonstrates:
 4. Multiple benchmark classes in one module
 5. Using create_benchmark_factory() for parameterized benchmarks
 
+Contract:
+- `get_benchmark()` is the required interface for discovery, `compare.py`, and
+  `cli.aisp bench run`.
+- Discoverable benchmark modules should not define module-level `__main__`
+  entrypoints; run them through chapter `compare.py` scripts or the shared CLI.
+- If a file needs a standalone `__main__`, keep it as a non-benchmark tool or
+  utility script instead of a harness-discoverable benchmark module.
+
 Run validation:
     python -m core.benchmark.registry --validate
 
-Run chapter entrypoints from the repo root with ``python -m chXX.module``.
+Run discoverable benchmarks through chapter `compare.py` helpers or
+``python -m cli.aisp bench run``.
 Avoid local import-path mutation bootstrapping in benchmark/example files.
 """
 

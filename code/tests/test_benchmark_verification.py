@@ -11,6 +11,7 @@ Without these verifications, benchmark comparisons are meaningless:
 
 import pytest
 from typing import Dict, Any, Optional
+from pathlib import Path
 
 from core.env import apply_env_defaults
 apply_env_defaults()
@@ -639,7 +640,7 @@ class TestEdgeCases:
         )
         
         assert result["equivalent"] is True
-    
+
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_signature_includes_dtype(self):
         """Test that tensor dtype is accessible from signature.
@@ -658,3 +659,102 @@ class TestEdgeCases:
         assert isinstance(signature, dict)
         
         benchmark.teardown()
+
+
+def _write_patch_verification_module(
+    path: Path,
+    *,
+    capture_error: Optional[str] = None,
+    teardown_error: Optional[str] = None,
+    verify_error: Optional[str] = None,
+    output_value: float = 1.0,
+) -> None:
+    capture_body = (
+        f'raise RuntimeError("{capture_error}")'
+        if capture_error is not None
+        else "return None"
+    )
+    teardown_body = (
+        f'raise RuntimeError("{teardown_error}")'
+        if teardown_error is not None
+        else "self.output = None"
+    )
+    verify_body = (
+        f'raise RuntimeError("{verify_error}")'
+        if verify_error is not None
+        else "return self.output"
+    )
+    path.write_text(
+        "\n".join(
+            [
+                "import torch",
+                "from core.harness.benchmark_harness import BaseBenchmark",
+                "",
+                "class DemoBenchmark(BaseBenchmark):",
+                "    def setup(self):",
+                f"        self.output = torch.tensor([{output_value}], dtype=torch.float32)",
+                "",
+                "    def benchmark_fn(self):",
+                "        return None",
+                "",
+                "    def capture_verification_payload(self):",
+                f"        {capture_body}",
+                "",
+                "    def get_verify_output(self):",
+                f"        {verify_body}",
+                "",
+                "    def teardown(self):",
+                f"        {teardown_body}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+class TestVerifyPatchedBenchmarkWarnings:
+    def test_capture_failure_records_cleanup_warning(self, tmp_path: Path) -> None:
+        from core.harness.run_benchmarks import _verify_patched_benchmark
+
+        original_path = tmp_path / "baseline_capture_fail.py"
+        patched_path = tmp_path / "optimized_ok.py"
+        _write_patch_verification_module(
+            original_path,
+            capture_error="capture boom",
+            teardown_error="teardown boom",
+        )
+        _write_patch_verification_module(patched_path, output_value=2.0)
+
+        result = _verify_patched_benchmark(str(original_path), str(patched_path))
+
+        assert result["verified"] is False
+        assert result["verification_type"] == "verification_payload_error"
+        assert result["details"]["capture_phase"] == "original"
+        assert any(
+            "Original benchmark teardown failed after capture_verification_payload() error: teardown boom" in item
+            for item in result["details"].get("warnings", [])
+        )
+
+    def test_verify_output_failures_are_recorded_in_details(self, tmp_path: Path) -> None:
+        from core.harness.run_benchmarks import _verify_patched_benchmark
+
+        original_path = tmp_path / "baseline_verify_fail.py"
+        patched_path = tmp_path / "optimized_verify_fail.py"
+        _write_patch_verification_module(original_path, verify_error="original verify boom")
+        _write_patch_verification_module(patched_path, verify_error="patched verify boom")
+
+        result = _verify_patched_benchmark(str(original_path), str(patched_path))
+
+        assert result["verified"] is False
+        assert result["verification_type"] == "no_output"
+        assert result["details"]["missing_output"] == "both"
+        assert any(
+            "Original benchmark get_verify_output() failed during patched verification: original verify boom"
+            in item
+            for item in result["details"].get("warnings", [])
+        )
+        assert any(
+            "Patched benchmark get_verify_output() failed during patched verification: patched verify boom"
+            in item
+            for item in result["details"].get("warnings", [])
+        )

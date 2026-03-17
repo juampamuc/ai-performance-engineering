@@ -10,7 +10,7 @@ from core.benchmark.gpu_requirements import require_min_gpus
 from core.benchmark.cuda_event_timing import max_elapsed_ms
 from ch04.baseline_bandwidth_benchmark_suite_multigpu import measure_peer_bandwidth
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 def measure_peer_bandwidth_pipelined(
@@ -170,6 +170,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedBandwidthSuiteMultiGPU()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

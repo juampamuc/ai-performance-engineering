@@ -122,8 +122,8 @@ class BaselineStreamsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics."""
         from core.benchmark.metrics import compute_stream_metrics
         return compute_stream_metrics(
-            sequential_time_ms=getattr(self, '_sequential_ms', 10.0),
-            overlapped_time_ms=getattr(self, '_overlapped_ms', 5.0),
+            sequential_time_ms=getattr(self, '_last_elapsed_ms', None),
+            overlapped_time_ms=None,
             num_streams=1,  # Sequential uses default stream only
             num_operations=self.num_chunks * 2,  # transfer + compute per chunk
         )
@@ -154,6 +154,3 @@ def get_benchmark() -> BaselineStreamsBenchmark:
     return BaselineStreamsBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

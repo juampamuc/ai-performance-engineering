@@ -21,5 +21,3 @@ def get_benchmark() -> Level2Sorted:
     return Level2Sorted()
 
 
-if __name__ == "__main__":
-    run_level(2)

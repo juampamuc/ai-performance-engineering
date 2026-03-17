@@ -18,5 +18,3 @@ def get_benchmark() -> Level5Compiled:
     return Level5Compiled()
 
 
-if __name__ == "__main__":
-    run_level(5)

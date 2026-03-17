@@ -1805,7 +1805,7 @@ if [ -f "$TEMP_REQUIREMENTS" ]; then
             numpy==2.1.2 pandas==2.3.2 scikit-learn==1.7.2 pillow==11.3.0 \
             matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
             click==8.1.7 \
-            jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
+            jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 ruff==0.8.4 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
             transformers==4.56.0 datasets==2.21.0 sentencepiece==0.2.0 tokenizers==0.22.2 \
             onnx==1.19.0 \
             py-spy==0.4.1 memory-profiler==0.61.0 line-profiler==5.0.0 pyinstrument==5.1.1 snakeviz==2.2.2 \
@@ -1823,7 +1823,7 @@ else
         numpy==2.1.2 pandas==2.3.2 scikit-learn==1.7.2 pillow==11.3.0 \
         matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
         click==8.1.7 \
-        jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
+        jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 ruff==0.8.4 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
         transformers==4.56.0 datasets==2.21.0 sentencepiece==0.2.0 tokenizers==0.22.2 \
         onnx==1.19.0 \
         py-spy==0.4.1 memory-profiler==0.61.0 line-profiler==5.0.0 pyinstrument==5.1.1 snakeviz==2.2.2 \

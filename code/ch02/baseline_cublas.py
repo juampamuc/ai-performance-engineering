@@ -35,7 +35,7 @@ class BaselineCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def setup(self) -> None:
-        """Allocate FP32 matrices, disable TF32, and compute verification output."""
+        """Allocate FP32 matrices, disable TF32, and warm cuBLAS identically."""
         # Seed FIRST for deterministic verification
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
@@ -43,6 +43,11 @@ class BaselineCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.A = torch.randn(self.m, self.k, device=self.device, dtype=torch.float32)
         self.B = torch.randn(self.k, self.n, device=self.device, dtype=torch.float32)
         self.C = None
+
+        # Mirror the optimized setup warmup so both paths hit cuBLAS/Lt
+        # heuristics with the same pre-timed launch history.
+        for _ in range(10):
+            _ = torch.matmul(self.A, self.B)
 
     def benchmark_fn(self) -> None:
         """Plain cuBLAS FP32 matmul."""

@@ -15,8 +15,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin  # noqa: 
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range  # noqa: E402
@@ -145,8 +143,8 @@ class BaselinePieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),
@@ -162,7 +160,3 @@ class BaselinePieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return BaselinePieceGraphsBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

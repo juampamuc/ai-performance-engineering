@@ -59,8 +59,8 @@ python -m cli.aisp bench run --targets ch16:flash_sdp --profile deep_dive --sing
 | Path | Description |
 | --- | --- |
 | `inference_optimizations_blackwell.py`, `inference_profiling.py`, `inference_server_load_test.py`, `inference_serving_multigpu.py` | Top-level orchestration scripts for profiling and load testing multi-GPU inference deployments. |
-| `baseline_flash_sdp.py`, `optimized_flash_sdp.py`, `baseline_paged_attention.py`, `optimized_paged_attention.py` | Attention kernels that compare naive implementations vs Flash/paged variants. |
-| `baseline_piece_graphs.py`, `optimized_piece_graphs.py`, `baseline_regional_compilation.py`, `optimized_regional_compilation.py` | Piecewise graph capture and regional compilation for stable low-latency decode. `regional_compilation` keeps the baseline eager and applies nested compile regions plus CUDA-graph replay only in the optimized path. |
+| `baseline_flash_sdp.py`, `optimized_flash_sdp.py`, `baseline_paged_attention.py`, `optimized_paged_attention.py`, `optimized_paged_attention_blackwell.py` | Attention kernels that compare naive implementations versus Flash/paged variants, including an intentional `paged_attention_blackwell` discovery alias for the Blackwell-tuned path. |
+| `baseline_piece_graphs.py`, `optimized_piece_graphs.py`, `baseline_regional_compilation.py`, `optimized_regional_compilation.py` | Piecewise graph capture and regional compilation for stable low-latency decode. |
 | `fp8_transformer_engine.py`, `test_fp8_quantization_real.py`, `symmetric_memory_inference.py`, `multi_gpu_validation.py` | Serving-time FP8 and symmetric-memory validations to guarantee accuracy and NVLink efficiency. |
 | `moe_performance_benchmark.py`, `synthetic_moe_inference_benchmark.py`, `moe_workload.py` | MoE inference harnesses that stress router placement and per-expert batching. |
 | `cache_monitoring.py`, `dcgm_prometheus_exporter.py`, `scheduler.py`, `perplexity_eval.py` | Telemetry, scheduling, and accuracy utilities wired into the inference pipeline. |
@@ -85,3 +85,4 @@ python -m cli.aisp bench run --targets ch16 --profile minimal
 ## Notes
 - `dcgm_prometheus_exporter.py` emits per-GPU metrics consumable by Prometheus/Grafana without extra setup.
 - `cache_monitoring.py` can be run standalone to sanity-check allocator health between runs.
+- `optimized_paged_attention_blackwell.py` is an intentional optimized variant of `baseline_paged_attention.py`; discovery surfaces it as the first-class target `paged_attention_blackwell` rather than treating it as an orphan file.

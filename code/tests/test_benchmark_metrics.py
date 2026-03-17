@@ -98,6 +98,16 @@ class TestMemoryTransferMetrics:
         # Should not crash, should return reasonable values
         assert metrics["transfer.achieved_gbps"] > 0
 
+    def test_missing_elapsed_time_omits_derived_bandwidth(self):
+        """Missing timing should not fabricate throughput metrics."""
+        metrics = compute_memory_transfer_metrics(
+            bytes_transferred=1e9,
+            elapsed_ms=None,
+        )
+        assert metrics["transfer.bytes"] == 1e9
+        assert "transfer.achieved_gbps" not in metrics
+        assert "transfer.efficiency_pct" not in metrics
+
 
 class TestKernelFundamentalsMetrics:
     """Test compute_kernel_fundamentals_metrics."""
@@ -214,6 +224,18 @@ class TestRooflineMetrics:
         assert metrics["roofline.arithmetic_intensity"] > 1e6
         assert metrics["roofline.is_compute_bound"] == 1.0
 
+    def test_missing_elapsed_time_omits_achieved_throughput(self):
+        """Missing timing should keep only static roofline characteristics."""
+        metrics = compute_roofline_metrics(
+            total_flops=1e9,
+            total_bytes=1e8,
+            elapsed_ms=None,
+            precision="fp16",
+        )
+        assert metrics["roofline.arithmetic_intensity"] == 10.0
+        assert "roofline.achieved_tflops" not in metrics
+        assert "roofline.efficiency_pct" not in metrics
+
 
 class TestStreamMetrics:
     """Test compute_stream_metrics."""
@@ -258,6 +280,32 @@ class TestGraphMetrics:
         assert metrics["graph.overhead_reduction_us"] == 8.0
         assert metrics["graph.overhead_reduction_pct"] == 80.0
         assert metrics["graph.total_overhead_saved_us"] == 8000.0
+
+
+class TestDistributedAndTritonMetrics:
+    """Test helpers that now tolerate missing timing."""
+
+    def test_distributed_metrics_omit_derived_bandwidth_without_elapsed_time(self):
+        metrics = compute_distributed_metrics(
+            world_size=4,
+            bytes_transferred=1e9,
+            elapsed_ms=None,
+            collective_type="allreduce",
+        )
+        assert metrics["distributed.world_size"] == 4.0
+        assert "distributed.achieved_gbps" not in metrics
+        assert "distributed.efficiency_pct" not in metrics
+
+    def test_triton_metrics_omit_throughput_without_elapsed_time(self):
+        metrics = compute_triton_metrics(
+            num_elements=4096,
+            elapsed_ms=None,
+            block_size=256,
+            num_warps=8,
+        )
+        assert metrics["triton.num_elements"] == 4096.0
+        assert metrics["triton.block_size"] == 256.0
+        assert "triton.elements_per_second" not in metrics
 
 
 class TestPrecisionMetrics:

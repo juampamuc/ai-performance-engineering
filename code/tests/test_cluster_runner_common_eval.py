@@ -96,3 +96,120 @@ def test_run_cluster_common_eval_rejects_unknown_preset() -> None:
     result = cluster_runner.run_cluster_common_eval(preset="not-a-preset", hosts=["localhost"])
     assert result["success"] is False
     assert "Unknown preset" in result["error"]
+
+
+def test_run_cluster_common_eval_fabric_systems_composes_expected_flags(monkeypatch) -> None:
+    captured: Dict[str, Any] = {}
+
+    def fake_run_cluster_eval_suite(**kwargs: Any) -> Dict[str, Any]:
+        captured.update(kwargs)
+        return {"success": True, "run_id": kwargs.get("run_id"), "command": ["fake"]}
+
+    monkeypatch.setattr(cluster_runner, "run_cluster_eval_suite", fake_run_cluster_eval_suite)
+
+    result = cluster_runner.run_cluster_common_eval(
+        preset="fabric-systems",
+        run_id="2026-03-16_fabric_eval",
+        hosts=["localhost"],
+        labels=["localhost"],
+        nmx_url="https://nmx.example",
+        nmx_token="secret-token",
+        ib_mgmt_host="ib-mgmt.example",
+        ib_mgmt_user="ibadmin",
+        ib_mgmt_ssh_key="/tmp/ib-key",
+        cumulus_hosts=["leaf01", "leaf02"],
+        cumulus_user="cumulus",
+        cumulus_ssh_key="/tmp/cumulus-key",
+    )
+
+    assert result["success"] is True
+    assert result["preset"] == "fabric-systems"
+    assert "fabric" in result["preset_description"].lower()
+    assert "fabric_scorecard" in result["artifact_roles"]
+    assert captured["extra_args"] == [
+        "--modern-llm-profile",
+        "--no-strict-canonical-completeness",
+        "--run-fabric-eval",
+        "--nmx-url",
+        "https://nmx.example",
+        "--nmx-token",
+        "secret-token",
+        "--ib-mgmt-host",
+        "ib-mgmt.example",
+        "--ib-mgmt-user",
+        "ibadmin",
+        "--ib-mgmt-ssh-key",
+        "/tmp/ib-key",
+        "--cumulus-hosts",
+        "leaf01,leaf02",
+        "--cumulus-user",
+        "cumulus",
+        "--cumulus-ssh-key",
+        "/tmp/cumulus-key",
+    ]
+
+
+def test_run_cluster_fabric_eval_adds_management_plane_flag(monkeypatch) -> None:
+    captured: Dict[str, Any] = {}
+
+    def fake_run_cluster_common_eval(**kwargs: Any) -> Dict[str, Any]:
+        captured.update(kwargs)
+        return {"success": True, "run_id": kwargs.get("run_id"), "artifact_roles": ["fabric_scorecard"]}
+
+    monkeypatch.setattr(cluster_runner, "run_cluster_common_eval", fake_run_cluster_common_eval)
+
+    result = cluster_runner.run_cluster_fabric_eval(
+        run_id="2026-03-16_fabric_eval",
+        hosts=["localhost"],
+        nmx_url="https://nmx.example",
+        nmx_token="secret-token",
+        ib_mgmt_host="ib-mgmt.example",
+        ib_mgmt_user="ibadmin",
+        ib_mgmt_ssh_key="/tmp/ib-key",
+        cumulus_hosts=["leaf01", "leaf02"],
+        cumulus_user="cumulus",
+        cumulus_ssh_key="/tmp/cumulus-key",
+        require_management_plane=True,
+        extra_args=["--skip-render-localhost-report"],
+    )
+
+    assert result["success"] is True
+    assert result["entrypoint"] == "cluster.fabric-eval"
+    assert result["require_management_plane"] is True
+    assert captured["preset"] == "fabric-systems"
+    assert captured["nmx_url"] == "https://nmx.example"
+    assert captured["nmx_token"] == "secret-token"
+    assert captured["ib_mgmt_host"] == "ib-mgmt.example"
+    assert captured["ib_mgmt_user"] == "ibadmin"
+    assert captured["ib_mgmt_ssh_key"] == "/tmp/ib-key"
+    assert captured["cumulus_hosts"] == ["leaf01", "leaf02"]
+    assert captured["cumulus_user"] == "cumulus"
+    assert captured["cumulus_ssh_key"] == "/tmp/cumulus-key"
+    assert captured["extra_args"] == ["--skip-render-localhost-report", "--require-management-plane"]
+
+
+def test_build_cluster_nmx_partition_lab_wraps_payload(monkeypatch) -> None:
+    def fake_build_nmx_partition_lab_payload(**kwargs: Any) -> Dict[str, Any]:
+        assert kwargs["nmx_url"] == "https://nmx.example"
+        assert kwargs["nmx_token"] == "secret-token"
+        assert kwargs["alpha_name"] == "AlphaPartition"
+        return {
+            "status": "ok",
+            "collection_mode": "nmx_partition_lab",
+            "lab_only": True,
+            "commands": {"inspect_partitions": "curl -k https://nmx.example/nmx/v1/partitions | jq"},
+        }
+
+    monkeypatch.setattr("cluster.fabric.build_nmx_partition_lab_payload", fake_build_nmx_partition_lab_payload)
+
+    result = cluster_runner.build_cluster_nmx_partition_lab(
+        nmx_url="https://nmx.example",
+        nmx_token="secret-token",
+        alpha_name="AlphaPartition",
+        beta_name="BetaPartition",
+    )
+
+    assert result["success"] is True
+    assert result["entrypoint"] == "cluster.nmx-partition-lab"
+    assert result["lab_only"] is True
+    assert "inspect_partitions" in result["commands"]

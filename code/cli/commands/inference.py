@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import asdict, is_dataclass
 from typing import Any, Dict
 
 from core.engine import get_engine
 
 
+def _json_default(value: Any) -> Any:
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if is_dataclass(value):
+        return asdict(value)
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
+
+
 def _print_result(result: Dict[str, Any], json_output: bool) -> None:
     if json_output:
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, default=_json_default))
         return
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=_json_default))
 
 
 def vllm_config(args: Any) -> int:
@@ -22,8 +31,9 @@ def vllm_config(args: Any) -> int:
     if model_size is None:
         print("model_size is required (billions of parameters).")
         return 1
+    model = getattr(args, "model", None) or "model"
     result = get_engine().inference.vllm_config(
-        model=getattr(args, "model", "model"),
+        model=model,
         model_params_b=float(model_size),
         num_gpus=int(getattr(args, "gpus", 1)),
         gpu_memory_gb=float(getattr(args, "gpu_memory_gb", 80.0)),
@@ -50,8 +60,9 @@ def deploy_config(args: Any) -> int:
     if model_size is None:
         print("model_size is required (billions of parameters).")
         return 1
+    model = getattr(args, "model", None) or "model"
     params = {
-        "model": getattr(args, "model", "model"),
+        "model": model,
         "model_params_b": float(model_size),
         "num_gpus": int(getattr(args, "gpus", 1)),
         "gpu_memory_gb": float(getattr(args, "gpu_memory_gb", 80.0)),
@@ -69,8 +80,9 @@ def estimate(args: Any) -> int:
     if model_size is None:
         print("model_size is required (billions of parameters).")
         return 1
+    model = getattr(args, "model", None) or "model"
     params = {
-        "model": getattr(args, "model", "model"),
+        "model": model,
         "model_params_b": float(model_size),
         "num_gpus": int(getattr(args, "gpus", 1)),
         "gpu_memory_gb": float(getattr(args, "gpu_memory_gb", 80.0)),
@@ -88,8 +100,9 @@ def serve(args: Any) -> int:
     if model_size is None:
         print("model_size is required (billions of parameters).")
         return 1
+    model = getattr(args, "model", None) or "model"
     params = {
-        "model": getattr(args, "model", "model"),
+        "model": model,
         "model_params_b": float(model_size),
         "num_gpus": int(getattr(args, "gpus", 1)),
         "gpu_memory_gb": float(getattr(args, "gpu_memory_gb", 80.0)),

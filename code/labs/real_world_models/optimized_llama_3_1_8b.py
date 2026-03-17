@@ -11,7 +11,7 @@ from typing import Optional
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from labs.real_world_models.llama_3_1_8b_optimization import Llama31_8B_Optimization
 
 
@@ -95,6 +95,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedLlama31_8B()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

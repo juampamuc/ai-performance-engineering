@@ -5,7 +5,7 @@ from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
@@ -43,6 +43,3 @@ def get_benchmark() -> OptimizedCopyCoalescedBenchmark:
     return OptimizedCopyCoalescedBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

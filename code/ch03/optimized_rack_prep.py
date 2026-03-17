@@ -1,4 +1,4 @@
-"""Rack optimized: NIC/GPU affinity, pinned staging, and overlap (GB200-friendly but generic)."""
+"""Rack-prep optimized: locality-aware staging with copy/compute overlap."""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
@@ -42,7 +40,7 @@ def _compute_topology(reserve: int = 2, nic_names: Optional[List[str]] = None) -
 
 
 class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Aligns NIC, CPU, and GPU locality while double-buffering copies."""
+    """Adds affinity planning plus pinned double-buffered staging."""
 
     def __init__(self):
         super().__init__()
@@ -287,8 +285,3 @@ def _verify_affinity(nic: NICInfo, cpus: List[int]) -> dict:
         "pid_affinity": ",".join(map(str, pid_affinity)) if pid_affinity else "",
         "numactl": numactl_out,
     }
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

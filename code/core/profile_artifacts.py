@@ -68,7 +68,7 @@ def export_benchmarks_csv(data: Dict[str, Any]) -> str:
     benchmarks = data.get("benchmarks", [])
 
     lines = [
-        "Benchmark,Baseline Time (ms),Optimized Time (ms),Speedup,Chapter/Lab,Status"
+        "Benchmark,Baseline Time (ms),Optimized Time (ms),Speedup,Chapter/Lab,Status,Pair Role,Chapter Alignment,Story Note"
     ]
 
     for b in benchmarks:
@@ -78,9 +78,13 @@ def export_benchmarks_csv(data: Dict[str, Any]) -> str:
         speedup = b.get("speedup", 1.0)
         chapter = b.get("chapter", "")
         status = "✓ Optimized" if speedup > 1.1 else "⚠ Needs Work"
+        pair_role = b.get("pair_role", "") or ""
+        chapter_alignment = b.get("chapter_alignment", "") or ""
+        story_note = str(b.get("story_note", "") or "").replace('"', '""')
 
         lines.append(
-            f'"{name}",{baseline:.4f},{optimized:.4f},{speedup:.2f},"{chapter}","{status}"'
+            f'"{name}",{baseline:.4f},{optimized:.4f},{speedup:.2f},"{chapter}","{status}",'
+            f'"{pair_role}","{chapter_alignment}","{story_note}"'
         )
 
     return "\n".join(lines)
@@ -93,7 +97,7 @@ def export_detailed_csv(data: Dict[str, Any]) -> str:
     lines = [
         "Benchmark,Chapter,Baseline Time (ms),Optimized Time (ms),Speedup,"
         "Baseline Memory (MB),Optimized Memory (MB),Memory Reduction (%),"
-        "Techniques Applied,LLM Patches,Patch Success Rate"
+        "Techniques Applied,LLM Patches,Patch Success Rate,Pair Role,Chapter Alignment,Story Note"
     ]
 
     for b in benchmarks:
@@ -111,11 +115,14 @@ def export_detailed_csv(data: Dict[str, Any]) -> str:
         techniques_str = "; ".join(techniques) if techniques else ""
         llm_patches = b.get("llm_patches_applied", 0)
         patch_success = b.get("patch_success_rate", 0)
+        pair_role = b.get("pair_role", "") or ""
+        chapter_alignment = b.get("chapter_alignment", "") or ""
+        story_note = str(b.get("story_note", "") or "").replace('"', '""')
 
         lines.append(
             f'"{name}","{chapter}",{baseline:.4f},{optimized:.4f},{speedup:.2f},'
             f"{baseline_mem:.2f},{optimized_mem:.2f},{mem_reduction:.1f},"
-            f'"{techniques_str}",{llm_patches},{patch_success:.0f}'
+            f'"{techniques_str}",{llm_patches},{patch_success:.0f},"{pair_role}","{chapter_alignment}","{story_note}"'
         )
 
     return "\n".join(lines)
@@ -158,7 +165,8 @@ def load_flame_graph_data(code_root: Path = CODE_ROOT) -> Dict[str, Any]:
             events, warning = _read_trace_events(trace_path, label="chrome trace")
             if warning is not None:
                 raise ValueError(warning)
-            assert events is not None
+            if events is None:
+                raise ValueError(f"chrome trace reader returned no events for {trace_path}")
             ignored_events = 0
 
             kernel_times: Dict[str, Dict[str, float]] = {}
@@ -236,7 +244,8 @@ def load_memory_timeline(code_root: Path = CODE_ROOT) -> Dict[str, Any]:
                 data, warning = _read_json_object(memory_path, label="memory timeline")
                 if warning is not None:
                     raise ValueError(warning)
-                assert data is not None
+                if data is None:
+                    raise ValueError(f"memory timeline reader returned no payload for {memory_path}")
                 memory_data.update(data)
                 memory_data["has_real_data"] = True
             else:
@@ -282,7 +291,8 @@ def load_cpu_gpu_timeline(code_root: Path = CODE_ROOT) -> Dict[str, Any]:
             events, warning = _read_trace_events(trace_path, label="cpu/gpu timeline")
             if warning is not None:
                 raise ValueError(warning)
-            assert events is not None
+            if events is None:
+                raise ValueError(f"cpu/gpu timeline reader returned no events for {trace_path}")
             ignored_events = 0
 
             min_ts = float("inf")
@@ -404,7 +414,8 @@ def load_hta_analysis(code_root: Path = CODE_ROOT) -> Dict[str, Any]:
             data, warning = _read_json_object(hta_path, label="HTA analysis")
             if warning is not None:
                 raise ValueError(warning)
-            assert data is not None
+            if data is None:
+                raise ValueError(f"HTA analysis reader returned no payload for {hta_path}")
             hta_data.update(data)
         except Exception as exc:
             hta_data["error"] = str(exc)
@@ -430,7 +441,8 @@ def load_torch_profiler(code_root: Path = CODE_ROOT) -> Dict[str, Any]:
         summary, warning = _read_json_object(summary_path, label="torch profiler summary")
         if warning is not None:
             raise ValueError(warning)
-        assert summary is not None
+        if summary is None:
+            raise ValueError(f"torch profiler summary reader returned no payload for {summary_path}")
         data.update(summary)
     except Exception as exc:
         data["error"] = str(exc)
@@ -442,7 +454,8 @@ def load_torch_profiler(code_root: Path = CODE_ROOT) -> Dict[str, Any]:
             metadata_payload, warning = _read_json_object(meta_path, label="torch profiler metadata")
             if warning is not None:
                 raise ValueError(warning)
-            assert metadata_payload is not None
+            if metadata_payload is None:
+                raise ValueError(f"torch profiler metadata reader returned no payload for {meta_path}")
             data["metadata"] = metadata_payload
         except Exception as exc:
             data.setdefault("metadata_error", str(exc))

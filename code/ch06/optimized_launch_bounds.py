@@ -19,12 +19,12 @@ class OptimizedLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.input_data: Optional[torch.Tensor] = None
         self.output_data: Optional[torch.Tensor] = None
         self.N = 1024 * 1024  # 1M elements
-        self.iterations = 5
+        self.kernel_launches_per_timed_call = 48
         self._extension = None
         # Launch bounds benchmark - fixed input size
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
-            tokens_per_iteration=float(self.N),
+            tokens_per_iteration=float(self.N * self.kernel_launches_per_timed_call),
         )
     
     def setup(self) -> None:
@@ -34,16 +34,22 @@ class OptimizedLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         self.input_data = torch.linspace(0.0, 1.0, self.N, dtype=torch.float32, device=self.device)
         self.output_data = torch.zeros(self.N, dtype=torch.float32, device=self.device)
-        self._extension.launch_bounds_optimized(self.input_data, self.output_data, 1)
+        self._extension.launch_bounds_optimized(self.input_data, self.output_data, 8)
+        self._synchronize()
         torch.manual_seed(42)
         self.input_data = torch.linspace(0.0, 1.0, self.N, dtype=torch.float32, device=self.device)
         self.output_data = torch.zeros(self.N, dtype=torch.float32, device=self.device)
+        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: kernel with launch bounds."""
         assert self._extension is not None and self.input_data is not None and self.output_data is not None
         with self._nvtx_range("optimized_launch_bounds"):
-            self._extension.launch_bounds_optimized(self.input_data, self.output_data, self.iterations)
+            self._extension.launch_bounds_optimized(
+                self.input_data,
+                self.output_data,
+                self.kernel_launches_per_timed_call,
+            )
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
@@ -78,7 +84,7 @@ class OptimizedLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_kernel_fundamentals_metrics
         return compute_kernel_fundamentals_metrics(
             num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            num_iterations=1,
+            num_iterations=self.kernel_launches_per_timed_call,
         )
 
     def validate_result(self) -> Optional[str]:

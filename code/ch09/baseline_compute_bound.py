@@ -11,8 +11,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range  # noqa: E402
@@ -100,7 +98,7 @@ class BaselineComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
         total_bytes = (self.N + self.N) * element_size * self.repeats
         
         # Use elapsed time from last run if available
-        elapsed_ms = getattr(self, '_last_elapsed_ms', 1.0)
+        elapsed_ms = getattr(self, '_last_elapsed_ms', None)
         
         return compute_roofline_metrics(
             total_flops=total_flops,
@@ -120,6 +118,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineComputeBoundBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

@@ -8,6 +8,7 @@ from core.utils.chapter_compare_template import _parse_compare_cli_args
 def test_parse_compare_cli_args_non_compare_invocation_returns_defaults() -> None:
     args = _parse_compare_cli_args(["--validity-profile", "portable"], argv0="pytest")
     assert args.validity_profile is None
+    assert args.allow_foreign_gpu_processes is False
     assert args.profile == "none"
     assert args.examples is None
 
@@ -15,6 +16,7 @@ def test_parse_compare_cli_args_non_compare_invocation_returns_defaults() -> Non
 def test_parse_compare_cli_args_absent() -> None:
     args = _parse_compare_cli_args([], argv0="compare.py")
     assert args.validity_profile is None
+    assert args.allow_foreign_gpu_processes is False
     assert args.profile == "none"
     assert args.examples is None
 
@@ -24,6 +26,7 @@ def test_parse_compare_cli_args_with_validity_and_profile_and_examples() -> None
         [
             "--validity-profile",
             "portable",
+            "--allow-foreign-gpu-processes",
             "--profile",
             "minimal",
             "--examples",
@@ -34,6 +37,7 @@ def test_parse_compare_cli_args_with_validity_and_profile_and_examples() -> None
         argv0="compare.py",
     )
     assert args.validity_profile == "portable"
+    assert args.allow_foreign_gpu_processes is True
     assert args.profile == "minimal"
     assert args.examples == ["gemm", "attention", "decode"]
 

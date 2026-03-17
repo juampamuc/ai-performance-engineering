@@ -21,5 +21,3 @@ def get_benchmark() -> Level2Streams:
     return Level2Streams()
 
 
-if __name__ == "__main__":
-    run_level(2)

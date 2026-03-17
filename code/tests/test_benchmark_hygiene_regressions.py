@@ -27,7 +27,12 @@ from labs.real_world_models.deepseek_r1_moe_optimization import (
 from labs.real_world_models.gpt4_architecture_optimization import (
     get_benchmark as get_gpt4_benchmark,
 )
-from core.harness.run_benchmarks import _collect_stale_benchmark_orphan_pids, _reap_run_descendants
+from core.harness.run_benchmarks import (
+    INFORMATIONAL_BENCHMARKS,
+    _collect_current_run_benchmark_orphan_pids,
+    _collect_stale_benchmark_orphan_pids,
+    _reap_run_descendants,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -74,20 +79,26 @@ def test_ch02_cublas_metrics_report_gemm_workload_not_transfer_placeholders() ->
 
 def test_ch07_and_ch08_sources_do_not_ship_artificial_baseline_penalties() -> None:
     hbm_copy_source = (REPO_ROOT / "ch07" / "baseline_hbm_copy.cu").read_text(encoding="utf-8")
-    hbm_common_source = (REPO_ROOT / "ch08" / "hbm_common.cuh").read_text(encoding="utf-8")
+    threshold_source = (REPO_ROOT / "ch08" / "threshold_common.cuh").read_text(encoding="utf-8")
 
     assert "scalar_copy_kernel<<<64, 64>>>" not in hbm_copy_source
     assert "scalar_copy_kernel<<<blocks, threads>>>" in hbm_copy_source
-    assert "volatile float replay" not in hbm_common_source
+    assert "const volatile float* volatile_inputs" not in threshold_source
+    assert "volatile float redundant_eval" not in threshold_source
+    assert "expensive_transform(-value" not in threshold_source
 
 
 def test_ch07_tma_copy_surfaces_neighbor_copy_plus_descriptor_tma_story() -> None:
     optimized_wrapper = (REPO_ROOT / "ch07" / "optimized_tma_copy.py").read_text(encoding="utf-8")
+    optimized_cuda = (REPO_ROOT / "ch07" / "optimized_tma_copy.cu").read_text(encoding="utf-8")
     readme = (REPO_ROOT / "ch07" / "README.md").read_text(encoding="utf-8")
 
     assert "Pipeline + Tensor-Map Neighbor Copy" in optimized_wrapper
+    assert "dst[global_row * N + global_col] = combine_values(" in optimized_cuda
+    assert "output_tile[local_row][local_col] = combine_values(" in optimized_cuda
+    assert "output_tile" in optimized_cuda
     assert "tma_bulk_tensor_2d" in readme
-    assert "neighbor-copy staging story" in readme
+    assert "legacy async-neighbor demo" in readme
 
 
 def test_occupancy_tuning_variants_match_their_filenames() -> None:
@@ -136,14 +147,15 @@ def test_flexattention_metrics_use_attention_formula_and_hot_paths_skip_clone() 
     assert "self.output = result.detach().float().clone()" not in flash4_source
 
 
-def test_ch10_flash_attention_no_longer_forces_blackwell_to_efficient_attention() -> None:
+def test_ch10_flash_attention_requires_real_flashattention_on_sm100() -> None:
     source = (REPO_ROOT / "ch10" / "optimized_flash_attention.py").read_text(encoding="utf-8")
-    backend_section = source.split("def _candidate_backends", maxsplit=1)[1].split(
-        "def _resolve_sdpa_backends", maxsplit=1
+    resolve_section = source.split("def _resolve_attention_runner", maxsplit=1)[1].split(
+        "def _run_attention", maxsplit=1
     )[0]
     assert "candidates.append([SDPBackend.FLASH_ATTENTION])" in source
     assert "candidates.append([SDPBackend.EFFICIENT_ATTENTION])" in source
-    assert "if major >= 10" not in backend_section
+    assert "if major >= 10" in resolve_section
+    assert "FAIL FAST: FlashAttention required for ch10" in resolve_section
     assert "self._selected_backend_name = candidate[0].name.lower()" in source
 
 
@@ -155,6 +167,102 @@ def test_ch10_flash_attention_prefers_external_flash_engines_before_sdpa_fallbac
 
     assert flash3_idx < flash2_idx
     assert "self._selected_engine_name = \"sdpa\"" in source
+
+
+def test_ch18_paged_attention_uses_real_block_table_sparse_kernel() -> None:
+    common_source = (REPO_ROOT / "ch18" / "paged_attn_split_common.py").read_text(encoding="utf-8")
+    optimized_source = (REPO_ROOT / "ch18" / "optimized_paged_attn_layout.py").read_text(encoding="utf-8")
+
+    assert "self.block_table" in common_source
+    assert "torch.roll(block_ids" in common_source
+    assert "create_block_mask, flex_attention" in common_source
+    assert "dense_mask[:, 0][allowed] = 0.0" in common_source
+    assert "return create_block_mask(" in common_source
+    assert 'torch.compile(flex_attention, mode="max-autotune")' in common_source
+    assert "return self._flex_attention_fn(self.q, self.k_dense, self.v_dense, block_mask=self.block_mask)" in common_source
+    assert "_gather_paged_kv" not in common_source
+    assert "LayoutPagedAttnBase" in optimized_source
+
+
+def test_ch04_nvshmem_symmetric_broadcast_overlap_defines_done_event() -> None:
+    source = (REPO_ROOT / "ch04" / "nvshmem_vs_nccl_benchmark.py").read_text(encoding="utf-8")
+    symmetric_section = source.split("def _measure_symmetric_broadcast", maxsplit=1)[1].split(
+        "def sweep_sizes", maxsplit=1
+    )[0]
+
+    assert "done = torch.cuda.Event() if overlap_compute and comm_stream is not None else None" in symmetric_section
+    assert "if overlap_compute and comm_stream is not None and done is not None:" in symmetric_section
+
+
+def test_ch19_vectorization_memory_preconverts_fp16_outside_hot_loop() -> None:
+    source = (REPO_ROOT / "ch19" / "optimized_vectorization_memory.py").read_text(encoding="utf-8")
+    setup_section = source.split("def benchmark_fn", maxsplit=1)[0]
+    benchmark_section = source.split("def benchmark_fn", maxsplit=1)[1].split(
+        "def capture_verification_payload", maxsplit=1
+    )[0]
+
+    assert "_cached_a_fp16" not in source
+    assert "_cached_b_fp16" not in source
+    assert "self._tensor_a_fp16 = self.tensor_a.to(self._compute_dtype)" in setup_section
+    assert "self._tensor_b_fp16 = self.tensor_b.to(self._compute_dtype)" in setup_section
+    assert "torch.add(self._tensor_a_fp16, self._tensor_b_fp16, out=self._work)" in benchmark_section
+    assert ".to(self._compute_dtype)" not in benchmark_section
+
+
+def test_moe_cuda_decode_attention_preconverts_bf16_outside_hot_loop() -> None:
+    source = (REPO_ROOT / "labs" / "moe_cuda" / "optimized_decode_attention.py").read_text(encoding="utf-8")
+    setup_section = source.split("def benchmark_fn", maxsplit=1)[0]
+    benchmark_section = source.split("def benchmark_fn", maxsplit=1)[1].split(
+        "def finalize_iteration_metrics", maxsplit=1
+    )[0]
+
+    assert "def _cached_bf16" not in source
+    assert "self._refresh_bf16_cache(force=True)" in setup_section
+    assert "self._q_bf16 = self.q.to(torch.bfloat16)" not in benchmark_section
+    assert "self._refresh_bf16_cache()" in source
+    assert "q = self._q_bf16" in benchmark_section
+    assert "k = self._k_bf16" in benchmark_section
+    assert "v = self._v_bf16" in benchmark_section
+
+
+def test_ch20_multiple_unoptimized_preconverts_activation_dtype_outside_hot_loop() -> None:
+    source = (REPO_ROOT / "ch20" / "optimized_multiple_unoptimized.py").read_text(encoding="utf-8")
+    setup_section = source.split("def benchmark_fn", maxsplit=1)[0]
+    benchmark_section = source.split("def benchmark_fn", maxsplit=1)[1].split(
+        "def capture_verification_payload", maxsplit=1
+    )[0]
+
+    assert "self._model_dtype =" in setup_section
+    assert "self._x_model_dtype = self.x.to(dtype=self._model_dtype)" in setup_section
+    assert "next(self.model.parameters()).dtype" not in benchmark_section
+    assert ".to(dtype=" not in benchmark_section
+    assert "self.output = self.model(self._x_model_dtype)" in benchmark_section
+
+
+def test_ch13_regional_compile_moves_fp32_verification_conversion_out_of_hot_loop() -> None:
+    source = (REPO_ROOT / "ch13" / "optimized_regional_compile.py").read_text(encoding="utf-8")
+    benchmark_section = source.split("def benchmark_fn", maxsplit=1)[1].split(
+        "def capture_verification_payload", maxsplit=1
+    )[0]
+    capture_section = source.split("def capture_verification_payload", maxsplit=1)[1].split(
+        "def teardown", maxsplit=1
+    )[0]
+
+    assert ".detach().float().clone()" not in benchmark_section
+    assert "self.output = self.model(x).detach().clone()" in benchmark_section
+    assert "output=self._verify_output.float().clone()" in capture_section
+
+
+def test_ch10_tcgen05_warp_specialized_kernel_uses_direct_epilogue_copy() -> None:
+    optimized_wrapper = (REPO_ROOT / "ch10" / "optimized_tcgen05_warp_specialization.py").read_text(
+        encoding="utf-8"
+    )
+    kernel_source = (REPO_ROOT / "ch10" / "tcgen05_warp_specialized.cu").read_text(encoding="utf-8")
+
+    assert "matmul_tcgen05_warp_specialized(self.matrix_a, self.matrix_b)" in optimized_wrapper
+    assert "torch::zeros({m, n}, options)" not in kernel_source
+    assert "axpby(" not in kernel_source
+    assert "copy(tDrAcc, tDgD);" in kernel_source
 
 
 def test_moe_cuda_graphs_journey_uses_real_graph_capture_and_correct_leveling() -> None:
@@ -215,6 +323,28 @@ def test_ch15_optimized_monolithic_uses_token_equivalent_decode_steps() -> None:
     assert "self.output = self.model.decode(kv_cache, num_tokens=self.num_tokens)" not in optimized_source
 
 
+def test_ch15_baseline_monolithic_uses_harness_timing_not_per_token_cuda_events() -> None:
+    source = (REPO_ROOT / "ch15" / "baseline_inference_monolithic.py").read_text(encoding="utf-8")
+
+    assert "torch.cuda.Event" not in source
+    assert "self._last_elapsed_ms" in source
+    assert "finalize_iteration_metrics" in source
+    assert "self.model.decode(decode_state, num_tokens=1)" in source
+
+
+def test_ch03_pageable_copy_is_not_marked_informational() -> None:
+    assert "pageable_copy" not in INFORMATIONAL_BENCHMARKS.get("ch03", set())
+
+
+def test_clean_all_benchmark_pairs_tracker_is_rebaselined() -> None:
+    tracker = REPO_ROOT / ".cursor" / "plans" / "clean_all_benchmark_pairs_6db4c258.plan.md"
+    text = tracker.read_text(encoding="utf-8")
+
+    assert "status: pending" not in text
+    assert "Rebaselined on 2026-03-16 against current repo truth" in text
+    assert "tests/test_benchmark_hygiene_regressions.py" in text
+
+
 def test_run_benchmarks_reaps_orphaned_benchmark_processes_from_older_runs() -> None:
     with tempfile.TemporaryDirectory() as proc_dir:
         proc_root = Path(proc_dir)
@@ -254,6 +384,54 @@ def test_run_benchmarks_reaps_orphaned_benchmark_processes_from_older_runs() -> 
         )
 
         assert stale == [1234]
+
+
+def test_run_benchmarks_identifies_detached_current_run_processes_by_owner_pid() -> None:
+    with tempfile.TemporaryDirectory() as proc_dir:
+        proc_root = Path(proc_dir)
+
+        owner_dir = proc_root / "555"
+        owner_dir.mkdir()
+        (owner_dir / "stat").write_text("555 (python3) S 1 0 0 0 0\n", encoding="utf-8")
+
+        orphan_dir = proc_root / "1234"
+        orphan_dir.mkdir()
+        (orphan_dir / "stat").write_text("1234 (python3) S 1 0 0 0 0\n", encoding="utf-8")
+        (orphan_dir / "environ").write_bytes(
+            b"AISP_BENCHMARK_OWNER_RUN_ID=current-run\0"
+            b"AISP_BENCHMARK_OWNER_PID=555\0"
+            b"PWD=" + str(REPO_ROOT).encode("utf-8") + b"\0"
+        )
+        (orphan_dir / "cmdline").write_bytes(b"/usr/bin/python3\0-m\0core.harness.isolated_runner\0")
+
+        descendant_dir = proc_root / "1235"
+        descendant_dir.mkdir()
+        (descendant_dir / "stat").write_text("1235 (python3) S 555 0 0 0 0\n", encoding="utf-8")
+        (descendant_dir / "environ").write_bytes(
+            b"AISP_BENCHMARK_OWNER_RUN_ID=current-run\0"
+            b"AISP_BENCHMARK_OWNER_PID=555\0"
+            b"PWD=" + str(REPO_ROOT).encode("utf-8") + b"\0"
+        )
+        (descendant_dir / "cmdline").write_bytes(b"/usr/bin/python3\0-m\0core.harness.isolated_runner\0")
+
+        other_owner_dir = proc_root / "1236"
+        other_owner_dir.mkdir()
+        (other_owner_dir / "stat").write_text("1236 (python3) S 1 0 0 0 0\n", encoding="utf-8")
+        (other_owner_dir / "environ").write_bytes(
+            b"AISP_BENCHMARK_OWNER_RUN_ID=current-run\0"
+            b"AISP_BENCHMARK_OWNER_PID=999\0"
+            b"PWD=" + str(REPO_ROOT).encode("utf-8") + b"\0"
+        )
+        (other_owner_dir / "cmdline").write_bytes(b"/usr/bin/python3\0-m\0core.harness.isolated_runner\0")
+
+        current_orphans = _collect_current_run_benchmark_orphan_pids(
+            current_run_id="current-run",
+            current_owner_pid=555,
+            repo_root=REPO_ROOT,
+            proc_root=proc_root,
+        )
+
+        assert current_orphans == [1234]
 
 
 def test_run_benchmarks_reaps_current_run_descendants() -> None:

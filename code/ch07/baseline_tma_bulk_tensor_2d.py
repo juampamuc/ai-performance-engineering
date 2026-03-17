@@ -5,7 +5,6 @@ from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
@@ -44,7 +43,3 @@ def get_benchmark() -> BaselineTMABulkTensor2D:
     """Factory for discover_benchmarks()."""
     return BaselineTMABulkTensor2D()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

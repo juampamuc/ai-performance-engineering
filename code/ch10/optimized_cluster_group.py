@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 from core.benchmark.verification import simple_signature
 from core.harness.hardware_capabilities import ensure_dsmem_supported
@@ -83,6 +83,3 @@ def get_benchmark() -> OptimizedClusterGroupBenchmark:
     return OptimizedClusterGroupBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

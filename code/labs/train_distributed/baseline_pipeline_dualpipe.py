@@ -85,10 +85,6 @@ def main():
     print(format_telemetry("baseline-dualpipe", telemetry_total))
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "pipeline_dualpipe.py",

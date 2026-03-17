@@ -203,6 +203,7 @@
 - Prefer structured provenance in machine-readable artifacts over console-only explanations. If a result can only be explained from log text, add fields, ledgers, or reports so the next review is trustworthy and auditable.
 - When expectation updates are rejected, separate true performance drift from provenance-only rejection. Record which provenance fields differ and rerun unstable cases before refreshing stored expectations.
 - When analyzing mismatches, improve the artifact trail as needed to make the conclusion more trustworthy, explainable, verifiable, and auditable rather than relying on manual reconstruction.
+- If the user explicitly requests expectation refreshes from the current host, it is acceptable to update expectations from a virtualized environment as long as GPU clocks are locked, the run provenance is recorded, and the task summary clearly states that the source run was virtualized/non-canonical. This exception does not relax any cluster field-report or publish-grade artifact requirements.
 
 ## NVFP4 Grouped GEMM Perf Playbook (CRITICAL)
 - Treat `--verify` as the hard gate for every tuning candidate; do not promote non-verified wins.

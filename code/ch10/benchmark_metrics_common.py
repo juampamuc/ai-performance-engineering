@@ -39,6 +39,23 @@ def compute_pipeline_variant_metrics(
     return metrics
 
 
+def compute_warp_specialization_metrics(
+    params: Mapping[str, Any],
+    *,
+    num_stages: int,
+    producer_warps: int = 1,
+    compute_warps: int = 1,
+    consumer_warps: int = 1,
+    **flags: bool | int | float,
+) -> dict[str, float]:
+    metrics = compute_pipeline_variant_metrics(params, num_stages=num_stages, **flags)
+    metrics["pipeline.warp_specialized"] = 1.0
+    metrics["pipeline.producer_warps"] = float(producer_warps)
+    metrics["pipeline.compute_warps"] = float(compute_warps)
+    metrics["pipeline.consumer_warps"] = float(consumer_warps)
+    return metrics
+
+
 def compute_batch_workload_metrics(
     *,
     total_batch_size: int,

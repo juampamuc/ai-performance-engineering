@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class BaselineKVCacheManagementBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -150,8 +150,8 @@ class BaselineKVCacheManagementBenchmark(VerificationPayloadMixin, BaseBenchmark
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),

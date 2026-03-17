@@ -109,8 +109,7 @@ class OptimizedAutogradCompiledBenchmark(VerificationPayloadMixin, BaseBenchmark
                 self.static_input.copy_(self.inputs)
                 self.static_target.copy_(self.targets)
                 self.graph.replay()
-            self.capture_stream.synchronize()
-            self.output = self.output_buffer.detach().clone()
+            self.output = self.output_buffer.detach()
         if self.inputs is None or self.targets is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 
@@ -178,8 +177,8 @@ class OptimizedAutogradCompiledBenchmark(VerificationPayloadMixin, BaseBenchmark
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=None,
+            reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
             precision_type="fp8",
         )
 

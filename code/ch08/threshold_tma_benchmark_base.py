@@ -10,16 +10,32 @@ from ch08.threshold_benchmark_base import ThresholdBenchmarkBase
 
 
 class ThresholdBenchmarkBaseTMA(ThresholdBenchmarkBase):
-    """Threshold benchmark that only runs on Blackwell/GB-series GPUs."""
+    """Blackwell bridge control for the threshold kernel on a TMA path.
+
+    The chapter-native warp-divergence story lives in `threshold`. This pair keeps
+    the same threshold workload shape but swaps in a TMA-backed launch path so the
+    repo still exposes a real baseline/optimized bridge into the later TMA chapters.
+    """
 
     requirement_label = "threshold_tma"
-    rows: int = 1 << 25  # Larger working set for TMA microbenchmark
-    threshold: float = 0.05
-    inner_iterations: int = 16
+    rows: int = ThresholdBenchmarkBase.rows
+    threshold: float = ThresholdBenchmarkBase.threshold
+    inner_iterations: int = ThresholdBenchmarkBase.inner_iterations
 
     def setup(self) -> None:
         ensure_blackwell_tma_supported("Chapter 8 threshold TMA pipeline")
         super().setup()
 
     def _generate_inputs(self) -> torch.Tensor:  # type: ignore[override]
-        return torch.empty(self.rows, device=self.device, dtype=torch.float32).uniform_(-1.0, 1.0)
+        return super()._generate_inputs()
+
+    def get_custom_metrics(self) -> dict | None:
+        metrics = super().get_custom_metrics() or {}
+        metrics.update(
+            {
+                "story.control_pair": 1.0,
+                "story.chapter_native_exemplar": 0.0,
+                "story.bridge_to_ch10": 1.0,
+            }
+        )
+        return metrics

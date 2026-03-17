@@ -10,6 +10,12 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
+
+from typer.testing import CliRunner
+
+from cli.aisp import app
+from core.benchmark import bench_commands
 
 
 def _write(path: Path, content: str) -> None:
@@ -389,3 +395,51 @@ def get_benchmark() -> BaseBenchmark:
 
     assert payload["summary"]["failed"] == 0, payload
     assert payload["summary"]["skipped"] == 1, payload
+
+
+def test_bench_verify_cli_defaults_bench_root_to_repo_root() -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyQuarantineManager:
+        def __init__(self, cache_dir: Path) -> None:
+            self.cache_dir = cache_dir
+
+        def get_all_records(self) -> dict[str, object]:
+            return {}
+
+    class _DummyVerifyRunner:
+        def __init__(self, cache_dir: Path, quarantine_manager: object) -> None:
+            self.cache_dir = cache_dir
+            self.quarantine_manager = quarantine_manager
+
+    def _fake_resolve_target_chapters(targets, *, bench_root, repo_root):
+        captured["targets"] = list(targets)
+        captured["bench_root"] = bench_root
+        captured["repo_root"] = repo_root
+        return [bench_root / "ch99"], {}
+
+    runner = CliRunner()
+    with patch("core.benchmark.bench_commands.resolve_target_chapters", side_effect=_fake_resolve_target_chapters), patch(
+        "core.discovery.chapter_slug", return_value="ch99"
+    ), patch("core.discovery.discover_benchmarks", return_value=[]), patch(
+        "core.benchmark.quarantine.QuarantineManager", _DummyQuarantineManager
+    ), patch("core.benchmark.verify_runner.VerifyRunner", _DummyVerifyRunner):
+        result = runner.invoke(
+            app,
+            [
+                "bench",
+                "verify",
+                "-t",
+                "ch99",
+                "--skip-jitter",
+                "--skip-fresh-input",
+                "--skip-workload",
+            ],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    expected_root = Path(bench_commands.__file__).resolve().parents[2]
+    assert Path(captured["bench_root"]) == expected_root
+    assert Path(captured["repo_root"]) == expected_root
+    assert captured["targets"] == ["ch99"]
+    assert "No benchmark pairs found" in result.stdout

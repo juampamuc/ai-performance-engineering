@@ -56,6 +56,9 @@ def build_response(
 ) -> Dict[str, Any]:
     """Build a response envelope mirroring MCP-style metadata."""
     status_is_error = _looks_like_error(result, had_exception)
+    if status_is_error and isinstance(result, dict) and result.get("error") and "error_type" not in result:
+        result = dict(result)
+        result["error_type"] = "unhandled_exception" if had_exception else "unknown_error"
     payload: Dict[str, Any] = {
         "tool": tool,
         "status": "error" if status_is_error else "ok",
@@ -66,6 +69,11 @@ def build_response(
         "result": result,
         "context_summary": get_cached_context("summary"),
     }
+    if status_is_error and isinstance(result, dict):
+        if result.get("error") is not None:
+            payload["error"] = result["error"]
+        if result.get("error_type") is not None:
+            payload["error_type"] = result["error_type"]
     if include_context:
         payload["context"] = get_cached_context(context_level)
         payload["context_level"] = "full" if context_level == "full" else "summary"

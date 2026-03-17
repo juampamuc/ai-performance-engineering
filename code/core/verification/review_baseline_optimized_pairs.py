@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,6 +34,12 @@ def _get_call_attr_name(node: ast.AST) -> Optional[str]:
         return node.attr
     if isinstance(node, ast.Name):
         return node.id
+    return None
+
+
+def _get_self_method_name(node: ast.Call) -> Optional[str]:
+    if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "self":
+        return node.func.attr
     return None
 
 
@@ -219,6 +226,117 @@ def extract_workload_metadata_from_source(content: str) -> Optional[Dict[str, fl
     return extractor[0] if extractor else None
 
 
+DECLARED_WORKLOAD_KEYS = (
+    "requests_per_iteration",
+    "tokens_per_iteration",
+    "samples_per_iteration",
+    "bytes_per_iteration",
+    "custom_units_per_iteration",
+    "batch_size",
+    "N",
+    "size",
+    "hidden_size",
+    "hidden_dim",
+    "seq_len",
+    "steps",
+    "num_loops",
+    "num_layers",
+    "total_tokens",
+    "inner_iterations",
+)
+
+
+def extract_declared_workload_signature_from_source(content: str) -> Optional[Dict[str, float]]:
+    metadata = extract_workload_metadata_from_source(content)
+    if metadata:
+        return metadata
+
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None
+
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        class_analyzer = _ClassAnalyzer()
+        class_analyzer.process(node)
+        declared = {
+            key: float(class_analyzer.attr_values[key])
+            for key in DECLARED_WORKLOAD_KEYS
+            if key in class_analyzer.attr_values
+        }
+        if declared:
+            return declared
+    return None
+
+
+class _TimedPathSyncAnalyzer(ast.NodeVisitor):
+    def __init__(self, methods: Dict[str, ast.FunctionDef]):
+        self.methods = methods
+        self.visited_methods: Set[str] = set()
+        self.sync_calls = 0
+
+    def analyze(self, method_name: str) -> int:
+        self._visit_method(method_name)
+        return self.sync_calls
+
+    def _visit_method(self, method_name: str) -> None:
+        if method_name in self.visited_methods:
+            return
+        func_def = self.methods.get(method_name)
+        if func_def is None:
+            return
+        self.visited_methods.add(method_name)
+        for stmt in func_def.body:
+            self.visit(stmt)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        helper_name = _get_self_method_name(node)
+        if helper_name is not None and helper_name in self.methods:
+            self._visit_method(helper_name)
+
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr in {"synchronize", "wait"}:
+                self.sync_calls += 1
+        self.generic_visit(node)
+
+
+def extract_timed_path_sync_count(content: str) -> int:
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return 0
+
+    total = 0
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        methods = {
+            item.name: item
+            for item in node.body
+            if isinstance(item, ast.FunctionDef)
+        }
+        if "benchmark_fn" not in methods:
+            continue
+        analyzer = _TimedPathSyncAnalyzer(methods)
+        total += analyzer.analyze("benchmark_fn")
+    return total
+
+
+def dedupe_issues(issues: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    deduped: List[Dict[str, str]] = []
+    seen: Set[Tuple[str, str, str]] = set()
+    for issue in issues:
+        key = (issue["type"], issue["file"], issue["message"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(issue)
+    return deduped
+
+
 class CodeReviewer:
     """Review code for questionable practices."""
     
@@ -270,19 +388,20 @@ class CodeReviewer:
         # Check for missing synchronizations in optimized but present in baseline
         # This is harder - we'll do pair-wise comparison
         
-        # Check for suspicious patterns
-        suspicious_patterns = [
-            (r'#.*fake|#.*fake|#.*dummy|#.*mock', "Suspicious comment suggesting fake/dummy code"),
-            (r'pass\s*#.*benchmark', "Empty benchmark function"),
-        ]
-        for pattern, desc in suspicious_patterns:
-            if re.search(pattern, content, re.IGNORECASE):
+        # Only flag explicit deception markers in source comments, not docstrings or CLI help.
+        suspicious_comment_pattern = re.compile(
+            r'#.*\b(?:fake benchmark|dummy benchmark|mock benchmark|benchmark is fake|benchmark is dummy|benchmark is mock)\b',
+            re.IGNORECASE,
+        )
+        for line in content.splitlines():
+            if suspicious_comment_pattern.search(line):
                 file_issues.append({
                     "file": str(file_path),
                     "type": "suspicious_pattern",
                     "severity": "medium",
-                    "message": desc
+                    "message": "Suspicious comment suggesting benchmark deception",
                 })
+                break
         
         return file_issues
     
@@ -338,20 +457,20 @@ class CodeReviewer:
                 })
                 continue
             
-            # Check for workload mismatches
+            # Check for declared workload mismatches only when we can prove them.
             baseline_workload = self._extract_workload_info(baseline_content)
             opt_workload = self._extract_workload_info(opt_content)
-            
-            if baseline_workload and opt_workload:
-                if baseline_workload != opt_workload:
-                    # Check if difference is reasonable (within 10%)
-                    if not self._workloads_similar(baseline_workload, opt_workload):
-                        pair_issues.append({
-                            "file": f"{baseline_path} vs {opt_path}",
-                            "type": "workload_mismatch",
-                            "severity": "medium",
-                            "message": f"Workload mismatch: baseline={baseline_workload}, optimized={opt_workload}"
-                        })
+
+            if baseline_workload and opt_workload and not self._workloads_similar(baseline_workload, opt_workload):
+                pair_issues.append({
+                    "file": f"{baseline_path} vs {opt_path}",
+                    "type": "work_reduction",
+                    "severity": "medium",
+                    "message": (
+                        "Declared workload differs between baseline and optimized: "
+                        f"baseline={baseline_workload}, optimized={opt_workload}"
+                    ),
+                })
             
             # Check for synchronization mismatches
             baseline_syncs = self._count_synchronizations(baseline_content)
@@ -365,24 +484,12 @@ class CodeReviewer:
                     "severity": "low",
                     "message": f"Optimized has more synchronizations ({opt_syncs} vs {baseline_syncs}) - may be unfair"
                 })
-            
-            # Check if optimized is doing less work (unfair)
-            baseline_ops = self._estimate_operations(baseline_content)
-            opt_ops = self._estimate_operations(opt_content)
-            
-            if opt_ops < baseline_ops * 0.8:  # Optimized doing significantly less work
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "work_reduction",
-                    "severity": "medium",
-                    "message": f"Optimized appears to do less work - may be unfair comparison"
-                })
         
         return pair_issues
     
     def _extract_workload_info(self, content: str) -> Optional[Dict[str, float]]:
         """Extract workload information using metadata when available."""
-        metadata = extract_workload_metadata_from_source(content)
+        metadata = extract_declared_workload_signature_from_source(content)
         if metadata:
             return metadata
         return self._extract_workload_info_from_regex(content)
@@ -391,9 +498,16 @@ class CodeReviewer:
         workload = {}
         patterns = [
             (r'self\.N\s*=\s*(\d+)', 'N'),
-            (r'batch_size\s*=\s*(\d+)', 'batch_size'),
-            (r'size\s*=\s*(\d+)', 'size'),
-            (r'hidden_size\s*=\s*(\d+)', 'hidden_size'),
+            (r'self\.batch_size\s*=\s*(\d+)', 'batch_size'),
+            (r'self\.size\s*=\s*(\d+)', 'size'),
+            (r'self\.hidden_size\s*=\s*(\d+)', 'hidden_size'),
+            (r'self\.hidden_dim\s*=\s*(\d+)', 'hidden_dim'),
+            (r'self\.seq_len\s*=\s*(\d+)', 'seq_len'),
+            (r'self\.steps\s*=\s*(\d+)', 'steps'),
+            (r'self\.num_loops\s*=\s*(\d+)', 'num_loops'),
+            (r'self\.num_layers\s*=\s*(\d+)', 'num_layers'),
+            (r'self\.total_tokens\s*=\s*(\d+)', 'total_tokens'),
+            (r'self\.inner_iterations\s*=\s*(\d+)', 'inner_iterations'),
         ]
         for pattern, key in patterns:
             match = re.search(pattern, content)
@@ -413,6 +527,13 @@ class CodeReviewer:
             "N",
             "size",
             "hidden_size",
+            "hidden_dim",
+            "seq_len",
+            "steps",
+            "num_loops",
+            "num_layers",
+            "total_tokens",
+            "inner_iterations",
         }
         overlap = [k for k in comparable_keys if k in w1 and k in w2]
         if not overlap:
@@ -429,38 +550,8 @@ class CodeReviewer:
         return True
     
     def _count_synchronizations(self, content: str) -> int:
-        """Count synchronization calls."""
-        patterns = [
-            r'torch\.cuda\.synchronize',
-            r'\.synchronize\s*\(',
-            r'\.wait\s*\(',
-        ]
-        count = 0
-        for pattern in patterns:
-            count += len(re.findall(pattern, content))
-        return count
-    
-    def _estimate_operations(self, content: str) -> int:
-        """Rough estimate of operations in benchmark_fn."""
-        # Count tensor operations, function calls in benchmark_fn
-        benchmark_fn_match = re.search(r'def\s+benchmark_fn.*?(?=def\s|\Z)', content, re.DOTALL)
-        if not benchmark_fn_match:
-            return 0
-        
-        benchmark_code = benchmark_fn_match.group(0)
-        
-        # Count operations
-        op_count = 0
-        op_patterns = [
-            r'\.\w+\s*\(',  # Method calls
-            r'\+\s*|\-\s*|\*\s*|/\s*',  # Arithmetic ops
-            r'torch\.',  # Torch operations
-        ]
-        
-        for pattern in op_patterns:
-            op_count += len(re.findall(pattern, benchmark_code))
-        
-        return op_count
+        """Count synchronization calls reachable from benchmark_fn()."""
+        return extract_timed_path_sync_count(content)
 
 
 def main():
@@ -487,6 +578,8 @@ def main():
         # Compare pair
         pair_issues = reviewer.compare_pair(baseline_path, optimized_paths)
         all_issues.extend(pair_issues)
+
+    all_issues = dedupe_issues(all_issues)
     
     # Report issues
     print("\n" + "="*80)

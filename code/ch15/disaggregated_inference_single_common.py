@@ -16,7 +16,7 @@ from core.optimization.moe_inference import (
     allocate_kv_cache,
     env_override_int,
 )
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 @dataclass(frozen=True)

@@ -138,12 +138,13 @@ _load_env()
 def _check_ollama() -> bool:
     """Check if Ollama is running locally."""
     try:
+        import urllib.error
         import urllib.request
         url = os.environ.get('OLLAMA_HOST', 'http://localhost:11434') + '/api/tags'
         req = urllib.request.Request(url, method='GET')
         with urllib.request.urlopen(req, timeout=2):
             return True
-    except Exception:
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return False
 
 
@@ -278,7 +279,7 @@ def _call_openai(prompt: str, system: Optional[str], temperature: float,
                 import urllib.error
                 if isinstance(e, urllib.error.HTTPError) and e.read:
                     detail = e.read().decode()
-            except Exception:
+            except (AttributeError, OSError, UnicodeDecodeError):
                 pass
             raise RuntimeError(f"OpenAI API error: {e} {detail}") from e
 

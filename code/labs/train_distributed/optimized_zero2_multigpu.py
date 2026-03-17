@@ -206,10 +206,6 @@ def main():
         raise
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(

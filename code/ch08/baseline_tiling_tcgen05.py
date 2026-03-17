@@ -1,9 +1,4 @@
-"""Baseline tcgen05 tiling benchmark using cuBLAS (torch.matmul).
-
-This is the baseline wrapper for the SM100 tcgen05 example: it calls the tcgen05
-kernel and then copies the returned tensor into a preallocated output buffer.
-The optimized variant avoids this redundant copy.
-"""
+"""Baseline tcgen05 tiling benchmark using the generic B-layout path."""
 
 from __future__ import annotations
 
@@ -15,7 +10,7 @@ from ch08.tiling_benchmark_base_tcgen05 import TilingBenchmarkBaseTCGen05
 
 
 class BaselineTilingBenchmarkTCGen05(TilingBenchmarkBaseTCGen05):
-    """Baseline tcgen05 wrapper with an extra output copy."""
+    """Baseline tcgen05 wrapper that transposes B inside the extension."""
 
     nvtx_label = "baseline_tiling_tcgen05"
 
@@ -23,16 +18,9 @@ class BaselineTilingBenchmarkTCGen05(TilingBenchmarkBaseTCGen05):
         assert self.extension is not None
         assert self.matrix_a is not None
         assert self.matrix_b is not None
-        assert self.output is not None
-        result = self.extension.matmul_tiling_tcgen05(self.matrix_a, self.matrix_b)
-        self.output.copy_(result)
+        self.output = self.extension.matmul_tiling_tcgen05(self.matrix_a, self.matrix_b)
 
 
 def get_benchmark() -> BaselineTilingBenchmarkTCGen05:
     return BaselineTilingBenchmarkTCGen05()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from typing import List, Optional, Tuple, Type
 
 import sys
@@ -11,14 +12,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from core.common.device_utils import require_cuda_device
 from core.harness.arch_config import prefer_sdpa_backends
 
-
-def resolve_device() -> torch.device:
-    """Return a CUDA device or raise if unavailable."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA GPU is required for KV-cache compression benchmarks.")
-    return torch.device("cuda")
+resolve_device = partial(
+    require_cuda_device,
+    "CUDA GPU is required for KV-cache compression benchmarks.",
+)
 
 
 @dataclass

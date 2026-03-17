@@ -1,8 +1,43 @@
 {
+  "artifact_roles": {
+    "meta": [
+      "structured/mcp_cluster_smoke_test_ai-book-dev_meta.json",
+      "structured/mcp_cluster_smoke_test_localhost_meta.json"
+    ],
+    "multinode_readiness": [
+      "structured/mcp_cluster_smoke_test_multinode_readiness.json"
+    ],
+    "suite_steps": [
+      "structured/mcp_cluster_smoke_test_suite_steps.json"
+    ]
+  },
   "artifact_root": "runs/mcp_cluster_smoke_test",
   "files": [
+    "raw/mcp_cluster_smoke_test_localhost_hang_triage_readiness.log",
+    "raw/mcp_cluster_smoke_test_localhost_monitoring_expectations.log",
+    "raw/mcp_cluster_smoke_test_localhost_quick_friction.log",
+    "raw/mcp_cluster_smoke_test_suite/connectivity_probe.log",
+    "raw/mcp_cluster_smoke_test_suite/discovery.log",
+    "raw/mcp_cluster_smoke_test_suite/hang_triage_bundle.log",
+    "raw/mcp_cluster_smoke_test_suite/monitoring_expectations_all_nodes.log",
+    "raw/mcp_cluster_smoke_test_suite/preflight_services.log",
+    "raw/mcp_cluster_smoke_test_suite/quick_friction_all_nodes.log",
+    "raw/mcp_cluster_smoke_test_torchrun_connectivity_probe_node0.log",
     "structured/mcp_cluster_smoke_test_ai-book-dev_meta.json",
-    "structured/mcp_cluster_smoke_test_multinode_readiness.json"
+    "structured/mcp_cluster_smoke_test_dcgmi_discovery_localhost.txt",
+    "structured/mcp_cluster_smoke_test_localhost_container_runtime.txt",
+    "structured/mcp_cluster_smoke_test_localhost_hang_triage_readiness.json",
+    "structured/mcp_cluster_smoke_test_localhost_meta.json",
+    "structured/mcp_cluster_smoke_test_localhost_monitoring_expectations.json",
+    "structured/mcp_cluster_smoke_test_localhost_quick_friction.json",
+    "structured/mcp_cluster_smoke_test_localhost_software_versions.json",
+    "structured/mcp_cluster_smoke_test_localhost_storage.json",
+    "structured/mcp_cluster_smoke_test_localhost_tcp_sysctl.json",
+    "structured/mcp_cluster_smoke_test_localhost_tcp_sysctl.txt",
+    "structured/mcp_cluster_smoke_test_multinode_readiness.json",
+    "structured/mcp_cluster_smoke_test_preflight_services.json",
+    "structured/mcp_cluster_smoke_test_suite_steps.json",
+    "structured/mcp_cluster_smoke_test_tcp_sysctl_diff.json"
   ],
   "manifest_mode": "run_dir",
   "manifest_version": 1,
@@ -10,13 +45,38 @@
   "run_id": "mcp_cluster_smoke_test",
   "summary": {
     "artifact_counts": {
-      "json": 2
+      "json": 12,
+      "log": 10,
+      "txt": 3
     },
-    "file_count": 2,
+    "file_count": 25,
     "sha256": {
-      "structured/mcp_cluster_smoke_test_ai-book-dev_meta.json": "24284b8a8ea7d76a72d45e8e140a11217444960028bc2433e646bd83548ef752",
-      "structured/mcp_cluster_smoke_test_multinode_readiness.json": "6b2cada9ce8b60ef689f4f56e78ade251f7b07ed89cee521fe7655076455ecc0"
+      "raw/mcp_cluster_smoke_test_localhost_hang_triage_readiness.log": "8e9029232d0c9884230121b615f9f712912546b99adb2adf1bd8d1568c4b6f07",
+      "raw/mcp_cluster_smoke_test_localhost_monitoring_expectations.log": "7e3378d32e11b5b660ef232a10f48d5a84ba9f8e1cbb1a71dc38eacba472f684",
+      "raw/mcp_cluster_smoke_test_localhost_quick_friction.log": "508f09538bdb5fbfba3e8418a84213a3df674547c78d98ce9e9be054c1fe950e",
+      "raw/mcp_cluster_smoke_test_suite/connectivity_probe.log": "bdc0abcbda5a3a4eea1693bed24e8b0f1d26373b35bdda9314f4f8419fe9dc13",
+      "raw/mcp_cluster_smoke_test_suite/discovery.log": "6a366d4975d9c3a1d036e1372c752a90b7e24488e4e80a67a00fb16c95e5abb1",
+      "raw/mcp_cluster_smoke_test_suite/hang_triage_bundle.log": "875ab87ae30ca85cd3f3b6e464cc159272befe2d9dc1059b4cc8f2affdb7069d",
+      "raw/mcp_cluster_smoke_test_suite/monitoring_expectations_all_nodes.log": "6b69338c13c263396f157f537f2a84cde5d5df60bf8a41be2318b3e841887737",
+      "raw/mcp_cluster_smoke_test_suite/preflight_services.log": "1b1adc8ee539fb839ce898a7aeff829a665784f1d651130d69ba17e9928ac412",
+      "raw/mcp_cluster_smoke_test_suite/quick_friction_all_nodes.log": "4b5da8a8c201873caaae3b8a3187b46645c5f8e50e3dbc6e95f6fe0f5fe0fb52",
+      "raw/mcp_cluster_smoke_test_torchrun_connectivity_probe_node0.log": "25a55f80c416a4baffa46fdc3bf5575ad079fb4840e431d37fc724c30f56c8ea",
+      "structured/mcp_cluster_smoke_test_ai-book-dev_meta.json": "828fed4e317fe5247d06c5926b355606898e16b8054f39414de8df73f3298e85",
+      "structured/mcp_cluster_smoke_test_dcgmi_discovery_localhost.txt": "a7f8d2e1c4a5244786804efda7bcf7511c3bb5f089bbd7aeb2671d47491001e0",
+      "structured/mcp_cluster_smoke_test_localhost_container_runtime.txt": "038f02f6cf41d483c055634d05d50d234c731014938f80f5476057fff38b2960",
+      "structured/mcp_cluster_smoke_test_localhost_hang_triage_readiness.json": "f2d0f093d073d962abb35f996baa44dcfaca609f7ed131a19b29e6dad63d76f7",
+      "structured/mcp_cluster_smoke_test_localhost_meta.json": "706061703d0aa2e384cfd9666e59b5309eb1315ea26e80ec7145e30d4e8a0509",
+      "structured/mcp_cluster_smoke_test_localhost_monitoring_expectations.json": "5ba87265dc19e466143e01d2e56f3756fe5ca76a31963962521009454b0b3325",
+      "structured/mcp_cluster_smoke_test_localhost_quick_friction.json": "89971c7a55b413cd3b7a076f29c40b7ecea8e3e076b393ff399a1ceb1ec0663e",
+      "structured/mcp_cluster_smoke_test_localhost_software_versions.json": "7f6d6c74c0157930227343c11db38739b7d15c81a1648b8df6439a8036ceeecc",
+      "structured/mcp_cluster_smoke_test_localhost_storage.json": "18aea5576c1d5958121c3e189de49173504a643b892520509b836f0ddef53bfb",
+      "structured/mcp_cluster_smoke_test_localhost_tcp_sysctl.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "structured/mcp_cluster_smoke_test_localhost_tcp_sysctl.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "structured/mcp_cluster_smoke_test_multinode_readiness.json": "cded87be3bbd4ff5b8cbcc60d8881bcf7232fb9b20475acfe5987b42b9236f7f",
+      "structured/mcp_cluster_smoke_test_preflight_services.json": "2fab18cf241f88a7fe16642886f514f918ae9d3a908488abe65e0749c1983ca4",
+      "structured/mcp_cluster_smoke_test_suite_steps.json": "7bf3f45c0fabb734ef08218dce911cdcc7b4032d3fd610eff718ce1748e9d920",
+      "structured/mcp_cluster_smoke_test_tcp_sysctl_diff.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
     }
   },
-  "timestamp_utc": "2026-03-15T15:33:31.074890+00:00"
+  "timestamp_utc": "2026-03-17T05:45:12.166628+00:00"
 }

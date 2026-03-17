@@ -18,7 +18,7 @@ import torch.nn as nn
 import torch.distributed as dist
 
 from core.benchmark.verification import PrecisionFlags
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -291,5 +291,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineTensorParallelAllGatherBenchmark()
 
 
-if __name__ == "__main__":
-    main()

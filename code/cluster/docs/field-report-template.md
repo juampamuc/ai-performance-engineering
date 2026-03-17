@@ -8,18 +8,18 @@ Last updated: YYYY-MM-DD
 ## Current Canonical Example
 | Item | Value |
 | --- | --- |
-| RUN_ID | `2026-03-05_localhost_modern_profile_r24_full20b` |
+| RUN_ID | `2026-03-17_localhost_fabric_canonical` |
 | Manifest | `published/current/manifest.json` |
-| Suite steps | `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_suite_steps.json` |
-| Preserved localhost canonical package | `2026-03-05_localhost_modern_profile_r24_full20b` |
-| Archived localhost comparison baseline | `2026-03-04_localhost_modern_profile_r22_fastcanon` in `cluster/archive/runs/2026-03-04_localhost_modern_profile_r22_fastcanon/` |
+| Suite steps | `published/current/structured/2026-03-17_localhost_fabric_canonical_suite_steps.json` |
+| Preserved localhost canonical package | `2026-03-17_localhost_fabric_canonical` |
+| Archived localhost comparison baseline | `2026-03-08_localhost_modern_profile_r32_full20b` retained as a historical baseline only; do not treat it as active canonical evidence. |
 | Historical multi-node reference | `2026-02-10_full_suite_e2e_wire_qf_mon` may be documented as historical context, but do not treat it as active canonical evidence unless its artifacts are materialized locally. |
 | Localhost package convention | For single-host packages, publish `cluster/field-report-localhost.md` + `cluster/field-report-localhost-notes.md` tied to the localhost RUN_ID (auto-rendered by `run_cluster_eval_suite.sh` when localhost is detected). |
 | Localhost renderer | `python3 cluster/scripts/render_localhost_field_report_package.py --run-id <RUN_ID> --label <label>` |
 | Artifact cleanup | `cluster/scripts/cleanup_run_artifacts.sh --canonical-run-id <RUN_ID> --apply [--allow-run-id <RUN_ID>]` |
-| Required reliability gates | `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_torchrun_connectivity_probe.json`, `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_nccl_env_sensitivity.json`, `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_localhost_hang_triage_readiness.json` |
-| Required operator checks | `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_localhost_quick_friction.json`, `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_localhost_monitoring_expectations.json` |
-| Operator checks dashboard | `published/current/structured/2026-03-05_localhost_modern_profile_r24_full20b_operator_checks_dashboard.json`, `published/current/figures/2026-03-05_localhost_modern_profile_r24_full20b_operator_checks_dashboard.png` |
+| Required reliability gates | `published/current/structured/2026-03-17_localhost_fabric_canonical_torchrun_connectivity_probe.json`, `published/current/structured/2026-03-17_localhost_fabric_canonical_nccl_env_sensitivity.json`, `published/current/structured/2026-03-17_localhost_fabric_canonical_localhost_hang_triage_readiness.json` |
+| Required operator checks | `published/current/structured/2026-03-17_localhost_fabric_canonical_localhost_quick_friction.json`, `published/current/structured/2026-03-17_localhost_fabric_canonical_localhost_monitoring_expectations.json` |
+| Operator checks dashboard | `published/current/structured/2026-03-17_localhost_fabric_canonical_operator_checks_dashboard.json`, `published/current/figures/2026-03-17_localhost_fabric_canonical_operator_checks_dashboard.png` |
 
 ## Table of Contents
 1. [TL;DR](#tldr)

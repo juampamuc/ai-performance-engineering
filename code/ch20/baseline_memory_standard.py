@@ -1,4 +1,4 @@
-"""baseline_memory_standard.py - Standard memory access baseline."""
+"""baseline_memory_standard.py - Explicit multi-pass memory transform baseline."""
 
 from __future__ import annotations
 
@@ -11,11 +11,13 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 
 
 class BaselineMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Standard memory access patterns without HBM3e optimizations."""
+    """Explicit multi-pass pointwise transform (three separate kernel launches)."""
     
     def __init__(self):
         super().__init__()
         self.data: Optional[torch.Tensor] = None
+        self.tmp1: Optional[torch.Tensor] = None
+        self.tmp2: Optional[torch.Tensor] = None
         self.result: Optional[torch.Tensor] = None
         self.size_mb = 100  # 100 MB
         num_elements = (self.size_mb * 1024 * 1024) // 4
@@ -37,14 +39,16 @@ class BaselineMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self.data = torch.randn(self.num_elements, device=self.device, dtype=torch.float32)
+        self.tmp1 = torch.zeros_like(self.data)
+        self.tmp2 = torch.zeros_like(self.data)
         self.result = torch.zeros_like(self.data)
     
     def benchmark_fn(self) -> None:
-        assert self.data is not None
+        assert self.data is not None and self.tmp1 is not None and self.tmp2 is not None and self.result is not None
         with self._nvtx_range("baseline_memory_standard"):
-            self.result = self.data * 2.0 + 1.0
-            if self.result is not None:
-                self.result += 0.1
+            torch.mul(self.data, 2.0, out=self.tmp1)
+            torch.add(self.tmp1, 1.0, out=self.tmp2)
+            torch.add(self.tmp2, 0.1, out=self.result)
         self.output = self.result
 
     def capture_verification_payload(self) -> None:
@@ -60,6 +64,8 @@ class BaselineMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def teardown(self) -> None:
         self.data = None
+        self.tmp1 = None
+        self.tmp2 = None
         self.result = None
         torch.cuda.empty_cache()
     
@@ -78,10 +84,10 @@ class BaselineMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_ai_optimization_metrics
         return compute_ai_optimization_metrics(
-            original_time_ms=getattr(self, '_original_ms', 10.0),
-            ai_optimized_time_ms=getattr(self, '_optimized_ms', 5.0),
-            suggestions_applied=getattr(self, '_suggestions_applied', 1),
-            suggestions_total=getattr(self, '_suggestions_total', 1),
+            original_time_ms=getattr(self, '_last_elapsed_ms', None),
+            ai_optimized_time_ms=None,
+            suggestions_applied=None,
+            suggestions_total=None,
         )
 
     def validate_result(self) -> Optional[str]:

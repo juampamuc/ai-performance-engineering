@@ -7,7 +7,7 @@ from typing import Optional
 import torch
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from ch15.allreduce_rmsnorm_common import (
     AllReduceRMSNormConfig,
     build_shards,

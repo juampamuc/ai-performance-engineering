@@ -27,7 +27,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import DefaultDict, Dict, Iterable, List, Tuple
 
-from core.discovery import discover_all_chapters, should_ignore_benchmark_candidate
+from core.discovery import (
+    discover_all_chapters,
+    is_generated_benchmark_copy,
+    should_ignore_benchmark_candidate,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -156,4 +160,24 @@ def test_no_orphan_baseline_or_optimized_files_in_harness_dirs() -> None:
         for path in sorted(orphan_optimized):
             lines.append(f"  - {path.relative_to(REPO_ROOT)}")
 
+    raise AssertionError("\n".join(lines))
+
+
+def test_no_generated_benchmark_copy_files_present() -> None:
+    """Generated benchmark exploration copies must never remain in-tree."""
+    offenders = []
+    for bench_dir in discover_all_chapters(REPO_ROOT):
+        for path in bench_dir.glob("baseline_*"):
+            if is_generated_benchmark_copy(path):
+                offenders.append(path)
+        for path in bench_dir.glob("optimized_*"):
+            if is_generated_benchmark_copy(path):
+                offenders.append(path)
+
+    if not offenders:
+        return
+
+    lines = ["Generated benchmark copy files found in harness-discoverable directories:"]
+    for path in sorted(offenders):
+        lines.append(f"  - {path.relative_to(REPO_ROOT)}")
     raise AssertionError("\n".join(lines))

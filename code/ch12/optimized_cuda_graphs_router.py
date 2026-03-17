@@ -87,15 +87,16 @@ class CUDAGraphRouterBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_graph_metrics
-        return compute_graph_metrics(
-            baseline_launch_overhead_us=getattr(self, '_baseline_launch_us', 10.0),
-            graph_launch_overhead_us=getattr(self, '_graph_launch_us', 1.0),
-            num_nodes=getattr(self, 'num_nodes', 10),
-            num_iterations=getattr(self, 'num_iterations', 100),
-        )
+        """Return structural routing metrics without invented launch timings."""
+        from ch12.graph_metrics_common import compute_ch12_workload_metrics
 
+        metrics = compute_ch12_workload_metrics(
+            uses_cuda_graph=True,
+            num_iterations=self.iterations,
+            workload_elements=float(self.N),
+        )
+        metrics["cuda_runtime.route_toggle_enabled"] = 1.0
+        return metrics
     def validate_result(self) -> Optional[str]:
         if self.data is None:
             return "Data tensor not initialized"

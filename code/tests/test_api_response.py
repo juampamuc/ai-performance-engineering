@@ -14,3 +14,12 @@ def test_response_envelope_status():
     err_payload = build_response("tool.err", {}, {"error": "nope"}, 5)
     assert err_payload["status"] == "error"
     assert err_payload["success"] is False
+    assert err_payload["error"] == "nope"
+    assert err_payload["error_type"] == "unknown_error"
+
+
+def test_response_envelope_preserves_error_type():
+    err_payload = build_response("tool.err", {}, {"error": "bad arg", "error_type": "value_error"}, 5)
+    assert err_payload["status"] == "error"
+    assert err_payload["error"] == "bad arg"
+    assert err_payload["error_type"] == "value_error"

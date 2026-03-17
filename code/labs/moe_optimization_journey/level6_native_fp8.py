@@ -190,29 +190,3 @@ def get_benchmark() -> NativeFP8MoE:
     return NativeFP8MoE()
 
 
-if __name__ == "__main__":
-    bench = NativeFP8MoE()
-    bench.setup()
-    
-    # Warmup
-    for _ in range(bench.WARMUP):
-        bench.benchmark_fn()
-    torch.cuda.synchronize()
-    
-    # Benchmark
-    torch.cuda.synchronize()
-    start = time.perf_counter()
-    for _ in range(bench.ITERATIONS):
-        bench.benchmark_fn()
-    torch.cuda.synchronize()
-    elapsed = (time.perf_counter() - start) * 1000 / bench.ITERATIONS
-    
-    metrics = bench.get_extra_metrics()
-    tflops = metrics["total_flops"] / (elapsed / 1000) / 1e12
-    peak = metrics["b200_peak_tflops"]
-    
-    print(f"Mean: {elapsed:.1f} ms")
-    print(f"TFLOPS: {tflops:.0f} ({tflops/peak*100:.1f}% of B200 peak)")
-    
-    if tflops/peak > 0.5:
-        print("🎉 BROKE 50% UTILIZATION!")

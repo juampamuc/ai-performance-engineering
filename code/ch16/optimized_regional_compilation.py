@@ -9,6 +9,7 @@ BF16 fast-path that still mirrors the baseline workload.
 
 from __future__ import annotations
 
+from functools import partial
 import torch
 import torch.nn as nn
 
@@ -17,6 +18,7 @@ from typing import Dict, Optional, Tuple
 from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
 from core.utils.compile_utils import maybe_nested_compile_region
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -27,12 +29,7 @@ from ch16.baseline_regional_compilation import (
     DummyTransformer,
     select_regional_compilation_choice,
 )
-
-def resolve_device() -> torch.device:
-    """Return CUDA device if available."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch16")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for ch16")
 
 
 @maybe_nested_compile_region
@@ -231,8 +228,8 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),
@@ -279,6 +276,3 @@ def main():
     print("Baseline: eager transformer blocks in the timed region.")
     print("Optimized: the same blocks routed through nested compile regions and replayed via CUDA graphs.")
 
-
-if __name__ == "__main__":
-    main()

@@ -15,6 +15,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _make_config(**kwargs) -> BenchmarkConfig:
+    kwargs.setdefault("allow_foreign_gpu_processes", True)
+    kwargs.setdefault("enforce_environment_validation", False)
+    return BenchmarkConfig(**kwargs)
+
+
 class _CheatingSetupBenchmark(BaseBenchmark):
     """Benchmark that pre-computes output in setup (should be caught)."""
 
@@ -126,7 +132,7 @@ def _run_harness(benchmark: BaseBenchmark, config: BenchmarkConfig):
 def test_setup_precompute_failures():
     """Harness should block benchmarks that compute outputs during setup."""
     bench = _CheatingSetupBenchmark()
-    config = BenchmarkConfig(iterations=1, warmup=0)
+    config = _make_config(iterations=1, warmup=0)
     result = _run_harness(bench, config)
     assert result.timeout_stage == "setup"
     assert any("pre-computation" in err.lower() for err in result.errors)
@@ -135,7 +141,7 @@ def test_setup_precompute_failures():
 def test_graph_cheat_detection_forces_failure():
     """Harness should raise when graph capture is suspiciously slow vs replay."""
     bench = _GraphCheatBenchmark()
-    config = BenchmarkConfig(iterations=1, warmup=0, enable_cuda_graph=True)
+    config = _make_config(iterations=1, warmup=0, enable_cuda_graph=True)
 
     result = _run_harness(bench, config)
     assert any("graph capture cheat" in err.lower() for err in result.errors)
@@ -144,7 +150,7 @@ def test_graph_cheat_detection_forces_failure():
 def test_stream_audit_failure():
     """Harness should fail when streams change mid-benchmark."""
     bench = _StreamCheatBenchmark()
-    config = BenchmarkConfig(iterations=1, warmup=0)
+    config = _make_config(iterations=1, warmup=0)
     try:
         result = _run_harness(bench, config)
         assert any("stream timing violation" in err.lower() for err in result.errors)

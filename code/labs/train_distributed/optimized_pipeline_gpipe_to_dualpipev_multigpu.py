@@ -91,10 +91,6 @@ def main():
     print(format_telemetry("optimized-dualpipev-compare", cumulative))
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "pipeline_gpipe_to_dualpipev_multigpu.py",

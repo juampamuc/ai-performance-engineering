@@ -1,18 +1,17 @@
-"""ddp_overlap.py - DDP with communication/compute overlap.
+"""ddp_overlap.py - Overlap-enabled DDP path with a single-GPU simulation mode.
 
-Optimized DDP implementation that enables:
-- gradient_as_bucket_view: Avoids gradient copy, reduces memory
-- static_graph: Enables aggressive optimization for fixed graphs
-
-This overlaps gradient all-reduce communication with backward computation,
-reducing training step latency by pipelining communication and computation.
-
-Requires multiple GPUs to run (skips on single-GPU systems).
+When launched under torchrun with multiple GPUs, this benchmark enables real
+DDP overlap via `gradient_as_bucket_view=True` and `static_graph=True`.
+When run on a single GPU, it keeps the same control flow shape but replaces
+the collective with a pinned-host round-trip stand-in so overlap studies can
+still run on one device. The real collective story lives in the
+`*_multigpu.py` variants.
 """
 
 from __future__ import annotations
 
 import argparse
+from functools import partial
 import os
 from typing import Optional
 
@@ -23,27 +22,21 @@ import torch.nn as nn
 import torch.optim as optim
 
 from core.benchmark.gpu_requirements import skip_if_insufficient_gpus
+from core.common.device_utils import require_cuda_device
 from core.harness import arch_config as _arch_config_patch  # noqa: F401
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from ch04.distributed_helper import setup_single_gpu_env
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 # Ensure consistent TF32 state before any operations (new API only)
 enable_tf32()
 
-def resolve_device() -> torch.device:
-    """Return CUDA device if available."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch04")
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    return torch.device(f"cuda:{local_rank}")
+resolve_device = partial(require_cuda_device, "CUDA required for ch04", local_rank_env="LOCAL_RANK")
 
 
 class MultiLayerNet(nn.Module):
@@ -62,7 +55,7 @@ class MultiLayerNet(nn.Module):
 
 
 class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """DDP with communication overlap - optimized."""
+    """Overlap-enabled DDP benchmark with a single-GPU simulation fallback."""
     
     def __init__(self):
         super().__init__()
@@ -85,7 +78,7 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: DDP with gradient_as_bucket_view for communication overlap."""
+        """Setup real DDP when available, otherwise a single-GPU overlap simulation."""
         skip_if_insufficient_gpus()
         
         # Initialize distributed if environment variables are set
@@ -130,7 +123,7 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
-        """Benchmark: DDP training step with communication overlap."""
+        """Benchmark a step that overlaps work shape, with real or simulated comm."""
         from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
 
         config = self.get_config()
@@ -139,8 +132,9 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with nvtx_range("overlap_ddp", enable=enable_nvtx):
             output = self.model(self.data)
             loss = nn.functional.mse_loss(output, self.target)
-            # DDP automatically overlaps gradient all-reduce with backward computation
-            # when gradient_as_bucket_view=True is enabled
+            # Multi-GPU runs overlap real all-reduce with backward via DDP buckets.
+            # Single-GPU runs keep the same structure but use the host round-trip
+            # below as a latency stand-in.
             loss.backward()
             self._host_buffer.copy_(self.data, non_blocking=True)
             self.data.copy_(self._host_buffer, non_blocking=True)
@@ -214,7 +208,7 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
             bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             transfer_type="hbm",
         )
     def get_verify_output(self) -> torch.Tensor:
@@ -242,7 +236,3 @@ def _parse_args():
     parser.add_argument("--enable-profiling", action="store_true", help="Enable profiling for the run.")
     parser.add_argument("--enable-memory-tracking", action="store_true", help="Track GPU memory usage.")
     return parser.parse_args()
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

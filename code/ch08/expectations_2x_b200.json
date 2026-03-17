@@ -278,16 +278,16 @@
       },
       "type": "python"
     },
-    "tcgen05_tiling_vs_cublas": {
-      "example": "tcgen05_tiling_vs_cublas",
+    "tcgen05_custom_vs_cublas": {
+      "example": "tcgen05_custom_vs_cublas",
       "metadata": {
         "best_memory_savings_pct": 55.31179364446217,
         "best_memory_savings_ratio": 2.2377268670038677,
-        "best_optimization": "optimized_tcgen05_tiling_vs_cublas",
-        "best_optimization_file": "optimized_tcgen05_tiling_vs_cublas.py",
+        "best_optimization": "optimized_tcgen05_custom_vs_cublas",
+        "best_optimization_file": "optimized_tcgen05_custom_vs_cublas.py",
         "best_optimization_memory_mb": 420.125,
         "best_optimization_speedup": 6.7387013916468135,
-        "best_optimization_technique": "optimized_tcgen05_tiling_vs_cublas",
+        "best_optimization_technique": "optimized_tcgen05_custom_vs_cublas",
         "best_optimization_time_ms": 0.0644008350069011,
         "optimization_goal": "speed"
       },

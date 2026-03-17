@@ -17,8 +17,6 @@ from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
@@ -62,8 +60,6 @@ class TinyTransformerBlock(nn.Module):
 class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Full-graph compile baseline without Triton fusion."""
 
-    allowed_benchmark_fn_antipatterns = ("compile",)
-
     def __init__(self):
         super().__init__()
         self.hidden = 1024
@@ -73,6 +69,7 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.sequence_schedule: List[int] = [128, 256, 384, 512]
         self._step = 0
         self.model: Optional[nn.Module] = None
+        self._compiled_model: Optional[nn.Module] = None
         self.inputs: Dict[int, torch.Tensor] = {}
         max_tokens = self.batch_size * max(self.sequence_schedule) * self.hidden
         self._workload = WorkloadMetadata(
@@ -97,6 +94,17 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
             mlp_hidden=self.mlp_hidden,
         ).to(self.device, dtype=torch.bfloat16).eval()
 
+        # Full-graph compile with aot_eager (no Triton fusion).
+        # Compiled once in setup() so compilation cost is excluded from
+        # timing — same treatment as the optimized variant.
+        self._compiled_model = torch.compile(
+            self.model,
+            backend="aot_eager",
+            fullgraph=False,
+            dynamic=True,
+            mode="default",
+        )
+
         for seq in self.sequence_schedule:
             self.inputs[seq] = torch.randn(
                 self.batch_size,
@@ -106,6 +114,11 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 dtype=torch.bfloat16,
             )
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
+
+        # Warmup the compiled model to amortize any remaining JIT cost
+        for seq in self.sequence_schedule:
+            with torch.no_grad():
+                _ = self._compiled_model(self.inputs[seq])
 
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
@@ -119,21 +132,14 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return seq
 
     def benchmark_fn(self) -> None:
-        if self.model is None:
+        if self._compiled_model is None:
             raise RuntimeError("Model not initialized")
         seq_len = self._next_sequence_length()
         x = self.inputs[seq_len]
 
-        compiled_model = torch.compile(
-            self.model,
-            backend="aot_eager",
-            fullgraph=False,
-            dynamic=True,
-            mode="default",
-        )
         with torch.no_grad(), self._nvtx_range("baseline_regional_triton"):
             self._last_input = x
-            self.output = compiled_model(x)
+            self.output = self._compiled_model(x)
         if self.output is None or self._last_input is None:
             raise RuntimeError("benchmark_fn() must produce output")
         dtype = self._last_input.dtype
@@ -157,6 +163,7 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def teardown(self) -> None:
         self.model = None
+        self._compiled_model = None
         self.inputs.clear()
         super().teardown()
 
@@ -179,7 +186,7 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_triton_metrics
         return compute_triton_metrics(
             num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             block_size=getattr(self, 'BLOCK_SIZE', 1024),
             num_warps=getattr(self, 'num_warps', 4),
         )
@@ -193,7 +200,3 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return BaselineRegionalTritonBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

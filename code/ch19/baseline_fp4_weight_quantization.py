@@ -5,10 +5,9 @@ Chapter 19: Blackwell Native Precision Operations
 This baseline shows naive FP4 inference that dequantizes weights
 on EVERY forward pass. This is what happens without proper caching.
 
-The optimized version uses:
-- Weight caching (dequantize once)
-- Better memory access patterns
-- Batch-optimized operations
+The optimized version keeps FP4 as the source-of-truth format and, on
+Blackwell, caches an FP8 execution bridge so it does not rebuild the bridge
+on every forward pass.
 """
 
 from __future__ import annotations
@@ -24,8 +23,6 @@ import math
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
@@ -161,16 +158,12 @@ class BaselineFP4Linear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward with FP4 weights (dequantize every time - slow)."""
         if self._quantized:
-            # Baseline: dequantize on every forward (anti-pattern)
-            # In real workloads, this happens across many layers
             weight = dequantize_fp4_baseline(
                 self.weight_packed,
                 self.weight_scale,
                 torch.Size([self.out_features, self.in_features]),
                 self.dtype
             )
-            # Force materialization to prevent compiler optimizations
-            _ = weight.sum()
         else:
             weight = self._weight_fp16
         
@@ -242,7 +235,7 @@ class BaselineFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBench
     """Baseline: FP4 with per-forward dequantization (slow).
     
     Anti-pattern: Dequantize weights on every forward pass.
-    The optimized version caches dequantized weights.
+    The optimized version caches the FP8 execution bridge on Blackwell.
     """
     
     def __init__(self):
@@ -370,8 +363,3 @@ class BaselineFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBench
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselineFP4WeightQuantizationBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

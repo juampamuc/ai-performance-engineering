@@ -2,7 +2,9 @@
 
 This matches the chapter narrative and expectations by exposing the
 overlapped training path as `optimized_no_overlap.py`, reusing the
-implementation from `ddp_overlap.py`.
+implementation from `ddp_overlap.py`. On single-GPU hosts this remains a
+simulation of overlap using a host-buffer round-trip stand-in; the real
+multi-GPU collective benchmark lives in the `*_multigpu.py` variants.
 """
 
 from __future__ import annotations
@@ -14,8 +16,3 @@ def get_benchmark() -> OptimizedOverlapDdpBenchmark:
     """Factory used by the harness."""
     return OptimizedOverlapDdpBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

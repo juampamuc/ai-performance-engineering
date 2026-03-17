@@ -122,25 +122,57 @@ __global__ void async_pipeline_2d_copy_kernel(
     pipe.producer_commit();
     pipe.consumer_wait();
     block.sync();
+
+    const int tile_rows = min(TILE_M, max(M - row_offset, 0));
+    const int tile_cols = min(TILE_N, max(N - col_offset, 0));
+    const int tile_elems = tile_rows * tile_cols;
     
-    for (int i = tid; i < elems_per_tile; i += threads) {
-        const int local_row = i / TILE_N;
-        const int local_col = i % TILE_N;
+    for (int i = tid; i < tile_elems; i += threads) {
+        const int local_row = i / tile_cols;
+        const int local_col = i % tile_cols;
         const int global_row = row_offset + local_row;
         const int global_col = col_offset + local_col;
-        
-        if (global_row < M && global_col < N) {
-            dst[global_row * N + global_col] = smem[local_row][local_col];
-        }
+
+        const int near_linear = min(i + 1, tile_elems - 1);
+        const int far_linear = min(i + kLookahead, tile_elems - 1);
+        const int near_row = near_linear / tile_cols;
+        const int near_col = near_linear % tile_cols;
+        const int far_row = far_linear / tile_cols;
+        const int far_col = far_linear % tile_cols;
+
+        dst[global_row * N + global_col] = combine_values(
+            smem[local_row][local_col],
+            smem[near_row][near_col],
+            smem[far_row][far_col]);
     }
     
     pipe.consumer_release();
 #else
     // Fallback for older architectures
-    const int row = blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row < M && col < N) {
-        dst[row * N + col] = src[row * N + col];
+    const int row_offset = blockIdx.y * TILE_M;
+    const int col_offset = blockIdx.x * TILE_N;
+    const int local_tid = threadIdx.y * blockDim.x + threadIdx.x;
+    const int tile_rows = min(TILE_M, max(M - row_offset, 0));
+    const int tile_cols = min(TILE_N, max(N - col_offset, 0));
+    const int tile_elems = tile_rows * tile_cols;
+    const int threads = blockDim.x * blockDim.y;
+
+    for (int i = local_tid; i < tile_elems; i += threads) {
+        const int local_row = i / tile_cols;
+        const int local_col = i % tile_cols;
+        const int near_linear = min(i + 1, tile_elems - 1);
+        const int far_linear = min(i + kLookahead, tile_elems - 1);
+        const int near_row = near_linear / tile_cols;
+        const int near_col = near_linear % tile_cols;
+        const int far_row = far_linear / tile_cols;
+        const int far_col = far_linear % tile_cols;
+        const int global_row = row_offset + local_row;
+        const int global_col = col_offset + local_col;
+
+        dst[global_row * N + global_col] = combine_values(
+            src[(row_offset + local_row) * N + (col_offset + local_col)],
+            src[(row_offset + near_row) * N + (col_offset + near_col)],
+            src[(row_offset + far_row) * N + (col_offset + far_col)]);
     }
 #endif
 }
@@ -155,6 +187,7 @@ __global__ void descriptor_tma_2d_copy_kernel(
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
     constexpr std::size_t kTileBytes = static_cast<std::size_t>(TILE_M) * TILE_N * sizeof(float);
     __shared__ alignas(128) float tile[TILE_M][TILE_N];
+    __shared__ alignas(128) float output_tile[TILE_M][TILE_N];
     using block_barrier = cuda::barrier<cuda::thread_scope_block>;
     __shared__ alignas(block_barrier) unsigned char barrier_storage[sizeof(block_barrier)];
 
@@ -183,11 +216,34 @@ __global__ void descriptor_tma_2d_copy_kernel(
     bar.wait(std::move(token));
     __syncthreads();
 
+    const int tile_rows = min(TILE_M, max(M - tile_m, 0));
+    const int tile_cols = min(TILE_N, max(N - tile_n, 0));
+    const int tile_elems = tile_rows * tile_cols;
+    const int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    const int threads = blockDim.x * blockDim.y;
+
+    for (int i = tid; i < tile_elems; i += threads) {
+        const int local_row = i / tile_cols;
+        const int local_col = i % tile_cols;
+        const int near_linear = min(i + 1, tile_elems - 1);
+        const int far_linear = min(i + kLookahead, tile_elems - 1);
+        const int near_row = near_linear / tile_cols;
+        const int near_col = near_linear % tile_cols;
+        const int far_row = far_linear / tile_cols;
+        const int far_col = far_linear % tile_cols;
+
+        output_tile[local_row][local_col] = combine_values(
+            tile[local_row][local_col],
+            tile[near_row][near_col],
+            tile[far_row][far_col]);
+    }
+    __syncthreads();
+
     cde::fence_proxy_async_shared_cta();
     __syncthreads();
 
     if (threadIdx.x == 0 && threadIdx.y == 0) {
-        cde::cp_async_bulk_tensor_2d_shared_to_global(&out_desc, tile_m, tile_n, &tile);
+        cde::cp_async_bulk_tensor_2d_shared_to_global(&out_desc, tile_m, tile_n, &output_tile);
         cde::cp_async_bulk_commit_group();
         cde::cp_async_bulk_wait_group_read<0>();
     }

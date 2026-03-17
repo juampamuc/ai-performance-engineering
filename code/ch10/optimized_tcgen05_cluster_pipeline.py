@@ -62,11 +62,17 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         with self._nvtx_range(self.nvtx_label):
             with torch.cuda.stream(self._graph_stream):
                 self._graph.replay()
-            self._graph_stream.synchronize()
             self.output = self._graph_output.detach()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=10, warmup=5)
+        # Graph replay runs on a declared side stream; use synchronized wall time so
+        # harness timing includes the actual replay latency rather than just launch cost.
+        return BenchmarkConfig(
+            iterations=10,
+            warmup=5,
+            timing_method="wall_clock",
+            full_device_sync=True,
+        )
 
     def teardown(self) -> None:
         self._graph = None
@@ -74,18 +80,26 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         self._graph_output = None
         super().teardown()
 
+    def get_custom_streams(self) -> list["torch.cuda.Stream"]:
+        if self._graph_stream is None:
+            return []
+        return [self._graph_stream]
+
     def get_custom_metrics(self) -> Optional[dict]:
-        return {
-            "cuda_graph_replay": 1.0,
-            "cluster_launch": 1.0,
-        }
+        from core.benchmark.metrics import compute_gemm_metrics
+
+        metrics = compute_gemm_metrics(
+            m=self.matrix_rows,
+            n=self.matrix_cols,
+            k=self.shared_dim,
+            precision="fp16",
+            bytes_per_element=2,
+        )
+        metrics["gemm.uses_tcgen05"] = 1.0
+        metrics["gemm.cluster_launch"] = 1.0
+        metrics["gemm.cuda_graph_replay"] = 1.0
+        return metrics
 
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTcgen05ClusterPipelineBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

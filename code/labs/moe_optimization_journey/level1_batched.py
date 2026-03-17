@@ -21,5 +21,3 @@ def get_benchmark() -> Level1Batched:
     return Level1Batched()
 
 
-if __name__ == "__main__":
-    run_level(1)

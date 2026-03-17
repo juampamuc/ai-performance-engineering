@@ -38,6 +38,7 @@ constexpr int THREADS_PER_BLOCK = WARPS_PER_BLOCK * 32;
 constexpr int DEFAULT_TILES = 8;
 constexpr int WARMUP_ITERS = 5;
 constexpr int BENCH_ITERS = 20;
+constexpr int kComputeRepeats = 4;
 
 #define CUDA_CHECK(call)                                                         \
     do {                                                                         \
@@ -57,12 +58,17 @@ __device__ void compute_rows_from_ds(const float* __restrict__ A_src,
                                      int lane_id) {
     for (int row = row_begin + lane_id; row < row_end; row += warpSize) {
         for (int col = 0; col < TILE_SIZE; ++col) {
-            float acc = 0.0f;
+            float repeated_acc = 0.0f;
             #pragma unroll
-            for (int k = 0; k < TILE_SIZE; ++k) {
-                acc += A_src[row * TILE_SIZE + k] * B_src[k * TILE_SIZE + col];
+            for (int repeat = 0; repeat < kComputeRepeats; ++repeat) {
+                float acc = 0.0f;
+                #pragma unroll
+                for (int k = 0; k < TILE_SIZE; ++k) {
+                    acc += A_src[row * TILE_SIZE + k] * B_src[k * TILE_SIZE + col];
+                }
+                repeated_acc += acc;
             }
-            C_dst[row * TILE_SIZE + col] = acc;
+            C_dst[row * TILE_SIZE + col] = repeated_acc / static_cast<float>(kComputeRepeats);
         }
     }
 }

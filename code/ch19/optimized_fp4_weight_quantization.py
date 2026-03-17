@@ -3,7 +3,7 @@
 This module implements Blackwell-optimized FP4 weight quantization with:
 
 1. **Per-Block Scaling**: Fine-grained 128-element block scaling for better precision
-2. **Weight Cache**: Dequantize once, cache for fast repeated inference
+2. **FP8 Execution Cache**: Materialize an FP8 bridge once for steady-state reuse
 3. **FP8 Tensor Core Bridge**: Convert FP4→FP8 to leverage tensor cores
 4. **CUDA Graph Compatible**: Deterministic memory access patterns
 
@@ -14,7 +14,7 @@ FP4 E2M1 Format (Blackwell native):
 
 Performance Benefits on Blackwell B200:
 - 4x weight memory reduction vs FP16
-- ~2x throughput vs FP16 (memory-bound ops)
+- Reuses a cached FP8 execution bridge instead of rebuilding it every step
 - Enables 4x larger models in same GPU memory
 
 Requirements:
@@ -35,8 +35,6 @@ import math
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
@@ -157,14 +155,14 @@ class OptimizedFP4Linear(nn.Module):
     
     Key optimizations:
     1. Per-block scaling (128-element blocks)
-    2. Weight cache after first dequantization
+    2. Optional FP8 bridge cache after first materialization
     3. Optional FP8 tensor core bridge
     4. CUDA graph compatible
     
     Modes:
     - 'storage': Max compression, dequant each forward
-    - 'cached': Dequant once, cache for speed
-    - 'fp8': Use FP8 tensor cores (Blackwell optimal)
+    - 'cached': Dequant once, cache FP16 weights for speed
+    - 'fp8': Cache an FP8 bridge derived from packed FP4 weights
     """
     
     def __init__(
@@ -191,6 +189,7 @@ class OptimizedFP4Linear(nn.Module):
         self.register_buffer('weight_packed', None)
         self.register_buffer('weight_scales', None)
         self.register_buffer('_weight_cache', None)
+        self.register_buffer('_weight_fp8_cache', None)
         self._quantized = False
         
         if bias:
@@ -209,6 +208,7 @@ class OptimizedFP4Linear(nn.Module):
             self.weight_scales = scales
             self._weight_fp16 = None
             self._weight_cache = None
+            self._weight_fp8_cache = None
             self._quantized = True
     
     def _get_weight(self) -> torch.Tensor:
@@ -238,6 +238,27 @@ class OptimizedFP4Linear(nn.Module):
     def clear_cache(self) -> None:
         """Clear weight cache to free memory."""
         self._weight_cache = None
+        self._weight_fp8_cache = None
+
+    def _get_weight_fp8(self) -> torch.Tensor:
+        """Get a cached row-major FP8 bridge for tensor-core execution."""
+        if self._weight_fp8_cache is not None:
+            return self._weight_fp8_cache
+
+        if self._quantized:
+            weight = dequantize_fp4_optimized(
+                self.weight_packed,
+                self.weight_scales,
+                torch.Size([self.out_features, self.in_features]),
+                self.block_size,
+                self.dtype,
+            )
+        else:
+            weight = self._weight_fp16
+
+        weight_fp8 = weight.to(torch.float8_e4m3fn).contiguous()
+        self._weight_fp8_cache = weight_fp8
+        return weight_fp8
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with FP4 weights."""
@@ -249,10 +270,7 @@ class OptimizedFP4Linear(nn.Module):
     
     def _forward_fp8(self, x: torch.Tensor) -> torch.Tensor:
         """Forward using FP8 tensor cores for acceleration."""
-        weight = self._get_weight()
-        
-        # Convert to FP8 for tensor core acceleration
-        weight_fp8 = weight.to(torch.float8_e4m3fn)
+        weight_fp8 = self._get_weight_fp8()
         
         # Reshape for matmul
         batch_shape = x.shape[:-1]
@@ -319,13 +337,7 @@ class OptimizedFP4MLP(nn.Module):
 
 
 class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: Efficient MLP without redundant operations.
-    
-    Key optimizations vs baseline:
-    - No unnecessary copies
-    - Efficient FP16/BF16 inference
-    - Clean forward path
-    """
+    """Optimized: FP4 storage with a cached FP8 execution bridge on Blackwell."""
     
     def __init__(self):
         super().__init__()
@@ -337,6 +349,7 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
         self.d_model = 2048
         self.d_ff = 8192
         self.block_size = 128  # FP4 quantization block size
+        self.mode = "storage"
         
         self.input: Optional[torch.Tensor] = None
         
@@ -360,16 +373,18 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
         if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
             dtype = torch.bfloat16
         
-        # Use clean, efficient MLP without redundancy
+        mode = "fp8" if is_blackwell() and has_scaled_mm() else "storage"
+        self.mode = mode
         self.model = OptimizedFP4MLP(
             d_model=self.d_model,
             d_ff=self.d_ff,
             dtype=dtype,
             block_size=128,
-            mode='cached',  # Use cached weights for efficiency
+            mode=mode,
         ).to(self.device)
         
-        # Pre-compute and cache weights
+        # Keep weights quantized so the timed path still measures quantized
+        # inference rather than cached FP16 execution.
         self.model.quantize()
         self.model.eval()
         
@@ -378,7 +393,8 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
             device=self.device, dtype=dtype
         )
         
-        # Warmup (populates cache)
+        # Warm up the steady-state quantized execution path. In FP8 mode this
+        # materializes the bridge once and then reuses it for timed iterations.
         with torch.no_grad():
             for _ in range(10):
                 _ = self.model(self.input)
@@ -434,8 +450,8 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
         # Use standard precision metrics (FP4 = 8x memory reduction)
         # Note: FP4 main benefit is memory, not always speed
         metrics = compute_precision_metrics(
-            fp32_time_ms=5.0,  # Approximate baseline
-            reduced_precision_time_ms=5.0,  # Similar compute time
+            fp32_time_ms=None,
+            reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
             precision_type="fp4",
             accuracy_delta=-0.02,  # ~2% accuracy impact typical
         )
@@ -445,14 +461,19 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
         n_weights = self.d_model * self.d_ff + self.d_ff * self.d_model
         n_blocks = (n_weights + self.block_size - 1) // self.block_size
         fp4_bytes = fp16_bytes // 4 + n_blocks * 2
+        fp8_bridge_bytes = n_weights if self.mode == "fp8" else 0
+        effective_weight_bytes = fp4_bytes + fp8_bridge_bytes
         
         metrics.update({
             "precision.fp16_weight_bytes": float(fp16_bytes),
             "precision.fp4_weight_bytes": float(fp4_bytes),
             "precision.compression_ratio": fp16_bytes / fp4_bytes,
+            "precision.fp8_bridge_weight_bytes": float(fp8_bridge_bytes),
+            "precision.effective_weight_bytes": float(effective_weight_bytes),
+            "precision.effective_compression_ratio": float(fp16_bytes / effective_weight_bytes),
             "precision.block_size": float(self.block_size),
-            "precision.uses_cache": 1.0,
-            "precision.uses_fp8_bridge": 1.0 if is_blackwell() and has_scaled_mm() else 0.0,
+            "precision.uses_cache": 1.0 if self.mode == "fp8" else 0.0,
+            "precision.uses_fp8_bridge": 1.0 if self.mode == "fp8" else 0.0,
         })
         return metrics
     
@@ -473,8 +494,3 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return OptimizedFP4WeightQuantizationBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

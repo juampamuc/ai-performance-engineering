@@ -149,7 +149,10 @@ pytest tests/test_mcp_client.py
 ### Environment Variables
 
 - `AISP_MCP_DEBUG=1` - Enable debug logging (server)
-- `AISP_MCP_REQUEST_TIMEOUT=300` - Request timeout in seconds (server)
+
+Server-side request timeout is not configured through a dedicated environment
+variable in the current code. Set the client timeout explicitly when constructing
+`RobustMCPClient` or calling `create_client(...)`.
 
 ### Client Options
 

@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple  # Tuple used for comment detection
 
+from core.discovery import is_generated_benchmark_copy
+
 # Define when each technique is introduced
 TECHNIQUE_CHAPTERS: Dict[str, int] = {
     # Chapter 1-2: Fundamentals
@@ -376,6 +378,8 @@ def audit_chapter(chapter_dir: Path, chapter: int) -> AuditResult:
     
     # Scan CUDA files
     for cu_file in chapter_dir.glob("*.cu"):
+        if is_generated_benchmark_copy(cu_file):
+            continue
         result.files_scanned += 1
         violations = scan_file(cu_file, chapter)
         result.violations.extend(violations)
@@ -497,4 +501,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

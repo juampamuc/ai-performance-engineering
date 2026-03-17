@@ -7,51 +7,38 @@ instead of framework overhead.
 
 from __future__ import annotations
 
-import ctypes
-from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
 
+from ch13.te_runtime_common import ensure_te_runtime_initialized
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.env import apply_env_defaults
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
-
-apply_env_defaults()
-
-
-def _preload_torch_cuda_symbols() -> None:
-    """Ensure torch CUDA shared objects are loaded with RTLD_GLOBAL."""
-    torch_lib_dir = Path(torch.__file__).resolve().parent / "lib"
-    libs = [
-        "libtorch_cuda.so",
-        "libtorch_cuda_linalg.so",
-        "libtorch_nvshmem.so",
-        "libc10_cuda.so",
-    ]
-    for name in libs:
-        candidate = torch_lib_dir / name
-        if candidate.exists():
-            ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
+TELinear: Any | None = None
+TE_IMPORT_ERROR: Optional[ImportError] = None
 
 
-_preload_torch_cuda_symbols()
-
-try:
-    from transformer_engine.pytorch import Linear as TELinear
-
-    TE_AVAILABLE = True
-except ImportError as exc:  # pragma: no cover
-    TE_AVAILABLE = False
-    TE_IMPORT_ERROR = exc
+def _load_te_linear() -> Any:
+    global TELinear, TE_IMPORT_ERROR
+    if TELinear is not None:
+        return TELinear
+    ensure_te_runtime_initialized()
+    try:
+        from transformer_engine.pytorch import Linear as te_linear
+    except ImportError as exc:  # pragma: no cover
+        TE_IMPORT_ERROR = exc
+        raise RuntimeError(
+            "SKIPPED: Transformer Engine is required for baseline_precisionfp8_te. "
+            f"(import error: {exc})"
+        ) from exc
+    TELinear = te_linear
+    return TELinear
 
 
 class TEFP16MLP(nn.Module):
@@ -59,8 +46,9 @@ class TEFP16MLP(nn.Module):
 
     def __init__(self, hidden_dim: int = 1024):
         super().__init__()
-        self.fc1 = TELinear(hidden_dim, hidden_dim * 2, bias=True)
-        self.fc2 = TELinear(hidden_dim * 2, hidden_dim, bias=True)
+        te_linear = _load_te_linear()
+        self.fc1 = te_linear(hidden_dim, hidden_dim * 2, bias=True)
+        self.fc2 = te_linear(hidden_dim * 2, hidden_dim, bias=True)
         self.activation = nn.GELU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -94,11 +82,7 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         self._verify_input: Optional[torch.Tensor] = None
     def setup(self) -> None:
-        if not TE_AVAILABLE:
-            raise RuntimeError(
-                "SKIPPED: Transformer Engine is required for baseline_precisionfp8_te. "
-                f"(import error: {TE_IMPORT_ERROR})"
-            )
+        _load_te_linear()
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
@@ -169,11 +153,11 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         return BenchmarkConfig(iterations=50, warmup=10, backend_policy="fp32_strict")
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
+        """Return truthful precision metrics for the current FP32 TE run."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=getattr(self, "_last_elapsed_ms", None),
+            reduced_precision_time_ms=None,
             precision_type="fp8",
         )
 
@@ -189,16 +173,3 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineTEFP8Benchmark()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode
-
-    benchmark = get_benchmark()
-    harness = BenchmarkHarness(
-        mode=BenchmarkMode.CUSTOM,
-        config=benchmark.get_config(),
-    )
-    result = harness.benchmark(benchmark)
-    timing = result.timing.mean_ms if result.timing else 0.0
-    print(f"\nBaseline Precision FP16 (TE): {timing:.3f} ms")

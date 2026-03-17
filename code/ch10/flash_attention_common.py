@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+FLASH_ATTENTION_OUTPUT_TOLERANCE = (5e-2, 5e-2)
+
 
 def compute_attention_workload_metrics(
     *,

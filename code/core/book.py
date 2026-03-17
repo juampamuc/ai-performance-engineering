@@ -150,7 +150,7 @@ class BookIndex:
                     if first_line.startswith('#'):
                         title = first_line.lstrip('#').strip()
                         self._chapter_titles[chapter_id] = title
-            except Exception:
+            except OSError:
                 self._chapter_titles[chapter_id] = f"Chapter {chapter_id[2:]}"
     
     def _load_chapter(self, chapter_id: str) -> str:
@@ -166,7 +166,7 @@ class BookIndex:
             content = chapter_file.read_text()
             self._chapter_cache[chapter_id] = content
             return content
-        except Exception:
+        except OSError:
             return ""
     
     def search(self, query: str, max_results: int = 3) -> List[BookCitation]:

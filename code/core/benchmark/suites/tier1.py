@@ -342,7 +342,8 @@ def build_tier1_suite_summary(
         label="tier-1 benchmark result JSON",
         required=True,
     )
-    assert payload is not None
+    if payload is None:
+        raise ValueError(f"tier-1 benchmark result JSON reader returned no payload for {result_json_path}")
     target_map = suite.by_target()
 
     chapter_results = {

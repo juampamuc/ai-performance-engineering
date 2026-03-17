@@ -76,7 +76,7 @@ python -m cli.aisp bench run --targets ch20 --profile minimal
 ## Validation Checklist
 - `python -m ch20.compare` emits per-stage summaries that show each optimized variant meeting or exceeding stored expectations.
 - `python -m ch20.ai_kernel_generator --emit test.cu` produces CUDA kernels that compile via `nvcc` and integrate into the harness without manual edits.
-- `python -m ch20.optimized_pipeline_sequential --trace` shows smooth NVTX ranges covering the entire pipeline, demonstrating overlap success.
+- `python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive` shows smooth NVTX ranges covering the entire pipeline, demonstrating overlap success.
 
 ## Notes
 - `core/optimization/inductor_guard.py` is the canonical helper for gating Inductor cudagraph features in the compiled chapter 20 paths.

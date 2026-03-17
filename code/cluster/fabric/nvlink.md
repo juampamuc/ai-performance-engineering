@@ -25,10 +25,11 @@ What to look for:
 
 ## Management Plane
 
-Set:
+Pass `--nmx-url https://<your-nmx-host>` to the CLI entrypoint you are running. The raw `curl` examples below use `<nmx-base>` to mean `https://<your-nmx-host>/nmx/v1`.
 
-- `AISP_FABRIC_NMX_URL`
-- `AISP_FABRIC_NMX_TOKEN`
+Optional authenticated access:
+
+- `--nmx-token <token>`
 
 The evaluator uses these NMX endpoints:
 
@@ -37,6 +38,7 @@ The evaluator uses these NMX endpoints:
 - `/gpus`
 - `/switches`
 - `/switch-nodes`
+- `/chassis`
 - `/ports`
 - `/partitions`
 - `/metrics`
@@ -49,23 +51,26 @@ Use this path when the question is "can this GB200/NVL72 domain support two team
 
 Commands:
 
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/compute-nodes | jq`
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/gpus | jq`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/gpus | jq length`
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/switches | jq`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/switches | jq length`
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/switch-nodes | jq`
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/ports | jq`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/ports | jq length`
-- `echo "GPUs: $(curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/gpus | jq length)"; echo "Switches: $(curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/switches | jq length)"`
+- `curl -k <nmx-base>/compute-nodes | jq`
+- `curl -k <nmx-base>/gpus | jq`
+- `curl -sk <nmx-base>/gpus | jq length`
+- `curl -k <nmx-base>/switches | jq`
+- `curl -sk <nmx-base>/switches | jq length`
+- `curl -k <nmx-base>/switch-nodes | jq`
+- `curl -k <nmx-base>/chassis | jq`
+- `curl -k <nmx-base>/ports | jq`
+- `curl -sk <nmx-base>/ports | jq length`
+- `echo "GPUs: $(curl -sk <nmx-base>/gpus | jq length)"; echo "Switches: $(curl -sk <nmx-base>/switches | jq length)"`
 
 What the repo now answers in structured output:
 
 - compute-node count, GPU count, switch-ASIC count, switch-tray count, and port count
-- which GPUs map to which compute nodes via `SystemUID` plus `LocationInfo`
+- which GPUs map to which compute nodes via live inventory-driven grouping, preferring `GpuIDList` and falling back to `SystemUID`
 - candidate 4-GPU allocations for Team Alpha and Team Beta based on discovered node-to-GPU mapping
-- switch-ASIC grouping into switch trays by `LocationInfo`
-- GPU-facing vs switch-facing port counts and whether `BaseLID` is present
+- switch-ASIC grouping into switch trays by `LocationInfo`, with the grouping fields and a sample tray surfaced directly
+- chassis counts and serial-number inventory so the report can distinguish single-chassis vs multi-chassis domains
+- GPU-facing vs switch-facing port counts, `BaseLID` presence, and whether the observed total reconciles with `2 * gpu_count * switch_asic_count`
+- sample GPU, switch, and chassis objects with the high-value fields already extracted for quick interpretation
 
 Fields worth interpreting explicitly:
 
@@ -84,14 +89,25 @@ Canonical fabric runs do not mutate partitions. They document the workflow and v
 
 Inspect:
 
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/partitions | jq`
-- `curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/operations/<operationID> | jq`
+- `curl -k <nmx-base>/partitions | jq`
+- `curl -k <nmx-base>/operations/<operationID> | jq`
 
 Documented lab-only commands:
 
-- `curl -k -X POST https://seat##-nvlink.nvacademy.dev/nmx/v1/partitions -H "Content-Type: application/json" -d '{"Name":"AlphaPartition","DomainUUID":"<DomainUUID>","Members":{"locations":["<chassis.slot.host.gpu>"]}}' | jq`
-- `curl -k -X PUT https://seat##-nvlink.nvacademy.dev/nmx/v1/partitions/<partition-id> -H "Content-Type: application/json" -d '{"DomainUUID":"<DomainUUID>","Members":{"locations":["<chassis.slot.host.gpu>"]}}' | jq`
-- `curl -k -X DELETE https://seat##-nvlink.nvacademy.dev/nmx/v1/partitions/<partition-id> | jq`
+- `curl -k -X POST <nmx-base>/partitions -H "Content-Type: application/json" -d '{"Name":"AlphaPartition","DomainUUID":"<DomainUUID>","Members":{"locations":["<chassis.slot.host.gpu>"]}}' | jq`
+- `curl -k -X PUT <nmx-base>/partitions/<partition-id> -H "Content-Type: application/json" -d '{"DomainUUID":"<DomainUUID>","Members":{"locations":["<chassis.slot.host.gpu>"]}}' | jq`
+- `curl -k -X DELETE <nmx-base>/partitions/<partition-id> | jq`
+
+Generated helper:
+
+- `python -m cli.aisp cluster nmx-partition-lab --nmx-url https://<your-nmx-host>`
+
+The helper is intentionally lab-only. It never mutates the fabric; it inspects live inventory and produces:
+
+- candidate Alpha and Beta seed locations
+- the safe borrow/rebalance flow for moving GPUs between partitions
+- exact create, update, delete, poll, and verify `curl` commands filled in with discovered `DomainUUID`
+- a structured record of unassigned GPU locations and the partition inventory used to justify the workflow
 
 Safe operational order:
 
@@ -107,6 +123,7 @@ The evaluator now captures:
 - whether a default partition is present
 - default partition member count
 - unassigned GPU count
+- unassigned GPU locations
 - the exact operation poll path and update-flow guidance
 
 This lands in `<run_id>_fabric_verification.json` under `families.nvlink.control_plane.nmx.partitions`.
@@ -117,13 +134,13 @@ Use the metrics endpoint when you need switch health and port/cable evidence to 
 
 Commands:
 
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^switch_temperature" | head -5`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^PortXmitDataExtended" | head -5`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^PortRcvDataExtended" | head -5`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^PortLocalPhysicalErrors" | head -5`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^CableInfoTemperature" | head -5`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^CableInfoRxPower" | head -5`
-- `curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep "^CableInfoTxPower" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^switch_temperature" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^PortXmitDataExtended" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^PortRcvDataExtended" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^PortLocalPhysicalErrors" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^CableInfoTemperature" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^CableInfoRxPower" | head -5`
+- `curl -sk <nmx-base>/metrics | grep "^CableInfoTxPower" | head -5`
 
 What the evaluator records:
 
@@ -149,4 +166,4 @@ Interpretation:
 
 - Strong single-node NCCL algbw but no NMX visibility: runtime is healthy, control-plane is unverified.
 - Weak single-node algbw with valid topology: inspect clock lock, NCCL env sensitivity, and topology parsing before blaming the fabric.
-- Partition or service inventory missing: check NMX reachability and token scope.
+- Partition or service inventory missing: check the `--nmx-url` target and any required token scope.

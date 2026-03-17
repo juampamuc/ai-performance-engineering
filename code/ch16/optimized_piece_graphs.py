@@ -6,21 +6,22 @@ The baseline captures the full model monolithically.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
 from ch16.piece_graphs_model import RegionalPieceGraph
 
-
-def resolve_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA-capable GPU required for piece-graph benchmarks.")
-    return torch.device("cuda")
+resolve_device = partial(
+    require_cuda_device,
+    "CUDA-capable GPU required for piece-graph benchmarks.",
+)
 
 
 RegionGraph = Tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]
@@ -179,8 +180,8 @@ class OptimizedPieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),
@@ -190,7 +191,3 @@ class OptimizedPieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     return OptimizedPieceGraphsBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

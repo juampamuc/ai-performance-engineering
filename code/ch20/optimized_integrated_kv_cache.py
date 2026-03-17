@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from contextlib import nullcontext
+from functools import partial
 
 import torch
 import torch.nn as nn
@@ -24,11 +25,10 @@ except ImportError:  # pragma: no cover - older PyTorch fallback
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
 )
 
 def _flash_sdp_context():
@@ -37,12 +37,7 @@ def _flash_sdp_context():
         return nullcontext()
     return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
 
-
-def resolve_device() -> torch.device:
-    """Return CUDA device if available."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for ch20")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA required for ch20")
 
 class PagedKVCache:
     """KV cache that reuses contiguous slabs sized by sequence length."""
@@ -209,7 +204,6 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.hidden_dim = self.num_heads * self.head_dim
         self.batch_size = 1
         self.sequence_lengths = [512, 1024, 2048]
-        self.block_size = 8
         self.register_workload_metadata(requests_per_iteration=1.0)
         self.output: Optional[torch.Tensor] = None
         self._verification_payload = None
@@ -260,18 +254,15 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
                 request_id = f"req_{seq_idx}"
                 seq_len = x.size(1)
                 self.kv_cache.allocate(request_id, seq_len)
-                
-                for pos in range(0, seq_len, self.block_size):
-                    token_block = x[:, pos:pos + self.block_size, :]
-                    hidden = token_block
+
+                for pos in range(seq_len):
+                    token = x[:, pos:pos+1, :]
+                    hidden = token
                     for layer_idx, layer in enumerate(self.layers):
                         hidden = layer(hidden, self.kv_cache, request_id, layer_idx, pos)
-                
+
                 self.kv_cache.free(request_id)
-        if hidden is None:
-            raise RuntimeError("benchmark_fn() must set hidden output")
-        # Match baseline shape: last token only (batch, 1, hidden_dim).
-        self.output = hidden[:, -1:, :].detach()
+        self.output = hidden.detach() if hidden is not None else None
 
     def capture_verification_payload(self) -> None:
         if self.layers is None or self._verify_input is None or self.output is None:
@@ -303,10 +294,10 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_ai_optimization_metrics
         return compute_ai_optimization_metrics(
-            original_time_ms=getattr(self, '_original_ms', 10.0),
-            ai_optimized_time_ms=getattr(self, '_optimized_ms', 5.0),
-            suggestions_applied=getattr(self, '_suggestions_applied', 1),
-            suggestions_total=getattr(self, '_suggestions_total', 1),
+            original_time_ms=None,
+            ai_optimized_time_ms=getattr(self, '_last_elapsed_ms', None),
+            suggestions_applied=None,
+            suggestions_total=None,
         )
 
     def validate_result(self) -> Optional[str]:
@@ -319,7 +310,3 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedIntegratedKVCacheBenchmark()
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

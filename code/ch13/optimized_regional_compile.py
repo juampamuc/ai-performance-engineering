@@ -19,8 +19,6 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
 
@@ -128,6 +126,7 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
+        self._verification_payload = None
         
         # Enable cuDNN autotuning for optimal kernel selection
         self.model = TinyTransformerBlock(
@@ -175,12 +174,12 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
         x_fp32 = self.inputs_fp32[seq_len]
 
         with torch.no_grad(), self._nvtx_range("optimized_regional_compile"):
-            self.output = self.model(x).detach().float().clone()
+            self.output = self.model(x).detach().clone()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
         if self._verify_x is None:
             self._verify_x = x_fp32
-            self._verify_output = self.output.detach().float().clone()
+            self._verify_output = self.output.detach().clone()
 
     def capture_verification_payload(self) -> None:
         if self._verify_x is None or self._verify_output is None:
@@ -188,7 +187,7 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
         x = self._verify_x
         self._set_verification_payload(
             inputs={"input": x},
-            output=self._verify_output,
+            output=self._verify_output.float().clone(),
             batch_size=self.batch_size,
             precision_flags={
                 "fp16": False,
@@ -224,8 +223,8 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
+            fp32_time_ms=None,
+            reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
             precision_type="fp8",
         )
 
@@ -237,8 +236,3 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedRegionalCompileBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

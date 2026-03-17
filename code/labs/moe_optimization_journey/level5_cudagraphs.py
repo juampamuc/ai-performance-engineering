@@ -24,6 +24,3 @@ def get_benchmark() -> Level6CUDAGraphs:
     return Level6CUDAGraphs()
 
 
-if __name__ == "__main__":
-    run_level(6)
-

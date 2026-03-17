@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import torch
 import torch.nn as nn
 
@@ -14,11 +12,12 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
     WorkloadMetadata,
 )
-from ch10.flash_attention_common import compute_attention_workload_metrics
+from ch10.flash_attention_common import (
+    FLASH_ATTENTION_OUTPUT_TOLERANCE,
+    compute_attention_workload_metrics,
+)
 
 
 class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -136,7 +135,7 @@ class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
             },
-            output_tolerance=(0.2, 2.0),
+            output_tolerance=FLASH_ATTENTION_OUTPUT_TOLERANCE,
         )
 
     
@@ -182,8 +181,3 @@ class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselineFlashAttentionBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

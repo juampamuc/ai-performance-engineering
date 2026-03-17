@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import torch
 
@@ -17,21 +18,32 @@ from ch05.baseline_storage_cpu import BaselineStorageCpuBenchmark
 from ch05.baseline_vectorization import BaselineVectorizationBenchmark
 from ch05.optimized_ai import OptimizedAIBenchmark, TinyBlock as OptimizedTinyBlock
 from ch05.optimized_host_staged_reduction import OptimizedHostStagedReductionBenchmark
-from ch05.optimized_storage_cpu import OptimizedStorageGdsBenchmark
+from ch05.optimized_storage_cpu import OptimizedStorageCpuBenchmark
 from ch05.optimized_vectorization import OptimizedVectorizationBenchmark
 from ch10.baseline_batch import BaselineBatchBenchmark
 from ch10.baseline_double_buffered_pipeline import BaselineDoubleBufferedPipelineBenchmark
 from ch10.baseline_flash_attention import BaselineFlashAttentionBenchmark
+from ch10.baseline_matmul_tcgen05_pipelined import BaselineMatmulTCGen05PipelinedBenchmark
+from ch10.baseline_warp_spec_pingpong import BaselineWarpSpecPingPongBenchmark
+from ch10.baseline_warp_specialized_cluster_pipeline import BaselineWarpSpecializedClusterPipelineBenchmark
+from ch10.baseline_warp_specialized_pipeline import BaselineWarpSpecializedPipelineBenchmark
+from ch10.baseline_warp_specialized_pipeline_enhanced import BaselineWarpSpecializedPipelineEnhancedBenchmark
 from ch10.optimized_flash_attention import OptimizedFlashAttentionBenchmark
 from ch10.optimized_batch import OptimizedBatchBenchmark
 from ch10.optimized_double_buffered_pipeline import OptimizedDoubleBufferedPipelineBenchmark
+from ch10.optimized_matmul_tcgen05_pipelined import OptimizedMatmulTCGen05PipelinedBenchmark
+from ch10.optimized_tcgen05_cluster_pipeline import OptimizedTcgen05ClusterPipelineBenchmark
+from ch10.optimized_warp_spec_pingpong import OptimizedWarpSpecPingPongBenchmark
+from ch10.optimized_warp_specialized_cluster_pipeline import OptimizedWarpSpecializedClusterPipelineBenchmark
+from ch10.optimized_warp_specialized_pipeline import OptimizedWarpSpecializedPipelineBenchmark
+from ch10.optimized_warp_specialized_pipeline_enhanced import OptimizedWarpSpecializedPipelineEnhancedBenchmark
 from ch15.baseline_inference_monolithic import SimpleLLM as BaselineMonolithicLLM
 from ch15.inference_monolithic_common import SimpleLLM as CommonMonolithicLLM
 from ch15.optimized_inference_monolithic import SimpleLLM as OptimizedMonolithicLLM
 from ch17.baseline_prefill_decode_disagg import SimpleLLM as BaselineDisaggLLM
 from ch17.optimized_prefill_decode_disagg import SimpleLLM as OptimizedDisaggLLM
 from ch17.prefill_decode_disagg_monolithic_common import SimpleLLM as CommonDisaggLLM
-from core.scripts.update_custom_metrics import CHAPTER_METRIC_HELPERS
+from core.scripts.update_custom_metrics import CHAPTER_METRIC_HELPERS, audit_repo_custom_metrics
 from labs.flexattention.baseline_flex_attention import BaselineFlexAttentionBenchmark
 from labs.flexattention.optimized_flex_attention import OptimizedFlexAttentionBenchmark
 
@@ -142,7 +154,7 @@ def test_ch05_remaining_metrics_no_longer_emit_storage_bandwidth_placeholders() 
     baseline_vector = BaselineVectorizationBenchmark().get_custom_metrics()
     optimized_vector = OptimizedVectorizationBenchmark().get_custom_metrics()
     baseline_storage = BaselineStorageCpuBenchmark().get_custom_metrics()
-    optimized_storage = OptimizedStorageGdsBenchmark().get_custom_metrics()
+    optimized_storage = OptimizedStorageCpuBenchmark().get_custom_metrics()
     baseline_reduction = BaselineHostStagedReductionBenchmark().get_custom_metrics()
     optimized_reduction = OptimizedHostStagedReductionBenchmark().get_custom_metrics()
 
@@ -151,7 +163,8 @@ def test_ch05_remaining_metrics_no_longer_emit_storage_bandwidth_placeholders() 
     assert optimized_vector["vectorization.is_vectorized"] == 1.0
 
     assert baseline_storage["storage.uses_cpu_staging"] == 1.0
-    assert optimized_storage["storage.simulates_gpu_direct"] == 1.0
+    assert optimized_storage["storage.uses_cpu_staging"] == 1.0
+    assert optimized_storage["storage.simulates_gpu_direct"] == 0.0
     assert "storage.total_gbps" not in baseline_storage
 
     assert baseline_reduction["reduction.host_staging_round_trips"] == 2.0
@@ -174,6 +187,68 @@ def test_ch10_remaining_metrics_no_longer_emit_fake_pipeline_timing() -> None:
     assert optimized_binary["workload.M"] == 2048.0
 
 
+def test_ch10_tcgen05_metrics_no_longer_emit_legacy_string_placeholders() -> None:
+    baseline_pipelined = BaselineMatmulTCGen05PipelinedBenchmark().get_custom_metrics()
+    optimized_pipelined = OptimizedMatmulTCGen05PipelinedBenchmark().get_custom_metrics()
+
+    assert "library" not in baseline_pipelined
+    assert "matrix_size" not in baseline_pipelined
+    assert baseline_pipelined["gemm.uses_tcgen05"] == 1.0
+    assert baseline_pipelined["gemm.pipeline_stages"] == 1.0
+    assert optimized_pipelined["gemm.no_wait_pipeline"] == 1.0
+    assert optimized_pipelined["gemm.total_flops"] == baseline_pipelined["gemm.total_flops"]
+
+
+def test_ch10_cluster_pipeline_metrics_report_real_workload_shape() -> None:
+    if not torch.cuda.is_available():
+        return
+
+    metrics = OptimizedTcgen05ClusterPipelineBenchmark().get_custom_metrics()
+
+    assert "cuda_graph_replay" not in metrics
+    assert metrics["gemm.uses_tcgen05"] == 1.0
+    assert metrics["gemm.cluster_launch"] == 1.0
+    assert metrics["gemm.cuda_graph_replay"] == 1.0
+    assert metrics["gemm.m"] == float(OptimizedTcgen05ClusterPipelineBenchmark.matrix_rows)
+
+
+def test_ch10_warp_specialization_wrappers_no_longer_return_empty_placeholder_metrics() -> None:
+    baseline_metrics = BaselineWarpSpecializedPipelineBenchmark().get_custom_metrics()
+    optimized_metrics = OptimizedWarpSpecializedPipelineBenchmark().get_custom_metrics()
+    baseline_enhanced_metrics = BaselineWarpSpecializedPipelineEnhancedBenchmark().get_custom_metrics()
+    optimized_enhanced_metrics = OptimizedWarpSpecializedPipelineEnhancedBenchmark().get_custom_metrics()
+
+    assert baseline_metrics["pipeline.warp_specialized"] == 1.0
+    assert baseline_metrics["workload.elements"] == float(512 * 64 * 64)
+    assert baseline_metrics["pipeline.async_staging"] == 0.0
+    assert optimized_metrics["pipeline.num_stages"] == 2.0
+    assert optimized_metrics["pipeline.async_staging"] == 1.0
+
+    assert baseline_enhanced_metrics["workload.tile_candidate_count"] == 3.0
+    assert baseline_enhanced_metrics["pipeline.adaptive_tile_selection"] == 1.0
+    assert optimized_enhanced_metrics["pipeline.uses_pipeline_api"] == 1.0
+    assert optimized_enhanced_metrics["pipeline.num_stages"] == 2.0
+
+
+def test_ch10_cluster_and_pingpong_metrics_report_real_warp_roles() -> None:
+    baseline_cluster_metrics = BaselineWarpSpecializedClusterPipelineBenchmark().get_custom_metrics()
+    optimized_cluster_metrics = OptimizedWarpSpecializedClusterPipelineBenchmark().get_custom_metrics()
+    baseline_pingpong_metrics = BaselineWarpSpecPingPongBenchmark().get_custom_metrics()
+    optimized_pingpong_metrics = OptimizedWarpSpecPingPongBenchmark().get_custom_metrics()
+
+    assert baseline_cluster_metrics["workload.cluster_blocks"] == 4.0
+    assert baseline_cluster_metrics["pipeline.uses_cluster"] == 1.0
+    assert baseline_cluster_metrics["pipeline.async_staging"] == 0.0
+    assert optimized_cluster_metrics["pipeline.async_staging"] == 1.0
+    assert optimized_cluster_metrics["pipeline.uses_dsmem"] == 1.0
+
+    assert baseline_pingpong_metrics["pipeline.consumer_warps"] == 1.0
+    assert baseline_pingpong_metrics["pipeline.pingpong_enabled"] == 0.0
+    assert baseline_pingpong_metrics["workload.tile_size"] == 64.0
+    assert optimized_pingpong_metrics["pipeline.consumer_warps"] == 2.0
+    assert optimized_pingpong_metrics["pipeline.pingpong_enabled"] == 1.0
+
+
 def test_chapter_models_import_shared_classes() -> None:
     assert BaselineTinyBlock is CommonTinyBlock
     assert OptimizedTinyBlock is CommonTinyBlock
@@ -186,3 +261,12 @@ def test_chapter_models_import_shared_classes() -> None:
 def test_update_custom_metrics_no_longer_auto_suggests_bogus_helpers_for_ch5_and_ch10() -> None:
     assert CHAPTER_METRIC_HELPERS[5] is None
     assert CHAPTER_METRIC_HELPERS[10] is None
+    assert CHAPTER_METRIC_HELPERS[14] is None
+    assert CHAPTER_METRIC_HELPERS[18] is None
+
+
+def test_repo_wide_custom_metrics_audit_has_no_phantoms() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    results = audit_repo_custom_metrics(repo_root)
+    phantoms = [result for result in results if result["analysis"]["classification"] == "phantom"]
+    assert not phantoms

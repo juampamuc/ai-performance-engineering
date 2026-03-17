@@ -22,11 +22,12 @@ Shared headers, CUDA build flags, and Python utilities that keep every chapter a
 - **Environment**: `from core.env import apply_env_defaults; apply_env_defaults()` before running benchmarks to set CUDA paths, allocator knobs, and cache locations.
 - **Harness**: standard pattern inside chapter scripts:
   ```python
+  from pathlib import Path
   from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode, BenchmarkConfig
   from core.utils.chapter_compare_template import discover_benchmarks, load_benchmark
 
   harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=BenchmarkConfig(iterations=10, warmup=3))
-  for baseline, optimized_list, _ in discover_benchmarks("."):
+  for baseline, optimized_list, _ in discover_benchmarks(Path("ch01")):
       bench = load_benchmark(baseline, optimized_list[0])
       result = harness.benchmark(bench)
       print(result.timing.mean_ms)
@@ -35,7 +36,7 @@ Shared headers, CUDA build flags, and Python utilities that keep every chapter a
 
 ## Validation Checklist
 - `python - <<'PY'\nfrom core.env import dump_environment_and_capabilities\ndump_environment_and_capabilities()\nPY` prints CUDA paths, NCCL preload, and TMA/pipeline support.
-- `python - <<'PY'\nfrom core.utils.chapter_compare_template import discover_benchmarks\nprint(len(discover_benchmarks(\"ch01\")))\nPY` confirms harness discovery works end-to-end.
+- `python - <<'PY'\nfrom pathlib import Path\nfrom core.utils.chapter_compare_template import discover_benchmarks\nprint(len(discover_benchmarks(Path(\"ch01\"))))\nPY` confirms harness discovery works end-to-end.
 - Building any chapter extension after including `cuda_arch.mk` emits both `sm_100` and `sm_121` code objects, verifying dual-arch flags are active.
 
 ## Notes

@@ -47,7 +47,7 @@ python -m cli.aisp bench run --targets labs/moe_optimization_journey --profile m
 | Path | Description |
 | --- | --- |
 | `baseline_moe.py`, `baseline_moe_pad_quant.py` | Naive/reference entrypoints. |
-| `level0_naive.py` through `level7_compiled.py` | Incremental optimization stages used by the journey, including a real CUDA-graph replay stage before the compiled finale. |
+| `level0_naive.py` through `level6_full_stack.py` | Incremental optimization stages used by the journey, including a real CUDA-graph replay stage before the compiled finale. |
 | `moe_benchmark.py` | Shared benchmark harness layer for the staged MoE path. |
 
 ## Running the Benchmarks
@@ -67,5 +67,4 @@ python -m cli.aisp bench run --targets labs/moe_optimization_journey --profile m
 - The Level 6 CUDA-graphs entrypoint should report graph capture/replay instead of silently falling back to the Level 5 fused path.
 
 ## Notes
-- Level 6 now performs a real CUDA-graph capture/replay over the level-5 fused BMM path instead of only narrating the graph stage.
 - This lab is a good example of how the repo should teach optimization: staged, benchmarked, and profiler-backed.

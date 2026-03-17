@@ -239,10 +239,12 @@ Generated from `mcp.mcp_server.TOOLS`. Run `python -m scripts.generate_mcp_docs`
 ### HuggingFace (1)
 - `hf` — HuggingFace Hub operations: search models, get trending, download models
 
-### Cluster/Cost (7)
+### Cluster/Cost (9)
 - `cluster_build_canonical_package` — Materialize a clean canonical cluster package from one primary run plus optional comparison and historical runs
 - `cluster_common_eval` — Run a preset benchmark bundle that answers the common system-evaluation questions people usually ask
 - `cluster_eval_suite` — Run the cluster field-report eval suite, or a fast local smoke run that captures metadata + manifest
+- `cluster_fabric_eval` — Run the canonical AI fabric evaluation bundle with a structured capability matrix, verification ledger, AI-workload correlation, and fabric scorecard
+- `cluster_nmx_partition_lab` — Build a lab-only NVLink/NMX partition workflow guide from live inventory
 - `cluster_promote_run` — Promote one run-local cluster result tree into the published cluster package
 - `cluster_slurm` — Generate SLURM job script for cluster submission with optimal settings
 - `cluster_validate_field_report` — Validate `cluster/field-report.md` and companion notes/template/runbook plus artifact hygiene

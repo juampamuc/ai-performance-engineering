@@ -280,7 +280,7 @@ def generate_tool_schema(method: Callable) -> Dict[str, Any]:
     hints = {}
     try:
         hints = get_type_hints(method)
-    except Exception:
+    except (AttributeError, NameError, TypeError):
         pass
     
     properties = {}
@@ -942,7 +942,6 @@ CONSOLIDATED_TOOLS = {
 # Total: 50 tools (down from 88)
 # Core: 4, GPU: 4, System: 3, Profile: 5, Analyze: 5, Optimize: 3
 # Distributed: 3, Inference: 2, Benchmark: 4, AI: 3, Export: 3, HW: 10, HF: 1
-
 
 
 

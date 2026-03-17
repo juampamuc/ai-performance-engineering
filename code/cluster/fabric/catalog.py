@@ -74,7 +74,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Topology Exploration",
         "plane": "management_plane",
-        "text": "curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/switch-nodes | jq",
+        "text": "curl -k <nmx-base>/switch-nodes | jq",
         "entry_type": "command",
     },
     {
@@ -82,7 +82,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Topology Exploration",
         "plane": "management_plane",
-        "text": "curl -k https://seat##-nvlink.nvacademy.dev/nmx/v1/ports | jq",
+        "text": "curl -k <nmx-base>/chassis | jq",
         "entry_type": "command",
     },
     {
@@ -90,7 +90,15 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Topology Exploration",
         "plane": "management_plane",
-        "text": "echo \"GPUs: $(curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/gpus | jq length)\"; echo \"Switches: $(curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/switches | jq length)\"",
+        "text": "curl -k <nmx-base>/ports | jq",
+        "entry_type": "command",
+    },
+    {
+        "source_doc": "supplemental/nmx_scenarios",
+        "family": "nvlink",
+        "topic": "Topology Exploration",
+        "plane": "management_plane",
+        "text": "echo \"GPUs: $(curl -sk <nmx-base>/gpus | jq length)\"; echo \"Switches: $(curl -sk <nmx-base>/switches | jq length)\"",
         "entry_type": "command",
     },
     {
@@ -98,7 +106,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Partition Management",
         "plane": "management_plane",
-        "text": "curl -k -X PUT https://seat##-nvlink.nvacademy.dev/nmx/v1/partitions/<partition-id> -H \"Content-Type: application/json\" -d '{\"DomainUUID\":\"<DomainUUID>\",\"Members\":{\"locations\":[\"<chassis.slot.host.gpu>\"]}}' | jq",
+        "text": "curl -k -X PUT <nmx-base>/partitions/<partition-id> -H \"Content-Type: application/json\" -d '{\"DomainUUID\":\"<DomainUUID>\",\"Members\":{\"locations\":[\"<chassis.slot.host.gpu>\"]}}' | jq",
         "entry_type": "command",
     },
     {
@@ -106,7 +114,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^switch_temperature\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^switch_temperature\" | head -5",
         "entry_type": "command",
     },
     {
@@ -114,7 +122,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^PortXmitDataExtended\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^PortXmitDataExtended\" | head -5",
         "entry_type": "command",
     },
     {
@@ -122,7 +130,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^PortRcvDataExtended\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^PortRcvDataExtended\" | head -5",
         "entry_type": "command",
     },
     {
@@ -130,7 +138,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^PortLocalPhysicalErrors\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^PortLocalPhysicalErrors\" | head -5",
         "entry_type": "command",
     },
     {
@@ -138,7 +146,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^CableInfoTemperature\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^CableInfoTemperature\" | head -5",
         "entry_type": "command",
     },
     {
@@ -146,7 +154,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^CableInfoRxPower\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^CableInfoRxPower\" | head -5",
         "entry_type": "command",
     },
     {
@@ -154,7 +162,7 @@ _SUPPLEMENTAL_ENTRIES = (
         "family": "nvlink",
         "topic": "Telemetry Monitoring",
         "plane": "management_plane",
-        "text": "curl -sk https://seat##-nvlink.nvacademy.dev/nmx/v1/metrics | grep \"^CableInfoTxPower\" | head -5",
+        "text": "curl -sk <nmx-base>/metrics | grep \"^CableInfoTxPower\" | head -5",
         "entry_type": "command",
     },
 )
@@ -198,6 +206,8 @@ def _normalize_command(line: str) -> str:
     cmd = line[2:].strip() if line.startswith("$ ") else line.strip()
     cmd = cmd.replace("\xa0", " ")
     cmd = re.sub(r"\s+", " ", cmd).strip()
+    cmd = re.sub(r"https://(?:seat##-)?nvlink\.nvacademy\.dev/nmx/v1", "<nmx-base>", cmd)
+    cmd = re.sub(r"<nmx-base>/services/[0-9a-f]+", "<nmx-base>/services/<service-id>", cmd)
     return cmd
 
 
@@ -273,6 +283,8 @@ def _expected_signal(command: str, family: str, topic: str, entry_type: str) -> 
         return "NVSwitch inventory and health"
     if "/nmx/v1/switch-nodes" in lowered:
         return "NVSwitch tray inventory"
+    if "/nmx/v1/chassis" in lowered:
+        return "NVLink chassis inventory"
     if "/nmx/v1/ports" in lowered:
         return "NVLink port inventory"
     if "/nmx/v1/partitions" in lowered:
@@ -308,12 +320,12 @@ def _preconditions(command: str, family: str, plane: str, entry_type: str) -> st
     lowered = command.lower()
     if family == "infiniband":
         if any(lowered.startswith(prefix) for prefix in ("ib", "saquery", "perfquery")):
-            return "OFED/rdma-core tools installed and InfiniBand subnet reachable"
+            return "--ib-mgmt-host provided and OFED/rdma-core tools installed on that host"
     if family == "nvlink":
-        return "AISP_FABRIC_NMX_URL configured and endpoint reachable"
+        return "--nmx-url provided and endpoint reachable"
     if family == "spectrum-x":
         if lowered.startswith("nv ") or lowered.startswith("vtysh"):
-            return "AISP_FABRIC_CUMULUS_HOSTS configured and NVUE/vtysh available on switch"
+            return "--cumulus-hosts provided and NVUE/vtysh available on the target switch"
     return f"{plane} access available"
 
 

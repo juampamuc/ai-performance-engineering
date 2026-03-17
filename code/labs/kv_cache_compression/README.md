@@ -46,7 +46,6 @@ python -m cli.aisp bench run --targets labs/kv_cache_compression:kv_cache --prof
 | --- | --- |
 | `baseline_kv_cache.py`, `optimized_kv_cache_nvfp4.py` | Baseline and compressed KV-cache benchmark pair. |
 | `kv_cache_common.py` | Shared workload setup. |
-| `tma_prefetch_extension.py`, `tma_prefetch_ext.cu` | Extension code supporting the optimized path. |
 
 ## Running the Benchmarks
 Use the benchmark harness for quick comparisons or drive the Typer CLI when you need repeatable artifact capture.

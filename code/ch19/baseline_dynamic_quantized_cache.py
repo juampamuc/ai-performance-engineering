@@ -1,18 +1,18 @@
-"""Baseline: Full precision KV cache without quantization.
+"""Baseline: Full-precision KV cache refresh without quantization.
 
 Chapter 19: Blackwell-Native Precision Operations
 
-The baseline shows naive full-precision (FP32) KV cache storage.
-This uses maximum memory but avoids quantization overhead.
+The baseline shows a naive FP32 cache refresh path.
+It refreshes the same cache footprint every step in full precision,
+maximizing memory traffic while avoiding quantization.
 
-The optimized version uses dynamic quantization with adaptive bit-widths,
-trading some precision for significant memory savings (4x-8x).
+The optimized version keeps the same iteration count and tensor footprint,
+but swaps the FP32 refresh for an adaptive-bitwidth quantized refresh.
 """
 
 from __future__ import annotations
 
 import statistics
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import torch
@@ -25,6 +25,70 @@ from core.harness.benchmark_harness import (  # noqa: E402
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 
+_CACHE_SHAPE = (64, 1024, 512)
+_CACHE_ROWS = _CACHE_SHAPE[0] * _CACHE_SHAPE[1]
+_CACHE_LAST_DIM = _CACHE_SHAPE[-1]
+_FP4_PACKED_LAST_DIM = _CACHE_LAST_DIM // 2
+_FP6_PACKED_LAST_DIM = (_CACHE_LAST_DIM // 4) * 3
+
+
+def _pack_int4(values: torch.Tensor, out: torch.Tensor) -> None:
+    """Pack signed 4-bit values [-8, 7] into uint8 bytes."""
+    unsigned = torch.bitwise_and(values.to(torch.int16), 0x0F).to(torch.uint8)
+    pairs = unsigned.view(*unsigned.shape[:-1], -1, 2)
+    out.copy_((pairs[..., 0] << 4) | pairs[..., 1])
+
+
+def _unpack_int4_to_float(packed: torch.Tensor, scale: torch.Tensor, out: torch.Tensor) -> None:
+    """Unpack uint8 bytes into signed 4-bit values and dequantize to float32."""
+    out_view = out.view(*packed.shape[:-1], -1, 2)
+
+    high = torch.bitwise_right_shift(packed, 4)
+    out_view[..., 0].copy_(high.to(torch.float32))
+    out_view[..., 0].sub_(16.0 * (out_view[..., 0] >= 8).to(torch.float32))
+    out_view[..., 0].mul_(scale)
+
+    low = torch.bitwise_and(packed, 0x0F)
+    out_view[..., 1].copy_(low.to(torch.float32))
+    out_view[..., 1].sub_(16.0 * (out_view[..., 1] >= 8).to(torch.float32))
+    out_view[..., 1].mul_(scale)
+
+
+def _pack_int6(values: torch.Tensor, out: torch.Tensor) -> None:
+    """Pack signed 6-bit values [-32, 31] into 3 bytes for every 4 values."""
+    unsigned = (values.to(torch.int16) + 32).to(torch.uint8)
+    groups = unsigned.view(*unsigned.shape[:-1], -1, 4)
+    out_view = out.view(*out.shape[:-1], -1, 3)
+    out_view[..., 0] = groups[..., 0] | ((groups[..., 1] & 0x03) << 6)
+    out_view[..., 1] = ((groups[..., 1] >> 2) & 0x0F) | ((groups[..., 2] & 0x0F) << 4)
+    out_view[..., 2] = ((groups[..., 2] >> 4) & 0x03) | (groups[..., 3] << 2)
+
+
+def _unpack_int6_to_float(packed: torch.Tensor, scale: torch.Tensor, out: torch.Tensor) -> None:
+    """Unpack packed 6-bit values and dequantize to float32."""
+    groups = packed.view(*packed.shape[:-1], -1, 3)
+    q0 = groups[..., 0] & 0x3F
+    q1 = ((groups[..., 0] >> 6) & 0x03) | ((groups[..., 1] & 0x0F) << 2)
+    q2 = ((groups[..., 1] >> 4) & 0x0F) | ((groups[..., 2] & 0x03) << 4)
+    q3 = (groups[..., 2] >> 2) & 0x3F
+    out_view = out.view(*packed.shape[:-1], -1, 4)
+
+    out_view[..., 0].copy_(q0.to(torch.float32))
+    out_view[..., 0].sub_(32.0)
+    out_view[..., 0].mul_(scale)
+
+    out_view[..., 1].copy_(q1.to(torch.float32))
+    out_view[..., 1].sub_(32.0)
+    out_view[..., 1].mul_(scale)
+
+    out_view[..., 2].copy_(q2.to(torch.float32))
+    out_view[..., 2].sub_(32.0)
+    out_view[..., 2].mul_(scale)
+
+    out_view[..., 3].copy_(q3.to(torch.float32))
+    out_view[..., 3].sub_(32.0)
+    out_view[..., 3].mul_(scale)
+
 
 class _DynamicQuantizedCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Base class for KV cache quantization benchmarks."""
@@ -33,9 +97,23 @@ class _DynamicQuantizedCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         self.schedule_bits = schedule_bits
         self.use_fp32_baseline = use_fp32_baseline
-        self.tensor: Optional[torch.Tensor] = None
+        self._verification_input = torch.tensor(_CACHE_SHAPE, dtype=torch.int32)
+        self._cache_numel = _CACHE_SHAPE[0] * _CACHE_SHAPE[1] * _CACHE_SHAPE[2]
+        self.output: Optional[torch.Tensor] = None
+        self._reference_cache: Optional[torch.Tensor] = None
+        self._reference_cache_cpu: Optional[torch.Tensor] = None
+        self._fp32_active: Optional[torch.Tensor] = None
+        self._quant_scratch: Optional[torch.Tensor] = None
+        self._quantized_int8_src: Optional[torch.Tensor] = None
+        self._packed_int6_src: Optional[torch.Tensor] = None
+        self._packed_int4_src: Optional[torch.Tensor] = None
+        self._scale8_src: Optional[torch.Tensor] = None
+        self._scale6_src: Optional[torch.Tensor] = None
+        self._scale4_src: Optional[torch.Tensor] = None
+        self._packed_dst_bytes: Optional[torch.Tensor] = None
+        self._last_scale: Optional[torch.Tensor] = None
         self._history: Dict[str, List[float]] = {"latency_ms": [], "error": []}
-        total_tokens = len(schedule_bits) * 64
+        total_tokens = len(schedule_bits) * _CACHE_ROWS
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(total_tokens),
@@ -47,75 +125,158 @@ class _DynamicQuantizedCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         self._verification_payload = None
         self._pending_timing_pair: Optional[tuple[torch.cuda.Event, torch.cuda.Event]] = None
+        self._last_bits = schedule_bits[-1]
 
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        self.tensor = torch.randn(8, 32, 128, device=self.device, dtype=torch.float32)
+        self._quant_scratch = torch.randn(*_CACHE_SHAPE, device=self.device, dtype=torch.float32)
+        self._reference_cache = torch.empty_like(self._quant_scratch)
+        self._refresh_reference_cache()
+        self._reference_cache_cpu = self._reference_cache.detach().cpu()
+        if self.use_fp32_baseline:
+            self._fp32_active = torch.empty_like(self._reference_cache)
+        else:
+            self._quantized_int8_src = torch.empty_like(self._reference_cache, dtype=torch.int8)
+            self._packed_int6_src = torch.empty(
+                self._reference_cache.shape[:-1] + (_FP6_PACKED_LAST_DIM,),
+                device=self.device,
+                dtype=torch.uint8,
+            )
+            self._packed_int4_src = torch.empty(
+                self._reference_cache.shape[:-1] + (_FP4_PACKED_LAST_DIM,),
+                device=self.device,
+                dtype=torch.uint8,
+            )
+            self._scale8_src = torch.empty(self._reference_cache.shape[:-1] + (1,), device=self.device, dtype=torch.float32)
+            self._scale6_src = torch.empty_like(self._scale8_src)
+            self._scale4_src = torch.empty_like(self._scale8_src)
+            self._packed_dst_bytes = torch.empty_like(self._reference_cache, dtype=torch.uint8)
+            self._prepare_quantized_sources()
+            self._reference_cache = None
+        self._quant_scratch = None
+        self.output = None
         torch.cuda.synchronize(self.device)
 
-    def _quantize(self, bits: int) -> float:
-        if self.tensor is None:
-            raise RuntimeError("Tensor not initialized")
-        qmax = (1 << (bits - 1)) - 1
-        scale = self.tensor.abs().amax(dim=-1, keepdim=True).clamp(min=1e-6) / qmax
-        quant = torch.clamp((self.tensor / scale).round(), -qmax, qmax)
-        approx = quant * scale
-        return float((self.tensor - approx).abs().max().item())
-    
+    def _refresh_reference_cache(self) -> None:
+        if self._quant_scratch is None or self._reference_cache is None:
+            raise RuntimeError("Reference cache not initialized")
+        torch.mul(self._quant_scratch, 1.001, out=self._reference_cache)
+        self._reference_cache.add_(0.001)
+        torch.tanh(self._reference_cache, out=self._reference_cache)
+
+    def _prepare_quantized_sources(self) -> None:
+        if (
+            self._reference_cache is None
+            or self._quantized_int8_src is None
+            or self._packed_int6_src is None
+            or self._packed_int4_src is None
+            or self._scale8_src is None
+            or self._scale6_src is None
+            or self._scale4_src is None
+            or self._quant_scratch is None
+        ):
+            raise RuntimeError("Quantized cache buffers not initialized")
+
+        self._scale8_src.copy_(self._reference_cache.abs().amax(dim=-1, keepdim=True).clamp(min=1e-6) / 127.0)
+        torch.div(self._reference_cache, self._scale8_src, out=self._quant_scratch)
+        self._quant_scratch.round_().clamp_(-127, 127)
+        self._quantized_int8_src.copy_(self._quant_scratch.to(torch.int8))
+
+        self._scale6_src.copy_(self._reference_cache.abs().amax(dim=-1, keepdim=True).clamp(min=1e-6) / 31.0)
+        torch.div(self._reference_cache, self._scale6_src, out=self._quant_scratch)
+        self._quant_scratch.round_().clamp_(-32, 31)
+        _pack_int6(self._quant_scratch.to(torch.int16), self._packed_int6_src)
+
+        self._scale4_src.copy_(self._reference_cache.abs().amax(dim=-1, keepdim=True).clamp(min=1e-6) / 7.0)
+        torch.div(self._reference_cache, self._scale4_src, out=self._quant_scratch)
+        self._quant_scratch.round_().clamp_(-8, 7)
+        _pack_int4(self._quant_scratch.to(torch.int16), self._packed_int4_src)
+
     def _non_adaptive_cache_update(self) -> float:
-        """Baseline: Non-adaptive cache management (reprocess full cache).
-        
-        Anti-pattern: On every token, reprocess entire KV cache at full precision.
-        This is what naive implementations do without adaptive caching.
-        """
-        if self.tensor is None:
-            raise RuntimeError("Tensor not initialized")
-        # Simulate reprocessing entire cache (expensive)
-        # - Full clone
-        # - Full precision operations
-        # - Multiple passes
-        temp = self.tensor.clone()
-        for _ in range(4):  # Multiple passes over full cache
-            temp = temp * 1.001 + 0.001
-            _ = temp.abs().max()  # Force sync
+        """Baseline: refresh the full cache in FP32 each step."""
+        if self._reference_cache is None or self._fp32_active is None:
+            raise RuntimeError("FP32 cache buffers not initialized")
+        self._fp32_active.copy_(self._reference_cache)
+        self.output = self._fp32_active
         return 0.0
 
     def _adaptive_cache_update(self, bits: int) -> float:
-        """Optimized: Adaptive cache with selective updates.
-        
-        Only update/quantize the most recent tokens, leave rest unchanged.
-        """
-        if self.tensor is None:
-            raise RuntimeError("Tensor not initialized")
-        # Just quantize the newest segment (simulating adaptive/incremental)
-        segment = self.tensor[:, -4:, :]  # Only last 4 positions
-        qmax = (1 << (bits - 1)) - 1
-        scale = segment.abs().amax(dim=-1, keepdim=True).clamp(min=1e-6) / qmax
-        _ = torch.clamp((segment / scale).round(), -qmax, qmax)
+        """Optimized: refresh the same cache footprint from pre-quantized pages."""
+        if (
+            self._quantized_int8_src is None
+            or self._packed_int6_src is None
+            or self._packed_int4_src is None
+            or self._scale8_src is None
+            or self._scale6_src is None
+            or self._scale4_src is None
+            or self._packed_dst_bytes is None
+        ):
+            raise RuntimeError("Quantized cache buffers not initialized")
+        if bits == 8:
+            self._packed_dst_bytes.copy_(self._quantized_int8_src.view(torch.uint8))
+            self._last_scale = self._scale8_src
+        elif bits == 6:
+            self._packed_dst_bytes[..., :_FP6_PACKED_LAST_DIM].copy_(self._packed_int6_src)
+            self._last_scale = self._scale6_src
+        elif bits == 4:
+            self._packed_dst_bytes[..., :_FP4_PACKED_LAST_DIM].copy_(self._packed_int4_src)
+            self._last_scale = self._scale4_src
+        else:
+            raise ValueError(f"Unsupported quantization bits: {bits}")
+        self._last_bits = bits
         return 0.0
 
-    def benchmark_fn(self) -> Dict[str, List[float]]:
-        if self.tensor is None:
-            raise RuntimeError("Tensor not initialized")
+    def _finalize_quantized_output(self) -> None:
+        if (
+            self.use_fp32_baseline
+            or self._reference_cache_cpu is None
+            or self._packed_dst_bytes is None
+            or self._last_scale is None
+        ):
+            return
+        last_bits = self._last_bits
+        dequantized = torch.empty_like(self._reference_cache_cpu)
+        if last_bits == 8:
+            dequantized.copy_(self._packed_dst_bytes.view(torch.int8).cpu().to(torch.float32))
+            dequantized.mul_(self._last_scale.cpu())
+        elif last_bits == 6:
+            _unpack_int6_to_float(
+                self._packed_dst_bytes[..., :_FP6_PACKED_LAST_DIM].cpu(),
+                self._last_scale.cpu(),
+                dequantized,
+            )
+        elif last_bits == 4:
+            _unpack_int4_to_float(
+                self._packed_dst_bytes[..., :_FP4_PACKED_LAST_DIM].cpu(),
+                self._last_scale.cpu(),
+                dequantized,
+            )
+        else:
+            raise ValueError(f"Unsupported final quantization bits: {last_bits}")
+        self.output = dequantized
+        self._history["error"].append(float((self._reference_cache_cpu - dequantized).abs().max().item()))
 
-        errors: List[float] = []
+    def benchmark_fn(self) -> Dict[str, List[float]]:
+        if self.use_fp32_baseline:
+            if self._reference_cache is None:
+                raise RuntimeError("Cache not initialized")
+        elif self._packed_dst_bytes is None:
+            raise RuntimeError("Quantized cache not initialized")
+
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
 
         if self.use_fp32_baseline:
-            # Baseline: Non-adaptive (full cache reprocessing each time)
             for _ in self.schedule_bits:
-                errors.append(self._non_adaptive_cache_update())
+                self._non_adaptive_cache_update()
         else:
-            # Optimized: Adaptive (selective updates only)
             for bits in self.schedule_bits:
-                errors.append(self._adaptive_cache_update(bits))
+                self._adaptive_cache_update(bits)
 
         end_event.record()
         self._pending_timing_pair = (start_event, end_event)
-        self._history["error"].extend(errors)
         return {}
 
     def finalize_iteration_metrics(self) -> Optional[Dict[str, List[float]]]:
@@ -124,20 +285,36 @@ class _DynamicQuantizedCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         latency_ms = elapsed_ms(self._pending_timing_pair)
         self._pending_timing_pair = None
         self._history["latency_ms"].append(latency_ms)
+        if self.use_fp32_baseline:
+            self._history["error"].append(0.0)
+        else:
+            self._finalize_quantized_output()
         return None
 
     def capture_verification_payload(self) -> None:
         self.finalize_iteration_metrics()
         self._set_verification_payload(
-            inputs={"tensor": self.tensor},
-            output=self.tensor,
-            batch_size=self.tensor.shape[0],
+            inputs={"cache_shape": self._verification_input},
+            output=self.output if self.output is not None else self._reference_cache_cpu,
+            batch_size=_CACHE_SHAPE[0],
             parameter_count=0,
-            output_tolerance=(0.1, 1.0),
+            output_tolerance=(0.05, 0.5),
         )
 
     def teardown(self) -> None:
-        self.tensor = None
+        self.output = None
+        self._reference_cache = None
+        self._reference_cache_cpu = None
+        self._fp32_active = None
+        self._quant_scratch = None
+        self._quantized_int8_src = None
+        self._packed_int6_src = None
+        self._packed_int4_src = None
+        self._scale8_src = None
+        self._scale6_src = None
+        self._scale4_src = None
+        self._packed_dst_bytes = None
+        self._last_scale = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -152,8 +329,12 @@ class _DynamicQuantizedCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if not self._history["latency_ms"]:
             return None
         avg_ms = statistics.mean(self._history["latency_ms"])
-        avg_err = statistics.mean(self._history["error"])
-        payload_bits = sum(self.schedule_bits) * self.tensor.numel() if self.tensor is not None else 0
+        avg_err = statistics.mean(self._history["error"]) if self._history["error"] else 0.0
+        elements = self._cache_numel
+        if self.use_fp32_baseline:
+            payload_bits = len(self.schedule_bits) * 32 * elements
+        else:
+            payload_bits = sum(bits * elements for bits in self.schedule_bits)
         throughput_gbps = 0.0
         if avg_ms > 0 and payload_bits:
             throughput_gbps = (payload_bits / avg_ms) / 1e6
@@ -165,22 +346,17 @@ class _DynamicQuantizedCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 class BaselineDynamicQuantizedCacheBenchmark(_DynamicQuantizedCacheBenchmark):
-    """Baseline: Full precision KV cache (more memory traffic, no quantization).
-    
-    This simulates the naive approach of keeping full FP32 caches.
-    More memory traffic = slower for memory-bound operations.
+    """Baseline: full-precision cache refresh over the full KV footprint.
+
+    The comparison keeps the same tensor shape and number of refresh steps as the
+    optimized path. The only intended difference is the algorithm: repeated FP32
+    cache refresh here versus adaptive-bitwidth quantized refresh there.
     """
 
     def __init__(self) -> None:
-        # Same number of iterations but with full precision copies
-        schedule = [8] * 32  # Schedule doesn't matter - we do FP32 copies
+        schedule = [32] * 32
         super().__init__(schedule_bits=schedule, use_fp32_baseline=True)
 
 
 def get_benchmark():
     return BaselineDynamicQuantizedCacheBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

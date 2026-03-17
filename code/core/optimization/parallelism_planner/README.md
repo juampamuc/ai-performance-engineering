@@ -103,29 +103,27 @@ A comprehensive tool for analyzing model architectures and recommending optimal 
 
 ```bash
 # Get parallelism recommendations
-python -m cli.aisp ops distributed recommend --model-params 70 --nodes 1
-
-# Scaling efficiency
-python -m cli.aisp ops distributed scaling --model-params 70
+python -m cli.aisp distributed plan --model-size 70 --nodes 1 --gpus 8
 
 # Cluster topology discovery
-python -m cli.aisp ops distributed topology
+python -m cli.aisp distributed topology
 
-# Advanced optimizations (compound stack)
-python -m cli.aisp ops advanced optimal --target 10 --difficulty medium
+# NCCL tuning guidance
+python -m cli.aisp distributed nccl --nodes 2 --gpus 8 --diagnose
+
+# ZeRO/FSDP sizing
+python -m cli.aisp distributed zero --model-size 70 --gpus 8
 
 # Auto-generate launch commands
-python -m cli.aisp ops distributed launch --model-params 70 --nodes 2 --gpus 4 --tp 2 --pp 2 --dp 1
-
-# Validate configuration before running
-python -m cli.aisp ops distributed validate --model-params 70 --tp 4 --dp 1
-
-# Workload-specific profile
-python -m cli.aisp ops distributed profile --model-params 70 --workload pretraining
+python -m cli.aisp distributed launch-plan --model-params 70 --nodes 2 --gpus 4 --tp 2 --pp 2 --dp 1 --script train.py
 
 # Launch dashboard (frontend/backend)
-python -m dashboard.api.server serve --port 6970
+python -m cli.aisp dashboard --port 6970
 ```
+
+The current Typer CLI exposes the distributed planning surfaces above. The more
+specialized validation, advanced-optimization, and workload-profile flows are
+available through the Python API in this package.
 
 ### Python API
 

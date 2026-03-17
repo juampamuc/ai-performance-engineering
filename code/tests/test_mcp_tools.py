@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any, Dict, Iterable, List
+from unittest.mock import patch
 
 import pytest
 
@@ -160,6 +161,8 @@ CATEGORY_TOOLS: Dict[str, List[str]] = {
         "cost_estimate",
         "cluster_eval_suite",
         "cluster_common_eval",
+        "cluster_fabric_eval",
+        "cluster_nmx_partition_lab",
         "cluster_build_canonical_package",
         "cluster_promote_run",
         "cluster_validate_field_report",
@@ -208,6 +211,7 @@ SLOW_TOOLS = {
     "hw_nccl",
     "hw_ib",
     "hw_p2p",
+    "cluster_fabric_eval",
 }
 
 BENCHMARK_SLOW_TOOLS = {
@@ -358,6 +362,45 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "run_id": "mcp_cluster_smoke_test",
         "hosts": ["localhost"],
         "labels": ["localhost"],
+        "include_context": False,
+    },
+    "cluster_fabric_eval": {
+        "run_id": "mcp_cluster_smoke_test",
+        "hosts": ["localhost"],
+        "labels": ["localhost"],
+        "extra_args": [
+            "--skip-bootstrap-nodes",
+            "--disable-fp4",
+            "--health-suite",
+            "off",
+            "--skip-vllm-multinode",
+            "--model",
+            "openai-community/gpt2",
+            "--tp",
+            "1",
+            "--isl",
+            "128",
+            "--osl",
+            "64",
+            "--concurrency-range",
+            "1 2",
+            "--vllm-request-rate-range",
+            "1 2",
+            "--vllm-request-rate-max-concurrency",
+            "4",
+            "--vllm-request-rate-num-prompts",
+            "40",
+            "--fio-runtime",
+            "5",
+            "--nvbandwidth-quick",
+            "--skip-render-localhost-report",
+        ],
+        "include_context": False,
+    },
+    "cluster_nmx_partition_lab": {
+        "nmx_url": "https://nmx.example",
+        "alpha_name": "AlphaPartition",
+        "beta_name": "BetaPartition",
         "include_context": False,
     },
     "cluster_build_canonical_package": {
@@ -629,6 +672,58 @@ def test_tool_call_returns_json_envelope(server: mcp_server.MCPServer, case: Too
     assert payload["status"] in {"ok", "error"}
     assert "result" in payload
     assert "context_summary" in payload
+    if payload["status"] == "error":
+        tool_result = payload["result"]
+        assert (
+            tool_result.get("error")
+            or tool_result.get("stderr")
+            or tool_result.get("message")
+            or tool_result.get("success") is False
+        ), f"{case.name} returned error status without structured failure details"
+
+
+def test_known_good_tool_returns_success(server: mcp_server.MCPServer) -> None:
+    result = server.call_tool("status", {})
+    payload = _payload_from_result(result)
+
+    assert payload["tool"] == "status"
+    assert payload["status"] == "ok"
+    assert payload["result"]["success"] is True
+
+
+def test_known_bad_tool_request_returns_structured_error(server: mcp_server.MCPServer) -> None:
+    result = server.call_tool("benchmark_compare", {})
+    payload = _payload_from_result(result)
+
+    assert payload["tool"] == "benchmark_compare"
+    assert payload["status"] == "error"
+    assert payload["result"]["success"] is False
+    assert payload["result"]["error"]
+    assert payload["result"]["error_type"]
+
+
+def test_benchmark_report_returns_structured_error_when_output_dir_init_fails() -> None:
+    with patch.object(mcp_server, "_ensure_dir", side_effect=OSError("mkdir boom")):
+        result = mcp_server.tool_benchmark_report(
+            {
+                "data_file": str(BENCH_FILE),
+                "output": str(REPO_ROOT / "artifacts" / "blocked" / "report.pdf"),
+                "format": "pdf",
+            }
+        )
+
+    assert result["success"] is False
+    assert "Failed to prepare output path for benchmark report" in result["error"]
+    assert result["output"].endswith("report.pdf")
+
+
+def test_emit_stdio_json_logs_transport_warning(server: mcp_server.MCPServer, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("builtins.print", side_effect=RuntimeError("stdout boom")):
+        emitted = server._emit_stdio_json({"jsonrpc": "2.0"}, failure_context="test payload")
+
+    captured = capsys.readouterr()
+    assert emitted is False
+    assert "Failed to emit test payload: stdout boom" in captured.err
 
 
 def test_mcp_protocol_round_trip(server: mcp_server.MCPServer):
@@ -662,6 +757,14 @@ def test_slow_tools_opt_in_execution(server: mcp_server.MCPServer, case: ToolCas
     payload = _payload_from_result(result)
     assert payload["tool"] == case.name
     assert payload["status"] in {"ok", "error"}
+    if payload["status"] == "error":
+        tool_result = payload["result"]
+        assert (
+            tool_result.get("error")
+            or tool_result.get("stderr")
+            or tool_result.get("message")
+            or tool_result.get("success") is False
+        ), f"{case.name} returned error status without structured failure details"
     if case.name == "benchmark_deep_dive_compare":
         tool_result = payload["result"]
         if payload["status"] == "ok":

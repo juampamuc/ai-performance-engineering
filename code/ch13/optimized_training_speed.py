@@ -8,7 +8,7 @@ from typing import Optional
 import torch
 
 from ch13.baseline_training_speed import BaselineTrainingSpeedBenchmark
-from core.harness.benchmark_harness import BaseBenchmark
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
 class OptimizedTrainingSpeedBenchmark(BaselineTrainingSpeedBenchmark):
@@ -65,8 +65,7 @@ class OptimizedTrainingSpeedBenchmark(BaselineTrainingSpeedBenchmark):
                 self.static_input.copy_(self.input_ids)
                 self.static_target.copy_(self.targets)
                 self.graph.replay()
-            self.capture_stream.synchronize()
-            self.output = self.output_buffer.detach().clone()
+            self.output = self.output_buffer.detach()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 
@@ -78,6 +77,20 @@ class OptimizedTrainingSpeedBenchmark(BaselineTrainingSpeedBenchmark):
         self.output_buffer = None
         super().teardown()
 
+    def get_custom_streams(self) -> list["torch.cuda.Stream"]:
+        if self.capture_stream is None:
+            return []
+        return [self.capture_stream]
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(
+            iterations=30,
+            warmup=10,
+            enable_memory_tracking=True,
+            timing_method="wall_clock",
+            full_device_sync=True,
+        )
+
     def get_custom_metrics(self) -> Optional[dict]:
         return {
             "graph_replay": 1.0,
@@ -87,9 +100,3 @@ class OptimizedTrainingSpeedBenchmark(BaselineTrainingSpeedBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTrainingSpeedBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

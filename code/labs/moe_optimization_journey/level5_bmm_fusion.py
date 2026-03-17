@@ -25,8 +25,3 @@ class Level5BMMFusion(MoEJourneyBenchmark):
 def get_benchmark():
     return Level5BMMFusion()
 
-if __name__ == "__main__":
-    Level5BMMFusion.main()
-
-
-

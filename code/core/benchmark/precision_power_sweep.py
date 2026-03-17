@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 
 import torch
 
+from core.common.device_utils import resolve_requested_device
 from ch16.gpt_large_benchmark import (
     GPTConfig,
     Workload,
@@ -121,17 +122,6 @@ def build_precision_list(modes: Iterable[str]) -> List[PrecisionRunConfig]:
             )
         configs.append(AVAILABLE_MODES[key])
     return configs
-
-
-def resolve_device(device_arg: Optional[str]) -> torch.device:
-    if device_arg:
-        device = torch.device(device_arg)
-        if device.type == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("CUDA requested but not available.")
-        return device
-    if torch.cuda.is_available():
-        return torch.device("cuda:0")
-    return torch.device("cpu")
 
 
 def calculate_cost_per_million_tokens(
@@ -412,7 +402,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    device = resolve_device(args.device)
+    device = resolve_requested_device(args.device)
     gpu_indices = parse_gpu_list(args.gpus)
     precision_modes = build_precision_list(args.modes or [])
 

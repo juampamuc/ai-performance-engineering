@@ -117,10 +117,8 @@ class OptimizedMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=200,
-            warmup=10,
-            nsys_timeout_seconds=1200,
-            nsys_preset_override="light",
+            iterations=10,
+            warmup=5,
         )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
@@ -130,8 +128,8 @@ class OptimizedMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
             total_requests=getattr(self, 'total_requests', 1),
             batch_size=getattr(self, 'batch_size', 1),

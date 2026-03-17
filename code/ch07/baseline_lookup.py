@@ -1,16 +1,15 @@
-"""Python harness wrapper for ch07's baseline_lookup.cu."""
+"""Python harness wrapper for ch07's scattered lookup baseline."""
 
 from __future__ import annotations
 from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
 class BaselineLookupBenchmark(CudaBinaryBenchmark):
-    """Wraps the scattered memory lookup baseline."""
+    """Wrap the scattered pointer-chasing lookup baseline."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -21,7 +20,7 @@ class BaselineLookupBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_lookup",
-            friendly_name="Baseline Lookup",
+            friendly_name="Baseline Lookup (Scattered Reads)",
             iterations=3,
             warmup=5,
             timeout_seconds=90,
@@ -38,8 +37,12 @@ class BaselineLookupBenchmark(CudaBinaryBenchmark):
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return memory access metrics."""
-        return None
+        """Expose the lookup shape so reports show what changed."""
+        return {
+            "reads_per_output": 64.0,
+            "layout_pretransposed": 0.0,
+            "pointer_chase_in_kernel": 1.0,
+        }
 
 def get_benchmark() -> BaselineLookupBenchmark:
     """Factory for discover_benchmarks()."""
@@ -48,4 +51,5 @@ def get_benchmark() -> BaselineLookupBenchmark:
 
 if __name__ == "__main__":
     from core.harness.benchmark_harness import benchmark_main
+
     benchmark_main(get_benchmark)

@@ -23,7 +23,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from core.optimization.moe_inference import ExpertMLP
 
@@ -196,7 +196,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineWideEPBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

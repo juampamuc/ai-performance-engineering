@@ -24,20 +24,25 @@ class BaselineWarpSpecializedPipelineBenchmark(CudaBinaryBenchmark):
             workload_params={
                 "TILE_SIZE": 64,
                 "tiles": 512,
-                "dtype": "float32",
                 "batch_size": 1,
+                "elements": 512 * 64 * 64,
             },
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        return None
+        from ch10.benchmark_metrics_common import compute_warp_specialization_metrics
+
+        return compute_warp_specialization_metrics(
+            self._workload_params,
+            num_stages=1,
+            producer_warps=1,
+            compute_warps=1,
+            consumer_warps=1,
+            uses_pipeline_api=False,
+            async_staging=False,
+        )
 
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineWarpSpecializedPipelineBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

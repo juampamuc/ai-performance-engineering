@@ -34,7 +34,3 @@ def get_benchmark() -> PagedKVOffloadBenchmark:
     return PagedKVOffloadBenchmark(cfg, label="paged_kv_offload_prefetch_optimized")
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

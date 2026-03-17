@@ -136,12 +136,6 @@ class GoalChoice(str, Enum):
     memory = "memory"
 
 
-class TargetChoice(str, Enum):
-    throughput = "throughput"
-    latency = "latency"
-    memory = "memory"
-
-
 class SpeedTestChoice(str, Enum):
     all = "all"
     gemm = "gemm"
@@ -1340,8 +1334,8 @@ if typer and inference_app is not None:
         ),
         gpus: int = typer.Option(1, "--gpus", help="Number of GPUs"),
         gpu_memory_gb: float = typer.Option(80.0, "--gpu-memory-gb", help="VRAM per GPU (GB)"),
-        target: TargetChoice = typer.Option(
-            TargetChoice.throughput,
+        target: GoalChoice = typer.Option(
+            GoalChoice.throughput,
             "--target",
             help="Optimization target",
             show_choices=True,
@@ -1736,7 +1730,7 @@ if typer and cluster_app is not None:
     @cluster_app.command("common-eval", help="Run a preset system-evaluation bundle for common benchmark questions")
     def cluster_common_eval_cmd(
         ctx: typer.Context,
-        preset: str = typer.Option("core-system", "--preset", help="Preset: common-answer-fast, core-system, modern-llm, or multinode-readiness"),
+        preset: str = typer.Option("core-system", "--preset", help="Preset: common-answer-fast, core-system, modern-llm, fabric-systems, or multinode-readiness"),
         run_id: Optional[str] = typer.Option(None, "--run-id", help="RUN_ID prefix (default: YYYY-MM-DD)"),
         hosts: str = typer.Option(..., "--hosts", help="Comma-separated host list"),
         labels: Optional[str] = typer.Option(None, "--labels", help="Comma-separated labels (optional; must match hosts count)"),
@@ -1745,6 +1739,14 @@ if typer and cluster_app is not None:
         oob_if: Optional[str] = typer.Option(None, "--oob-if", help="Out-of-band interface (required for multi-node readiness and network-heavy presets)"),
         socket_ifname: Optional[str] = typer.Option(None, "--socket-ifname", help="NCCL socket interface"),
         nccl_ib_hca: Optional[str] = typer.Option(None, "--nccl-ib-hca", help="NCCL_IB_HCA allowlist"),
+        nmx_url: Optional[str] = typer.Option(None, "--nmx-url", help="NMX base URL for the target NVLink management plane"),
+        nmx_token: Optional[str] = typer.Option(None, "--nmx-token", help="Optional NMX bearer token"),
+        ib_mgmt_host: Optional[str] = typer.Option(None, "--ib-mgmt-host", help="InfiniBand management host for IB CLI checks"),
+        ib_mgmt_user: Optional[str] = typer.Option(None, "--ib-mgmt-user", help="SSH user for the InfiniBand management host"),
+        ib_mgmt_ssh_key: Optional[Path] = typer.Option(None, "--ib-mgmt-ssh-key", help="SSH key path for the InfiniBand management host"),
+        cumulus_hosts: Optional[str] = typer.Option(None, "--cumulus-hosts", help="Comma-separated Cumulus/Spectrum-X switch hosts"),
+        cumulus_user: Optional[str] = typer.Option(None, "--cumulus-user", help="SSH user for Cumulus/Spectrum-X switches"),
+        cumulus_ssh_key: Optional[Path] = typer.Option(None, "--cumulus-ssh-key", help="SSH key path for Cumulus/Spectrum-X switches"),
         primary_label: Optional[str] = typer.Option(None, "--primary-label", help="Label for single-node/local steps"),
         coverage_baseline_run_id: Optional[str] = typer.Option(None, "--coverage-baseline-run-id", help="Optional baseline run id for coverage delta output"),
         timeout_seconds: Optional[int] = typer.Option(None, "--timeout", help="Optional timeout in seconds"),
@@ -1765,10 +1767,97 @@ if typer and cluster_app is not None:
             oob_if=oob_if,
             socket_ifname=socket_ifname,
             nccl_ib_hca=nccl_ib_hca,
+            nmx_url=nmx_url,
+            nmx_token=nmx_token,
+            ib_mgmt_host=ib_mgmt_host,
+            ib_mgmt_user=ib_mgmt_user,
+            ib_mgmt_ssh_key=str(ib_mgmt_ssh_key) if ib_mgmt_ssh_key else None,
+            cumulus_hosts=[h.strip() for h in (cumulus_hosts or "").split(",") if h.strip()] if cumulus_hosts else None,
+            cumulus_user=cumulus_user,
+            cumulus_ssh_key=str(cumulus_ssh_key) if cumulus_ssh_key else None,
             primary_label=primary_label,
             coverage_baseline_run_id=coverage_baseline_run_id,
             extra_args=extra_arg or None,
             timeout_seconds=timeout_seconds,
+        )
+        emit_json(result)
+        raise typer.Exit(0)
+
+    @cluster_app.command("fabric-eval", help="Run the canonical AI fabric evaluation bundle")
+    def cluster_fabric_eval_cmd(
+        ctx: typer.Context,
+        run_id: Optional[str] = typer.Option(None, "--run-id", help="RUN_ID prefix (default: YYYY-MM-DD)"),
+        hosts: str = typer.Option(..., "--hosts", help="Comma-separated host list"),
+        labels: Optional[str] = typer.Option(None, "--labels", help="Comma-separated labels (optional; must match hosts count)"),
+        ssh_user: Optional[str] = typer.Option(None, "--ssh-user", help="SSH user"),
+        ssh_key: Optional[Path] = typer.Option(None, "--ssh-key", help="SSH key path"),
+        oob_if: Optional[str] = typer.Option(None, "--oob-if", help="Out-of-band interface"),
+        socket_ifname: Optional[str] = typer.Option(None, "--socket-ifname", help="NCCL socket interface"),
+        nccl_ib_hca: Optional[str] = typer.Option(None, "--nccl-ib-hca", help="NCCL_IB_HCA allowlist"),
+        nmx_url: Optional[str] = typer.Option(None, "--nmx-url", help="NMX base URL for the target NVLink management plane"),
+        nmx_token: Optional[str] = typer.Option(None, "--nmx-token", help="Optional NMX bearer token"),
+        ib_mgmt_host: Optional[str] = typer.Option(None, "--ib-mgmt-host", help="InfiniBand management host for IB CLI checks"),
+        ib_mgmt_user: Optional[str] = typer.Option(None, "--ib-mgmt-user", help="SSH user for the InfiniBand management host"),
+        ib_mgmt_ssh_key: Optional[Path] = typer.Option(None, "--ib-mgmt-ssh-key", help="SSH key path for the InfiniBand management host"),
+        cumulus_hosts: Optional[str] = typer.Option(None, "--cumulus-hosts", help="Comma-separated Cumulus/Spectrum-X switch hosts"),
+        cumulus_user: Optional[str] = typer.Option(None, "--cumulus-user", help="SSH user for Cumulus/Spectrum-X switches"),
+        cumulus_ssh_key: Optional[Path] = typer.Option(None, "--cumulus-ssh-key", help="SSH key path for Cumulus/Spectrum-X switches"),
+        primary_label: Optional[str] = typer.Option(None, "--primary-label", help="Label for single-node/local steps"),
+        coverage_baseline_run_id: Optional[str] = typer.Option(None, "--coverage-baseline-run-id", help="Optional baseline run id for coverage delta output"),
+        require_management_plane: bool = typer.Option(False, "--require-management-plane", help="Fail publish-grade completeness when management-plane endpoints are missing"),
+        timeout_seconds: Optional[int] = typer.Option(None, "--timeout", help="Optional timeout in seconds"),
+        extra_arg: List[str] = typer.Option([], "--extra-arg", help="Extra args appended after the fabric preset flags", show_default=False),
+    ) -> None:
+        from core.cluster import run_cluster_fabric_eval
+
+        host_list = [h.strip() for h in hosts.split(",") if h.strip()]
+        label_list = [l.strip() for l in (labels or "").split(",") if l.strip()] if labels else None
+
+        result = run_cluster_fabric_eval(
+            run_id=run_id,
+            hosts=host_list,
+            labels=label_list,
+            ssh_user=ssh_user,
+            ssh_key=str(ssh_key) if ssh_key else None,
+            oob_if=oob_if,
+            socket_ifname=socket_ifname,
+            nccl_ib_hca=nccl_ib_hca,
+            nmx_url=nmx_url,
+            nmx_token=nmx_token,
+            ib_mgmt_host=ib_mgmt_host,
+            ib_mgmt_user=ib_mgmt_user,
+            ib_mgmt_ssh_key=str(ib_mgmt_ssh_key) if ib_mgmt_ssh_key else None,
+            cumulus_hosts=[h.strip() for h in (cumulus_hosts or "").split(",") if h.strip()] if cumulus_hosts else None,
+            cumulus_user=cumulus_user,
+            cumulus_ssh_key=str(cumulus_ssh_key) if cumulus_ssh_key else None,
+            primary_label=primary_label,
+            coverage_baseline_run_id=coverage_baseline_run_id,
+            require_management_plane=require_management_plane,
+            extra_args=extra_arg or None,
+            timeout_seconds=timeout_seconds,
+        )
+        emit_json(result)
+        raise typer.Exit(0)
+
+    @cluster_app.command("nmx-partition-lab", help="Build a lab-only NVLink/NMX partition workflow guide from live inventory")
+    def cluster_nmx_partition_lab_cmd(
+        ctx: typer.Context,
+        nmx_url: Optional[str] = typer.Option(None, "--nmx-url", help="NMX base URL for the target fabric"),
+        nmx_token: Optional[str] = typer.Option(None, "--nmx-token", help="Optional NMX bearer token"),
+        alpha_name: str = typer.Option("AlphaPartition", "--alpha-name", help="Alpha partition name"),
+        beta_name: str = typer.Option("BetaPartition", "--beta-name", help="Beta partition name"),
+        alpha_size: int = typer.Option(4, "--alpha-size", help="Alpha partition GPU count"),
+        beta_size: int = typer.Option(4, "--beta-size", help="Beta partition GPU count"),
+    ) -> None:
+        from core.cluster import build_cluster_nmx_partition_lab
+
+        result = build_cluster_nmx_partition_lab(
+            nmx_url=nmx_url,
+            nmx_token=nmx_token,
+            alpha_name=alpha_name,
+            beta_name=beta_name,
+            alpha_size=alpha_size,
+            beta_size=beta_size,
         )
         emit_json(result)
         raise typer.Exit(0)
@@ -1890,21 +1979,21 @@ if typer:
     try:
         from core.benchmark import bench_commands
         BENCH_APP = bench_commands.app if getattr(bench_commands, "TYPER_AVAILABLE", False) else None
-    except Exception:
+    except ImportError:
         BENCH_APP = None
 
     # Tools integration (core)
     try:
         from core.tools import tools_commands
         TOOLS_APP = tools_commands.app if getattr(tools_commands, "TYPER_AVAILABLE", False) else None
-    except Exception:
+    except ImportError:
         TOOLS_APP = None
 
     # Demos integration (core)
     try:
         from core.demos import demos_commands
         DEMOS_APP = demos_commands.app if getattr(demos_commands, "TYPER_AVAILABLE", False) else None
-    except Exception:
+    except ImportError:
         DEMOS_APP = None
 
     plugin_apps = load_plugin_apps()

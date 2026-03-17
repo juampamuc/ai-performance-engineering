@@ -32,18 +32,14 @@ class OptimizedInferencePlacementBenchmark(_PlacementBenchmark):
         """Return inference metrics for inference_placement."""
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 10.0),
-            tpot_ms=getattr(self, '_tpot_ms', 1.0),
-            total_tokens=getattr(self, '_total_tokens', 100),
-            total_requests=getattr(self, '_total_requests', 1),
-            batch_size=getattr(self, 'batch_size', 1),
-            max_batch_size=getattr(self, 'max_batch_size', 32),
+            ttft_ms=None,
+            tpot_ms=None,
+            total_tokens=int(getattr(self, '_total_tokens', self.cfg.batch_size)),
+            total_requests=int(getattr(self, '_total_requests', self.sessions)),
+            batch_size=int(getattr(self, 'batch_size', self.cfg.batch_size)),
+            max_batch_size=int(getattr(self, 'max_batch_size', self.cfg.batch_size)),
         )
 
 def get_benchmark():
     return OptimizedInferencePlacementBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

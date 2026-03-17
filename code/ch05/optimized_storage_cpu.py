@@ -1,4 +1,4 @@
-"""optimized_storage_cpu.py - GPU Direct Storage (GDS) optimization (simulated)."""
+"""optimized_storage_cpu.py - Storage read with mmap + pinned host staging."""
 
 from __future__ import annotations
 
@@ -6,14 +6,15 @@ import os
 import tempfile
 from typing import Optional
 
+import numpy as np
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
-class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Simulated GPU Direct Storage path."""
+class OptimizedStorageCpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Read the same on-disk tensor while reusing pinned host and device buffers."""
 
     allowed_benchmark_fn_antipatterns = ("host_transfer",)
     
@@ -22,10 +23,12 @@ class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.data: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.filepath: Optional[str] = None
+        self.host_buffer: Optional[torch.Tensor] = None
+        self.device_buffer: Optional[torch.Tensor] = None
+        self._host_buffer_view: Optional[np.ndarray] = None
         self.size_mb = 64  # Smaller for faster benchmark
         self.size = self.size_mb * 1024 * 1024 // 4  # float32 elements
-        # Storage IO benchmark - jitter check not applicable
-        bytes_per_iter = self.size * 4  # one logical transfer retained on device
+        bytes_per_iter = self.size * 4
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.size),
@@ -33,23 +36,31 @@ class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: Initialize data and create temp file."""
+        """Setup: materialize a tensor once and prepare reusable staging buffers."""
         torch.manual_seed(42)
-        self.data = torch.randn(self.size, device=self.device, dtype=torch.float32)
+        host_template = np.random.default_rng(42).standard_normal(self.size, dtype=np.float32)
         
         f = tempfile.NamedTemporaryFile(suffix=".npy", delete=False)
         self.filepath = f.name
         f.close()
+        np.save(self.filepath, host_template)
+        self.host_buffer = torch.empty(self.size, device="cpu", dtype=torch.float32, pin_memory=True)
+        self._host_buffer_view = self.host_buffer.numpy()
+        self.device_buffer = torch.empty(self.size, device=self.device, dtype=torch.float32)
         self._synchronize()
     
     def benchmark_fn(self) -> None:
-        """Benchmark: Simulated GDS I/O (direct GPU-to-storage semantics)."""
-        assert self.data is not None
-        with self._nvtx_range("storage_gds"):
-            # Simulated direct GPU I/O by avoiding round-trips; in real GDS we'd use kvikio/cufile.
-            cpu_data = self.data.cpu()
-            self.data = cpu_data.to(self.device, non_blocking=True)
-        self.output = self.data.sum().unsqueeze(0)
+        """Benchmark: storage read with memory mapping and reusable buffers."""
+        assert self.filepath is not None
+        assert self.host_buffer is not None
+        assert self._host_buffer_view is not None
+        assert self.device_buffer is not None
+        with self._nvtx_range("storage_cpu_optimized"):
+            mapped = np.load(self.filepath, mmap_mode="r")
+            np.copyto(self._host_buffer_view, mapped)
+            self.device_buffer.copy_(self.host_buffer, non_blocking=True)
+            self.data = self.device_buffer
+        self.output = self.device_buffer.sum().unsqueeze(0)
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
@@ -72,6 +83,9 @@ class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
             os.unlink(self.filepath)
         self.data = None
         self.filepath = None
+        self.host_buffer = None
+        self.device_buffer = None
+        self._host_buffer_view = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -87,7 +101,7 @@ class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Report the simulated GDS path without fake throughput numbers."""
+        """Report the CPU-staged mmap plus pinned-buffer data path."""
         from ch05.metrics_common import compute_storage_path_metrics
 
         bytes_per_tensor = self.size * 4
@@ -95,8 +109,8 @@ class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
             bytes_read=bytes_per_tensor,
             bytes_written=0,
             file_count=1,
-            uses_cpu_staging=False,
-            simulates_gpu_direct=True,
+            uses_cpu_staging=True,
+            simulates_gpu_direct=False,
         )
 
     def validate_result(self) -> Optional[str]:
@@ -113,4 +127,4 @@ class OptimizedStorageGdsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
-    return OptimizedStorageGdsBenchmark()
+    return OptimizedStorageCpuBenchmark()

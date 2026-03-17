@@ -18,8 +18,13 @@ from typing import Optional
 import pytest
 import torch
 
-from core.harness.benchmark_harness import BenchmarkConfig, BenchmarkHarness
-from core.harness.validity_checks import EnvironmentProbe, validate_environment
+from core.benchmark.models import BenchmarkResult as PydanticBenchmarkResult, TimingStats
+from core.harness.benchmark_harness import BenchmarkConfig, BenchmarkHarness, BaseBenchmark, ExecutionMode
+from core.harness.validity_checks import (
+    EnvironmentProbe,
+    EnvironmentValidationResult,
+    validate_environment,
+)
 
 
 def _write_file(root: Path, relpath: str, content: str) -> None:
@@ -82,6 +87,53 @@ def _run_harness(env_root: Path, *, probe: EnvironmentProbe, allow_virtualizatio
     config = BenchmarkConfig(**config_kwargs)
     result = harness._benchmark_with_threading(bench, config)
     return list(result.errors)
+
+
+class _CpuOnlyBenchmark(BaseBenchmark):
+    allow_cpu = True
+
+    def setup(self) -> None:
+        return None
+
+    def benchmark_fn(self) -> None:
+        return None
+
+
+def _valid_environment_result() -> EnvironmentValidationResult:
+    return EnvironmentValidationResult(
+        is_valid=True,
+        errors=[],
+        warnings=[],
+        details={},
+        notices=[],
+    )
+
+
+def _make_subprocess_result(*, seeds: Optional[dict] = None) -> PydanticBenchmarkResult:
+    return PydanticBenchmarkResult(
+        timing=TimingStats(
+            mean_ms=1.0,
+            median_ms=1.0,
+            std_ms=0.0,
+            min_ms=1.0,
+            max_ms=1.0,
+            p50_ms=1.0,
+            p90_ms=1.0,
+            p95_ms=1.0,
+            p99_ms=1.0,
+            percentiles={50.0: 1.0},
+            iterations=1,
+            warmup_iterations=0,
+            raw_times_ms=[1.0],
+            schemaVersion="1.0",
+        ),
+        errors=[],
+        benchmark_name="cpu-only-bench",
+        device="cuda",
+        mode="custom",
+        seeds=seeds,
+        schemaVersion="1.0",
+    )
 
 
 def test_environment_enforcement_cpu_governor_mismatch() -> None:
@@ -443,3 +495,352 @@ def test_environment_enforcement_foreign_gpu_processes_ignore_same_run_marker(
     )
     assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
     assert result.details.get("foreign_cuda_compute_processes") == [], result.details
+
+
+def test_environment_enforcement_foreign_gpu_processes_ignore_same_owner_pid_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    monkeypatch.setattr(validity_checks.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(validity_checks.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(validity_checks.torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_tree_pids",
+        lambda _pid, proc_root=Path("/proc"): {int(os.getpid())},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_lineage_pids",
+        lambda _pid, proc_root=Path("/proc"): {int(os.getpid())},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_list_foreign_cuda_compute_processes",
+        lambda **kwargs: (
+            [{"pid": 5555, "process_name": "python", "used_memory_mb": 2048.0}],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_read_process_environ_value",
+        lambda pid, key, proc_root=Path("/proc"): "4242" if int(pid) == 5555 and key == "AISP_BENCHMARK_OWNER_PID" else None,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_pid_is_live_process",
+        lambda pid, proc_root=Path("/proc"): True,
+    )
+
+    result = validate_environment(
+        device=torch.device("cuda"),
+        probe=EnvironmentProbe(
+            root=Path("/"),
+            env={
+                "AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0",
+                "AISP_BENCHMARK_OWNER_PID": "4242",
+            },
+        ),
+    )
+    assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
+    assert result.details.get("foreign_cuda_compute_processes") == [], result.details
+
+
+def test_environment_enforcement_foreign_gpu_processes_ignore_same_owner_pid_process_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    monkeypatch.setattr(validity_checks.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(validity_checks.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(validity_checks.torch.cuda, "current_device", lambda: 0)
+
+    current_pid = int(os.getpid())
+
+    def _fake_collect_process_tree_pids(pid: int, proc_root: Path = Path("/proc")) -> set[int]:
+        if int(pid) == current_pid:
+            return {current_pid}
+        if int(pid) == 4242:
+            return {4242, 5555}
+        return {int(pid)}
+
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_tree_pids",
+        _fake_collect_process_tree_pids,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_lineage_pids",
+        lambda pid, proc_root=Path("/proc"): {int(pid)},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_list_foreign_cuda_compute_processes",
+        lambda **kwargs: (
+            [{"pid": 5555, "process_name": "python", "used_memory_mb": 2048.0}],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_read_process_environ_value",
+        lambda pid, key, proc_root=Path("/proc"): None,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_pid_is_live_process",
+        lambda pid, proc_root=Path("/proc"): True,
+    )
+
+    result = validate_environment(
+        device=torch.device("cuda"),
+        probe=EnvironmentProbe(
+            root=Path("/"),
+            env={
+                "AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0",
+                "AISP_BENCHMARK_OWNER_PID": "4242",
+            },
+        ),
+    )
+    assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
+    assert result.details.get("foreign_cuda_compute_processes") == [], result.details
+
+
+def test_environment_enforcement_foreign_gpu_processes_ignore_same_owner_pid_cmdline_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    monkeypatch.setattr(validity_checks.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(validity_checks.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(validity_checks.torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_tree_pids",
+        lambda _pid, proc_root=Path("/proc"): {int(os.getpid())},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_lineage_pids",
+        lambda _pid, proc_root=Path("/proc"): {int(os.getpid())},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_list_foreign_cuda_compute_processes",
+        lambda **kwargs: (
+            [{"pid": 6666, "process_name": "python", "used_memory_mb": 2048.0}],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_read_process_environ_value",
+        lambda pid, key, proc_root=Path("/proc"): None,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_read_process_cmdline_arg_value",
+        lambda pid, flag, proc_root=Path("/proc"): "4242" if int(pid) == 6666 and flag == "--aisp-owner-pid" else None,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_pid_is_live_process",
+        lambda pid, proc_root=Path("/proc"): True,
+    )
+
+    result = validate_environment(
+        device=torch.device("cuda"),
+        probe=EnvironmentProbe(
+            root=Path("/"),
+            env={
+                "AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0",
+                "AISP_BENCHMARK_OWNER_PID": "4242",
+            },
+        ),
+    )
+    assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
+    assert result.details.get("foreign_cuda_compute_processes") == [], result.details
+
+
+def test_benchmark_subprocess_mode_defers_parent_foreign_gpu_process_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    env_result = EnvironmentValidationResult(
+        is_valid=False,
+        errors=[
+            "Foreign CUDA compute process(es) detected on benchmark GPU before run: "
+            "pid=4321 name=python mem=612.0MiB. Threshold=0MiB. "
+            "Stop concurrent GPU workloads (for example vLLM serve/bench) before strict benchmarking."
+        ],
+        warnings=[],
+        details={},
+        notices=[],
+    )
+    monkeypatch.setattr(validity_checks, "validate_environment", lambda **_: env_result)
+
+    harness = BenchmarkHarness()
+    benchmark = _CpuOnlyBenchmark()
+    config = BenchmarkConfig(
+        execution_mode=ExecutionMode.SUBPROCESS,
+        enforce_environment_validation=True,
+    )
+
+    calls: dict[str, bool] = {"subprocess": False}
+
+    def _fake_subprocess(self, bench, cfg):
+        calls["subprocess"] = True
+        return "subprocess-ok"
+
+    monkeypatch.setattr(BenchmarkHarness, "_benchmark_with_subprocess", _fake_subprocess)
+
+    result = harness.benchmark(benchmark, config)
+
+    assert result == "subprocess-ok"
+    assert calls["subprocess"] is True
+
+
+def test_benchmark_subprocess_mode_skips_parent_cuda_seed_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    monkeypatch.setattr(validity_checks, "validate_environment", lambda **_: _valid_environment_result())
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda,
+        "manual_seed_all",
+        lambda _seed: (_ for _ in ()).throw(AssertionError("parent should not seed CUDA in subprocess mode")),
+    )
+    monkeypatch.setattr(
+        torch.cuda,
+        "initial_seed",
+        lambda: (_ for _ in ()).throw(AssertionError("parent should not read CUDA seed in subprocess mode")),
+    )
+
+    harness = BenchmarkHarness()
+    benchmark = _CpuOnlyBenchmark()
+    config = BenchmarkConfig(
+        execution_mode=ExecutionMode.SUBPROCESS,
+        enforce_environment_validation=True,
+        seed=123,
+    )
+
+    monkeypatch.setattr(
+        BenchmarkHarness,
+        "_benchmark_with_subprocess",
+        lambda self, bench, cfg: _make_subprocess_result(),
+    )
+
+    result = harness.benchmark(benchmark, config)
+
+    assert result.device == "cuda"
+    assert harness._seed_info is None
+
+
+def test_benchmark_subprocess_mode_does_not_start_parent_gpu_memory_logger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+    import core.harness.benchmark_harness as benchmark_harness_mod
+
+    monkeypatch.setattr(validity_checks, "validate_environment", lambda **_: _valid_environment_result())
+
+    class _ForbiddenGpuMemoryLogger:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError("parent should not start GPU memory logging in subprocess mode")
+
+    monkeypatch.setattr(benchmark_harness_mod, "GpuMemoryLogger", _ForbiddenGpuMemoryLogger)
+    monkeypatch.setattr(
+        BenchmarkHarness,
+        "_benchmark_with_subprocess",
+        lambda self, bench, cfg: _make_subprocess_result(),
+    )
+
+    harness = BenchmarkHarness()
+    benchmark = _CpuOnlyBenchmark()
+    config = BenchmarkConfig(
+        execution_mode=ExecutionMode.SUBPROCESS,
+        enforce_environment_validation=True,
+        enable_gpu_memory_logging=True,
+    )
+
+    result = harness.benchmark(benchmark, config)
+
+    assert result.device == "cuda"
+
+
+def test_benchmark_with_manifest_subprocess_mode_uses_child_seed_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    expected_seeds = {
+        "random_seed": 11,
+        "numpy_seed": 11,
+        "torch_seed": 22,
+        "cuda_seed": 33,
+        "deterministic_mode": True,
+    }
+    monkeypatch.setattr(validity_checks, "validate_environment", lambda **_: _valid_environment_result())
+    monkeypatch.setattr(
+        BenchmarkHarness,
+        "_setup_reproducibility",
+        lambda self: (_ for _ in ()).throw(AssertionError("parent runtime init should remain deferred")),
+    )
+    monkeypatch.setattr(
+        BenchmarkHarness,
+        "_benchmark_with_subprocess",
+        lambda self, bench, cfg: _make_subprocess_result(seeds=expected_seeds),
+    )
+
+    harness = BenchmarkHarness()
+    benchmark = _CpuOnlyBenchmark()
+    harness.config = BenchmarkConfig(
+        execution_mode=ExecutionMode.SUBPROCESS,
+        enforce_environment_validation=True,
+    )
+
+    run = harness.benchmark_with_manifest(benchmark, run_id="unit-test-run")
+
+    assert run.manifest is not None
+    assert run.manifest.seeds is not None
+    assert run.manifest.seeds.random_seed == expected_seeds["random_seed"]
+    assert run.manifest.seeds.numpy_seed == expected_seeds["numpy_seed"]
+    assert run.manifest.seeds.torch_seed == expected_seeds["torch_seed"]
+    assert run.manifest.seeds.cuda_seed == expected_seeds["cuda_seed"]
+    assert run.manifest.seeds.deterministic_mode is True
+
+
+def test_benchmark_subprocess_mode_still_fails_non_foreign_environment_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    env_result = EnvironmentValidationResult(
+        is_valid=False,
+        errors=[
+            "Foreign CUDA compute process(es) detected on benchmark GPU before run: "
+            "pid=4321 name=python mem=612.0MiB. Threshold=0MiB. "
+            "Stop concurrent GPU workloads (for example vLLM serve/bench) before strict benchmarking.",
+            "Swap is enabled; disable swap for canonical benchmark runs.",
+        ],
+        warnings=[],
+        details={},
+        notices=[],
+    )
+    monkeypatch.setattr(validity_checks, "validate_environment", lambda **_: env_result)
+
+    harness = BenchmarkHarness()
+    benchmark = _CpuOnlyBenchmark()
+    config = BenchmarkConfig(
+        execution_mode=ExecutionMode.SUBPROCESS,
+        enforce_environment_validation=True,
+    )
+
+    with pytest.raises(RuntimeError, match="Swap is enabled"):
+        harness.benchmark(benchmark, config)

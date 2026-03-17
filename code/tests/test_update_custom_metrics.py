@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from core.scripts.update_custom_metrics import (
+    audit_repo_custom_metrics,
     get_chapter_from_path,
     has_conditional_none_return,
     analyze_get_custom_metrics,
@@ -89,11 +90,12 @@ from core.benchmark.metrics import compute_memory_transfer_metrics
 
 class MyBenchmark:
     def get_custom_metrics(self):
-        return compute_memory_transfer_metrics(1000, 1.0)
+        return compute_memory_transfer_metrics(1000, None)
 ''')
             f.flush()
             result = analyze_get_custom_metrics(Path(f.name), Path(f.name).parent)
             assert result["uses_helper"] is True
+            assert result["classification"] == "helper-backed"
     
     def test_returns_none(self):
         """Should detect None return."""
@@ -130,6 +132,7 @@ class MyBenchmark:
             f.flush()
             result = analyze_get_custom_metrics(Path(f.name), Path(f.name).parent)
             assert result["has_method"] is True
+            assert result["classification"] == "real"
     
     def test_no_method(self):
         """Should detect missing method."""
@@ -142,6 +145,96 @@ class MyBenchmark:
             f.flush()
             result = analyze_get_custom_metrics(Path(f.name), Path(f.name).parent)
             assert result["has_method"] is False
+
+    def test_flags_placeholder_helper_defaults_as_phantom(self):
+        """Placeholder timing defaults should be classified as phantom."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write('''
+from core.benchmark.metrics import compute_roofline_metrics
+
+class MyBenchmark:
+    def get_custom_metrics(self):
+        return compute_roofline_metrics(
+            total_flops=1024.0,
+            total_bytes=2048.0,
+            elapsed_ms=getattr(self, "_last_elapsed_ms", 1.0),
+            precision="fp16",
+        )
+''')
+            f.flush()
+            result = analyze_get_custom_metrics(Path(f.name), Path(f.name).parent)
+            assert result["classification"] == "phantom"
+            assert result["phantom_reasons"]
+
+    def test_flags_unassigned_private_metric_attrs_even_with_none_defaults(self):
+        """Missing benchmark-owned attrs should be treated as phantom reads."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write('''
+from core.benchmark.metrics import compute_graph_metrics
+
+class MyBenchmark:
+    def get_custom_metrics(self):
+        return compute_graph_metrics(
+            baseline_launch_overhead_us=getattr(self, "_baseline_launch_us", None),
+            graph_launch_overhead_us=getattr(self, "_graph_launch_us", None),
+            num_nodes=4,
+            num_iterations=100,
+        )
+''')
+            f.flush()
+            result = analyze_get_custom_metrics(Path(f.name), Path(f.name).parent)
+            assert result["classification"] == "phantom"
+            assert any("_baseline_launch_us" in reason for reason in result["phantom_reasons"])
+
+    def test_allows_private_metric_attrs_assigned_in_parent_class(self):
+        """Inherited benchmark state should not be treated as phantom."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            (tmpdir_path / "parent_impl.py").write_text(
+                '''
+class ParentBenchmark:
+    def benchmark_fn(self):
+        self._ttft_ms = 12.5
+        self._tpot_ms = 1.25
+'''
+            )
+            child_path = tmpdir_path / "child_impl.py"
+            child_path.write_text(
+                '''
+from core.benchmark.metrics import compute_inference_metrics
+from parent_impl import ParentBenchmark
+
+class ChildBenchmark(ParentBenchmark):
+    def get_custom_metrics(self):
+        return compute_inference_metrics(
+            ttft_ms=getattr(self, "_ttft_ms", None),
+            tpot_ms=getattr(self, "_tpot_ms", None),
+            total_tokens=128,
+            total_requests=1,
+            batch_size=1,
+            max_batch_size=4,
+        )
+'''
+            )
+            result = analyze_get_custom_metrics(child_path, tmpdir_path)
+            assert result["classification"] == "helper-backed"
+            assert not result["phantom_reasons"]
+
+    def test_flags_literal_performance_dict_values_as_phantom(self):
+        """Hard-coded performance literals should be classified as phantom."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write('''
+class MyBenchmark:
+    def get_custom_metrics(self):
+        return {
+            "inference.ttft_ms": 50.0,
+            "workload.batch_size": 8.0,
+        }
+''')
+            f.flush()
+            result = analyze_get_custom_metrics(Path(f.name), Path(f.name).parent)
+            assert result["classification"] == "phantom"
+            assert any("ttft_ms" in reason for reason in result["phantom_reasons"])
 
 
 class TestGenerateHelperCode:
@@ -184,10 +277,10 @@ class TestChapterMetricHelpers:
             if helper is not None:
                 assert helper in HELPER_SIGNATURES, f"Missing signature for {helper}"
     
-    def test_no_none_helpers(self):
-        """With new helpers, no chapter should have None."""
-        for ch, helper in CHAPTER_METRIC_HELPERS.items():
-            assert helper is not None, f"Ch{ch} still has None helper"
+    def test_heterogeneous_chapters_keep_custom_mapping(self):
+        """Heterogeneous chapters should not auto-suggest a generic helper."""
+        for ch in (5, 10, 14, 18):
+            assert CHAPTER_METRIC_HELPERS[ch] is None
 
 
 class TestHelperSignatures:
@@ -271,7 +364,7 @@ class OptimizedBenchmark(BaseBenchmark):
     def get_custom_metrics(self):
         return compute_memory_transfer_metrics(
             bytes_transferred=self.N * 4,
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
+            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
         )
 '''
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -281,6 +374,14 @@ class OptimizedBenchmark(BaseBenchmark):
             
             assert result["has_method"] is True
             assert result["uses_helper"] is True
+            assert result["classification"] == "helper-backed"
+
+    def test_repo_audit_exposes_no_phantoms(self):
+        """The repo-wide audit should currently be phantom-free."""
+        repo_root = Path(__file__).resolve().parents[1]
+        results = audit_repo_custom_metrics(repo_root)
+        phantoms = [result for result in results if result["analysis"]["classification"] == "phantom"]
+        assert not phantoms
 
 
 if __name__ == "__main__":

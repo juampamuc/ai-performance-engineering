@@ -370,3 +370,78 @@ def test_cluster_scorecard_computes_efficiency_and_cost_metrics(tmp_path: Path) 
     # cost_per_mtok = ((hourly_cost * tp)/3600) * 1e6 / tok_s
     assert abs(summary["vllm_cost_per_mtok_usd_at_max_total_tok_s"] - 1.1111111111111112) < 1e-6
     assert abs(summary["vllm_rate_cost_per_mtok_usd_at_max_total_tok_s"] - 0.7407407407407408) < 1e-6
+
+
+def test_cluster_scorecard_ingests_fabric_summary(tmp_path: Path) -> None:
+    run_id = "2026-03-16_scorecard_fabric"
+    label = "node1"
+    structured = tmp_path / "structured"
+    structured.mkdir(parents=True, exist_ok=True)
+
+    (structured / f"{run_id}_{label}_gemm_gpu_sanity.csv").write_text(
+        "label,m,n,k,dtype,iters,avg_ms,p50_ms,p99_ms,avg_tflops,p50_tflops,p99_tflops\n"
+        f"{label}_gpu0,8192,8192,8192,bf16,20,4.0,4.0,4.2,600.0,590.0,560.0\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        structured / f"{run_id}_{label}_nvbandwidth.json",
+        {
+            "status": "ok",
+            "key_sum_gbps": {
+                "device_to_device_memcpy_read_ce": 2000.0,
+                "device_to_device_memcpy_write_ce": 1950.0,
+                "host_to_device_memcpy_ce": 40.0,
+                "device_to_host_memcpy_ce": 39.0,
+            },
+        },
+    )
+    _write_json(
+        structured / f"{run_id}_fabric_scorecard.json",
+        {
+            "status": "partial",
+            "completeness": "runtime_verified",
+            "summary": {
+                "configured_management_planes": 1,
+                "runtime_verified_families": 2,
+                "full_stack_verified_families": 1,
+            },
+            "families": {
+                "nvlink": {"present": True, "completeness": "full_stack_verified"},
+                "infiniband": {"present": True, "completeness": "runtime_verified"},
+                "spectrum-x": {"present": False, "completeness": "not_present"},
+            },
+        },
+    )
+
+    out_json = structured / f"{run_id}_cluster_scorecard.json"
+    out_md = structured / f"{run_id}_cluster_scorecard.md"
+    cmd = [
+        sys.executable,
+        "cluster/analysis/build_cluster_scorecard.py",
+        "--run-id",
+        run_id,
+        "--structured-dir",
+        str(structured),
+        "--output-json",
+        str(out_json),
+        "--output-md",
+        str(out_md),
+    ]
+    proc = subprocess.run(cmd, cwd=Path(__file__).resolve().parents[1], check=False, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    summary = payload["summary"]
+    fabric = payload["fabric"]
+    assert summary["fabric_status"] == "partial"
+    assert summary["fabric_completeness"] == "runtime_verified"
+    assert summary["fabric_management_planes_configured"] == 1
+    assert summary["fabric_runtime_verified_families"] == 2
+    assert summary["fabric_full_stack_verified_families"] == 1
+    assert fabric["overall_status"] == "partial"
+    assert fabric["overall_completeness"] == "runtime_verified"
+    assert fabric["configured_management_planes"] == 1
+    assert fabric["runtime_verified_families"] == 2
+    assert fabric["full_stack_verified_families"] == 1
+    assert fabric["families_present"] == ["nvlink", "infiniband"]
+    assert fabric["families_full_stack_verified"] == ["nvlink"]

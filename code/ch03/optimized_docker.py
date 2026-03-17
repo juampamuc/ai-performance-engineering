@@ -158,7 +158,9 @@ class OptimizedDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=20, warmup=5)
+        from core.benchmark.smoke import is_smoke_mode
+        low_mem = is_smoke_mode()
+        return BenchmarkConfig(iterations=5 if low_mem else 20, warmup=5 if low_mem else 10)
 
     def get_custom_streams(self) -> list["torch.cuda.Stream"]:
         if self.prefetcher is None:
@@ -183,6 +185,3 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedDockerBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

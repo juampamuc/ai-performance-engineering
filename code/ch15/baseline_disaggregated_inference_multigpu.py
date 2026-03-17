@@ -21,7 +21,7 @@ from typing import List, Optional, Tuple
 import torch
 import torch.distributed as dist
 
-from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
+from core.benchmark.verification_mixin import VerificationPayloadMixin  # noqa: E402
 from core.benchmark.verification import PrecisionFlags  # noqa: E402
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
@@ -612,5 +612,3 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":
-    main()

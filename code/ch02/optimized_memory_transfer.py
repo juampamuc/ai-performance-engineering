@@ -1,4 +1,4 @@
-"""optimized_memory_transfer.py - Grace-Blackwell NVLink-C2C transfer (optimized)."""
+"""optimized_memory_transfer.py - Pinned host memory with async H2D transfer."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 
 
 class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized NVLink-C2C style transfer using non-blocking copy."""
+    """Pinned-host-memory H2D transfer using an asynchronous non-blocking copy."""
     
     def __init__(self):
         super().__init__()
@@ -30,7 +30,7 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: Initialize tensors and verification output."""
+        """Setup: Initialize pinned host memory and the device output buffer."""
         # Seed FIRST for deterministic verification
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
@@ -43,7 +43,7 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._synchronize()
     
     def benchmark_fn(self) -> None:
-        """Benchmark: Optimized H2D transfer (non-blocking)."""
+        """Benchmark: pinned-memory H2D transfer using a non-blocking copy."""
         assert self.host_data is not None and self.device_data is not None
         if self.device.type == "cuda":
             start_event = torch.cuda.Event(enable_timing=True)
@@ -128,9 +128,3 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedMemoryTransferBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

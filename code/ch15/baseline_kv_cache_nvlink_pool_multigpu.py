@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from core.benchmark.gpu_requirements import skip_if_insufficient_gpus
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch15.verification_payload_mixin import VerificationPayloadMixin
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class BaselineKVCacheLocalOnlyBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -137,8 +137,8 @@ class BaselineKVCacheLocalOnlyBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def get_custom_metrics(self) -> Optional[dict]:
         from core.benchmark.metrics import compute_inference_metrics
         return compute_inference_metrics(
-            ttft_ms=getattr(self, "_ttft_ms", 50.0),
-            tpot_ms=getattr(self, "_tpot_ms", 10.0),
+            ttft_ms=None,
+            tpot_ms=None,
             total_tokens=getattr(self, "total_tokens", 256),
             total_requests=getattr(self, "total_requests", 1),
             batch_size=getattr(self, "batch_size", 1),
@@ -155,6 +155,3 @@ def get_benchmark() -> BaseBenchmark:
     return BaselineKVCacheLocalOnlyBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(BaselineKVCacheLocalOnlyBenchmark)

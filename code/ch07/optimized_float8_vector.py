@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from pathlib import Path
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 class OptimizedFloat8VectorBenchmark(CudaBinaryBenchmark):
     """Wraps the 32-byte vectorized load benchmark for Blackwell."""
@@ -33,6 +33,3 @@ class OptimizedFloat8VectorBenchmark(CudaBinaryBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory for discover_benchmarks()."""
     return OptimizedFloat8VectorBenchmark()
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

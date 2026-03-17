@@ -22,7 +22,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
 | `add` | `172.202 ms` | `0.044 ms` | `3881.04x` | naive add path replaced with a true CUDA implementation |
-| `attention_ilp` | `140.603 ms` | `0.529 ms` | `265.82x` | ILP and vectorization collapse the slow path |
+| `attention_ilp` | `140.603 ms` | `0.529 ms` | `265.82x` | the attention-score inner loop moves from one dependent chain per thread to four independent chains |
 | `autotuning` | `63.881 ms` | `16.310 ms` | `3.92x` | schedule selection finds a materially better kernel config |
 
 This chapter has the biggest synthetic-looking wins in the repo because many baselines are intentionally pedagogical. They are still useful, but they should be read as controlled teaching deltas, not production uplift guarantees.
@@ -38,7 +38,7 @@ python -m cli.aisp bench run --targets ch06:autotuning --profile deep_dive --sin
 
 Expected profiler story:
 - `add`: removal of pure-framework overhead and better GPU utilization
-- `attention_ilp`: higher effective work per thread and less wasted issue bandwidth
+- `attention_ilp`: higher effective work per thread inside an attention-shaped score microbenchmark, not a different attention algorithm
 - `autotuning`: better schedule choice rather than different math
 
 ## Repro Commands
@@ -60,7 +60,7 @@ python -m cli.aisp bench run --targets ch06:attention_ilp --profile deep_dive --
 | --- | --- |
 | `my_first_kernel.cu`, `simple_kernel.cu`, `baseline_add_cuda.cu`, `optimized_add_cuda_parallel.cu`, `baseline_add.py`, `optimized_add.py`, `baseline_add_cuda.py`, `optimized_add_cuda_parallel.py` | Hello-world kernels plus Python wrappers for verifying CUDA build chains and launch parameters. |
 | `baseline_add_tensors_cuda.cu`, `optimized_add_tensors_cuda.cu`, `baseline_add_tensors.py`, `optimized_add_tensors.py`, `baseline_add_tensors_cuda.py`, `optimized_add_tensors_cuda.py` | Tensor-oriented adds with automatic pinned-memory staging and correctness checks. |
-| `baseline_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `ilp_low_occupancy_vec4_demo.cu`, `ilp_extreme_low_occupancy_vec4_demo.cu` | Instruction-level parallelism studies that manipulate loop unrolling, registers, and vector width. |
+| `baseline_attention_ilp.py`, `optimized_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `ilp_low_occupancy_vec4_demo.cu`, `ilp_extreme_low_occupancy_vec4_demo.cu` | Instruction-level parallelism studies that keep the math fixed while changing independent chains per thread, register pressure, and vector width. |
 | `baseline_bank_conflicts.cu`, `optimized_bank_conflicts.cu`, `baseline_launch_bounds*.{py,cu}`, `optimized_launch_bounds*.{py,cu}` | Bank conflict and launch-bound exercises to highlight shared memory layouts and CTA sizing. |
 | `baseline_autotuning.py`, `optimized_autotuning.py`, `memory_pool_tuning.cu`, `stream_ordered_allocator/` | Autotuning harness plus allocator experiments for controlling fragmentation and stream ordering. |
 | `unified_memory.cu`, `occupancy_api.cu`, `baseline_quantization_ilp.py`, `optimized_quantization_ilp.py` | Unified memory demo, occupancy calculator sample, and quantization-focused ILP workloads. |
@@ -84,4 +84,5 @@ python -m cli.aisp bench run --targets ch06 --profile minimal
 
 ## Notes
 - `arch_config.py` forces SM-specific compile flags (e.g., disabling pipelines on unsupported GPUs) so targets fail gracefully on older hardware.
+- `attention_ilp` is an attention-score preprocessing microbenchmark. It is intentionally not a fused SDPA or multi-stream overlap example.
 - CUDA extensions in `cuda_extensions/` can be imported directly into notebooks for interactive prototyping.

@@ -8,7 +8,7 @@
 #include "../core/common/nvtx_utils.cuh"
 
 // Fused implementation: single kernel (higher arithmetic intensity)
-__global__ void fusedL2Norm(const float *a, const float *b, float *out, int N) {
+__global__ void fusedL2NormScalar(const float *a, const float *b, float *out, int N) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (i < N) {
@@ -24,12 +24,37 @@ __global__ void fusedL2Norm(const float *a, const float *b, float *out, int N) {
     }
 }
 
+__global__ void fusedL2NormVec4(const float4* a, const float4* b, float4* out, int count) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) {
+        return;
+    }
+
+    const float4 av = a[i];
+    const float4 bv = b[i];
+
+    float4 outv;
+    outv.x = sqrtf(av.x * av.x + bv.x * bv.x);
+    outv.y = sqrtf(av.y * av.y + bv.y * bv.y);
+    outv.z = sqrtf(av.z * av.z + bv.z * bv.z);
+    outv.w = sqrtf(av.w * av.w + bv.w * bv.w);
+    out[i] = outv;
+}
+
 void fusedL2NormWrapper(const float* a, const float* b, float* out, int N) {
     dim3 blockSize(256);
-    dim3 gridSize((N + blockSize.x - 1) / blockSize.x);
-    
-    // Single kernel launch
-    fusedL2Norm<<<gridSize, blockSize>>>(a, b, out, N);
+    if (N % 4 == 0) {
+        const int vec_count = N / 4;
+        dim3 gridSize((vec_count + blockSize.x - 1) / blockSize.x);
+        fusedL2NormVec4<<<gridSize, blockSize>>>(
+            reinterpret_cast<const float4*>(a),
+            reinterpret_cast<const float4*>(b),
+            reinterpret_cast<float4*>(out),
+            vec_count);
+    } else {
+        dim3 gridSize((N + blockSize.x - 1) / blockSize.x);
+        fusedL2NormScalar<<<gridSize, blockSize>>>(a, b, out, N);
+    }
     cudaDeviceSynchronize();
 }
 

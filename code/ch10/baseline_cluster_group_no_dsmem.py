@@ -5,7 +5,7 @@ from typing import Optional
 
 from pathlib import Path
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 from core.benchmark.verification import simple_signature
 
@@ -65,6 +65,3 @@ def get_benchmark() -> BaselineClusterGroupNoDSMEMBenchmark:
     return BaselineClusterGroupNoDSMEMBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

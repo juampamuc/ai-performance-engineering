@@ -65,7 +65,3 @@ def get_benchmark() -> DecodeBenchmark:
     return attach_benchmark_metadata(PersistentPrefillBaselineBenchmark(cfg), __file__)
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

@@ -1,172 +1,139 @@
-"""optimized_attention_ilp.py - Optimized attention with high ILP.
-
-Chapter 6: Occupancy and Instruction-Level Parallelism
-
-Demonstrates ILP optimization via streaming chunks and concurrent execution.
-
-FORWARD REFERENCE: This file uses F.scaled_dot_product_attention (SDPA),
-which is covered in depth in Chapter 9 (arithmetic intensity, FlashAttention).
-Here we use it to demonstrate ILP benefits from fused attention operations.
-See ch09/baseline_sdpa_attention.py and ch09/optimized_sdpa_attention.py for
-detailed SDPA analysis comparing unfused vs fused attention kernels.
-"""
+"""Optimized attention-score ILP benchmark with four independent chains."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-# Import arch_config to apply Triton patch for sm_12x support
-try:
-    import arch_config  # noqa: F401
-except ImportError:
-    pass
-
+from ch06.cuda_extensions import load_ilp_extension
+from ch06.workload_config import WORKLOAD
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch06.workload_config import WORKLOAD
 
 
 class OptimizedAttentionILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: attention with increased ILP via streaming chunks."""
-    
-    def __init__(self):
+    """Optimized attention-score preprocessing with four-way ILP.
+
+    The optimization is the instruction schedule, not a different attention
+    algorithm. Each thread processes four independent score terms so the warp can
+    issue more useful work while earlier operations are still in flight.
+    """
+
+    def __init__(self) -> None:
         super().__init__()
-        self.qkv: Optional[nn.Linear] = None
-        self.out_proj: Optional[nn.Linear] = None
-        self.input: Optional[torch.Tensor] = None
+        self._extension = None
+        self.attention_terms: Optional[torch.Tensor] = None
+        self._buf0: Optional[torch.Tensor] = None
+        self._buf1: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.workload = WORKLOAD
         self.batch = self.workload.attention_batch
         self.embed_dim = self.workload.attention_embed_dim
         self.num_heads = self.workload.attention_heads
         self.head_dim = self.embed_dim // self.num_heads
         self.tokens = self.workload.attention_tokens
-        self._last_sum: Optional[torch.Tensor] = None
-        self.streams = [torch.cuda.Stream() for _ in range(2)]
-        self.partial_sums: list[torch.Tensor] = []
-        token_count = self.batch * self.tokens
+        self.repeats = 8
+        self.score_terms = self.batch * self.tokens * self.num_heads * self.head_dim
         self._workload = WorkloadMetadata(
-            requests_per_iteration=1.0,
-            tokens_per_iteration=float(token_count),
+            requests_per_iteration=float(self.batch),
+            tokens_per_iteration=float(self.batch * self.tokens),
         )
-        # ILP benchmark: fixed dimensions for measurement
-    
+
     def setup(self) -> None:
-        """Setup: Initialize optimized attention model."""
+        """Build attention-shaped score terms and the CUDA ILP buffers."""
+        self._extension = load_ilp_extension()
         torch.manual_seed(42)
-        # Match baseline nn.MultiheadAttention weights so verification compares
-        # equivalent models (baseline uses nn.MultiheadAttention directly).
-        reference = nn.MultiheadAttention(
-            self.embed_dim,
-            self.num_heads,
-            batch_first=True,
-        ).eval()
-
-        self.qkv = nn.Linear(self.embed_dim, self.embed_dim * 3, bias=True)
-        self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=True)
-        with torch.no_grad():
-            self.qkv.weight.copy_(reference.in_proj_weight)
-            self.qkv.bias.copy_(reference.in_proj_bias)
-            self.out_proj.weight.copy_(reference.out_proj.weight)
-            self.out_proj.bias.copy_(reference.out_proj.bias)
-
-        self.qkv = self.qkv.to(self.device).eval().half()
-        self.out_proj = self.out_proj.to(self.device).eval().half()
-        self.input = torch.randn(
+        torch.cuda.manual_seed_all(42)
+        query = torch.randn(
             self.batch,
             self.tokens,
-            self.embed_dim,
+            self.num_heads,
+            self.head_dim,
             device=self.device,
-            dtype=torch.float16,
+            dtype=torch.float32,
         )
-        self.partial_sums = [
-            torch.zeros(1, device=self.device, dtype=torch.float16)
-            for _ in self.streams
-        ]
+        key = torch.randn_like(query)
+        # Keep magnitudes in the same stable range as the GEMM ILP pair so the
+        # repeated square chain measures ILP rather than overflow behavior.
+        self.attention_terms = (query * key * 0.1).contiguous().reshape(-1)
+        self._buf0 = torch.empty_like(self.attention_terms)
+        self._buf1 = torch.empty_like(self.attention_terms)
+        self.output = None
         self._synchronize()
-    
+
     def benchmark_fn(self) -> None:
-        """Benchmark: Attention with high ILP optimization."""
-        assert self.qkv is not None and self.out_proj is not None and self.input is not None
-        assert len(self.partial_sums) == len(self.streams)
+        """Run the high-ILP transform over attention-score terms."""
+        assert self._extension is not None
+        assert self.attention_terms is not None
+        assert self._buf0 is not None and self._buf1 is not None
         with self._nvtx_range("optimized_attention_ilp"):
-            with torch.no_grad():
-                chunks = self.input.chunk(len(self.streams), dim=0)
-                for partial in self.partial_sums:
-                    partial.zero_()
-
-                for stream, chunk, partial_sum in zip(self.streams, chunks, self.partial_sums):
-                    with torch.cuda.stream(stream):
-                        qkv = self.qkv(chunk)
-                        q, k, v = qkv.chunk(3, dim=-1)
-                        q = q.reshape(chunk.size(0), chunk.size(1), self.num_heads, self.head_dim).transpose(1, 2)
-                        k = k.reshape(chunk.size(0), chunk.size(1), self.num_heads, self.head_dim).transpose(1, 2)
-                        v = v.reshape(chunk.size(0), chunk.size(1), self.num_heads, self.head_dim).transpose(1, 2)
-                        attn = F.scaled_dot_product_attention(
-                            q,
-                            k,
-                            v,
-                            is_causal=False,
-                        )
-                        merged = attn.transpose(1, 2).reshape(chunk.size(0), chunk.size(1), self.embed_dim)
-                        out = self.out_proj(merged)
-                        partial_sum.add_(out.sum())
-
-                current_stream = torch.cuda.current_stream()
-                for stream in self.streams:
-                    current_stream.wait_stream(stream)
-                self._last_sum = torch.stack(self.partial_sums).sum(dim=0)
-
+            src: torch.Tensor = self.attention_terms
+            buf0: torch.Tensor = self._buf0
+            buf1: torch.Tensor = self._buf1
+            dst: torch.Tensor = buf0
+            for _ in range(self.repeats):
+                self._extension.unrolled_ilp(dst, src)
+                src, dst = dst, (buf1 if dst is buf0 else buf0)
+        self.output = src[:4096].detach().clone()
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"input": self.input},
-            output=(self._last_sum if self._last_sum is not None else torch.zeros(1, device=self.device)).float().detach(),
+            inputs={"attention_terms": self.attention_terms},
+            output=self.output.detach(),
             batch_size=self.batch,
-            parameter_count=sum(p.numel() for p in self.qkv.parameters()) + sum(
-                p.numel() for p in self.out_proj.parameters()
-            ) if self.qkv is not None and self.out_proj is not None else 0,
-            output_tolerance=(1e-2, 100.0),
-            precision_flags={"fp16": True, "bf16": False, "fp8": False, "tf32": False},
+            parameter_count=0,
+            output_tolerance=(1e-5, 1e-5),
+            precision_flags={"fp16": False, "bf16": False, "fp8": False, "tf32": False},
         )
-    
+
     def teardown(self) -> None:
-        """Teardown: Clean up resources."""
-        self.qkv = None
-        self.out_proj = None
-        self.input = None
-        self.partial_sums = []
+        self._extension = None
+        self.attention_terms = None
+        self._buf0 = None
+        self._buf1 = None
+        self.output = None
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        """Return benchmark configuration."""
         return BenchmarkConfig(
             iterations=self.workload.ilp_iterations,
             warmup=self.workload.ilp_warmup,
+            enable_memory_tracking=False,
+            enable_profiling=False,
+            setup_timeout_seconds=120,
         )
-    
+
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_kernel_fundamentals_metrics
-        return compute_kernel_fundamentals_metrics(
-            num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            num_iterations=1,
+
+        metrics = compute_kernel_fundamentals_metrics(
+            num_elements=self.score_terms,
+            num_iterations=self.repeats,
         )
+        metrics.update(
+            {
+                "attention_ilp.batch": float(self.batch),
+                "attention_ilp.tokens": float(self.tokens),
+                "attention_ilp.heads": float(self.num_heads),
+                "attention_ilp.head_dim": float(self.head_dim),
+                "attention_ilp.independent_chains_per_thread": 4.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
-        """Validate benchmark result."""
-        if self._last_sum is None:
-            return "Attention output not computed"
+        if self.output is None:
+            return "Output tensor not initialized"
+        if self.output.shape[0] != 4096:
+            return f"Output shape mismatch: expected 4096, got {self.output.shape[0]}"
+        if not torch.isfinite(self.output).all():
+            return "Output contains non-finite values"
         return None
 
 
-
 def get_benchmark() -> BaseBenchmark:
-    """Factory function for harness discovery."""
     return OptimizedAttentionILPBenchmark()

@@ -745,6 +745,25 @@ def check_benchmark_file_ast(file_path: Path) -> Tuple[bool, List[str], List[str
             if len(node.args.args) > 0 or node.args.vararg is not None or node.args.kwarg is not None:
                 errors.append("get_benchmark() should take no arguments")
 
+        def _is_main_guard(stmt: ast.stmt) -> bool:
+            if not isinstance(stmt, ast.If):
+                return False
+            test = stmt.test
+            if not isinstance(test, ast.Compare):
+                return False
+            if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+                return False
+            if len(test.comparators) != 1:
+                return False
+            left = test.left
+            right = test.comparators[0]
+            return (
+                isinstance(left, ast.Name)
+                and left.id == "__name__"
+                and isinstance(right, ast.Constant)
+                and right.value == "__main__"
+            )
+
         benchmark_class_refs = _candidate_benchmark_class_refs(module_ctx)
         for class_ref in benchmark_class_refs:
             class_module_ctx = _load_module_context(str(class_ref.module_path))
@@ -767,6 +786,10 @@ def check_benchmark_file_ast(file_path: Path) -> Tuple[bool, List[str], List[str
 
         if not has_get_benchmark and not benchmark_class_refs:
             errors.append("No get_benchmark() function or benchmark class found")
+        elif any(_is_main_guard(node) for node in tree.body):
+            errors.append(
+                "Benchmark modules must not define __main__ blocks; run them via compare.py or cli.aisp bench run"
+            )
 
     except SyntaxError as e:
         errors.append(f"Syntax error: {e}")

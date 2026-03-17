@@ -552,15 +552,18 @@ class TestMemoryProtections:
         """
         from core.harness.validity_checks import reset_cuda_memory_pool
         
+        before_reserved = torch.cuda.memory_reserved()
         # Allocate some memory
         x = torch.randn(10000, device="cuda")
+        during_reserved = torch.cuda.memory_reserved()
         del x
         
         # Reset pool
         reset_cuda_memory_pool()
         
-        # Memory should be released
-        # (Actual memory stats would show reduction)
+        after_reserved = torch.cuda.memory_reserved()
+        assert during_reserved >= before_reserved
+        assert after_reserved <= during_reserved
 
 
 # =============================================================================
@@ -634,9 +637,7 @@ class TestCompileProtections:
         from core.harness.validity_checks import clear_compile_cache
         
         # Clear cache
-        clear_compile_cache()
-        
-        # Cache should be cleared (no error)
+        assert clear_compile_cache() is True
     
     def test_trace_reuse_reset(self):
         """Test that dynamo traces can be reset.
@@ -645,11 +646,15 @@ class TestCompileProtections:
         Attack: Exploits trace caching
         """
         import torch._dynamo
+        from core.harness.validity_checks import get_compile_state
         
         # Reset dynamo
         torch._dynamo.reset()
         
-        # Dynamo should be reset (no cached traces)
+        state = get_compile_state()
+        assert state["dynamo_available"] is True
+        assert isinstance(state["compile_count"], int)
+        assert state["compile_count"] >= 0
     
     def test_guard_failure_detection(self):
         """Test that guard failures are tracked.
@@ -873,12 +878,14 @@ class TestStatisticalProtections:
         from core.harness.validity_checks import gc_disabled
         import gc
         
+        gc_was_enabled = gc.isenabled()
         with gc_disabled():
             # GC should be disabled here
-            # Any allocations won't trigger GC
+            assert not gc.isenabled()
             x = [i for i in range(1000)]
+            assert len(x) == 1000
         
-        # After context, GC is re-enabled
+        assert gc.isenabled() is gc_was_enabled
     
     def test_background_process_isolation(self):
         """Test that background processes are handled.
@@ -891,6 +898,7 @@ class TestStatisticalProtections:
         
         # At minimum, we synchronize CUDA
         torch.cuda.synchronize()
+        assert torch.cuda.current_stream().query()
 
 
 # =============================================================================
@@ -1037,8 +1045,9 @@ class TestL2CacheProtections:
         """
         from core.harness.l2_cache_utils import flush_l2_cache
         
-        # Should not raise
         flush_l2_cache()
+        torch.cuda.synchronize()
+        assert torch.cuda.current_stream().query()
 
 
 # =============================================================================
@@ -1061,7 +1070,10 @@ class TestStreamAuditorProtections:
             x = torch.randn(100, device="cuda")
             y = x * 2
         
-        # Should complete without error
+        ok, warnings_list = auditor.check_issues()
+        assert ok, f"default stream work should not trigger stream warnings: {warnings_list}"
+        assert warnings_list == []
+        assert torch.equal(y, x * 2)
 
     def test_stream_auditor_detects_unsynced_custom_stream(self):
         """Test that custom stream work without sync triggers a warning."""
@@ -1338,12 +1350,17 @@ class TestMemoryProtectionsExtended:
         """
         from core.harness.validity_checks import reset_cuda_memory_pool
         
+        before_reserved = torch.cuda.memory_reserved()
         # Allocate and free to fragment
         tensors = [torch.randn(i * 100, device="cuda") for i in range(1, 10)]
+        during_reserved = torch.cuda.memory_reserved()
         del tensors
         
         # Reset pool to clear fragmentation
         reset_cuda_memory_pool()
+        after_reserved = torch.cuda.memory_reserved()
+        assert during_reserved >= before_reserved
+        assert after_reserved <= during_reserved
     
     def test_page_fault_timing(self):
         """Test that page faults are handled.
@@ -1387,6 +1404,7 @@ class TestCUDAProtectionsExtended:
         
         # Host callbacks would be tracked by stream auditor
         # This test verifies sync completes all work
+        assert torch.cuda.current_stream().query()
     
     def test_workspace_precompute_detection(self):
         """Test that workspace pre-computation is detected.
@@ -1414,6 +1432,7 @@ class TestCUDAProtectionsExtended:
         torch.cuda.synchronize()
         
         # Any subsequent timing should not include prior work
+        assert torch.cuda.current_stream().query()
     
     def test_driver_overhead_tracking(self):
         """Test that driver overhead is tracked.
@@ -1450,6 +1469,7 @@ class TestCUDAProtectionsExtended:
         """
         # PyTorch doesn't expose CDP directly, but sync ensures all work complete
         torch.cuda.synchronize()
+        assert torch.cuda.current_stream().query()
     
     def test_unified_memory_fault_tracking(self):
         """Test that unified memory faults are tracked.
@@ -1480,9 +1500,13 @@ class TestCompileProtectionsExtended:
         """
         # Compile mode should be consistent
         import torch._dynamo
+        from core.harness.validity_checks import get_compile_state
         
         # Reset to ensure clean state
         torch._dynamo.reset()
+        state = get_compile_state()
+        assert state["dynamo_available"] is True
+        assert isinstance(state["compile_count"], int)
     
     def test_inductor_asymmetry_detection(self):
         """Test that inductor asymmetries are detected.
@@ -1493,7 +1517,7 @@ class TestCompileProtectionsExtended:
         from core.harness.validity_checks import clear_compile_cache
         
         # Clear cache to ensure consistent compilation
-        clear_compile_cache()
+        assert clear_compile_cache() is True
     
     def test_autotuning_variance_handling(self):
         """Test that autotuning variance is handled.
@@ -1543,6 +1567,7 @@ class TestDistributedProtectionsExtended:
         """
         # CUDA sync acts as implicit barrier
         torch.cuda.synchronize()
+        assert torch.cuda.current_stream().query()
     
     def test_gradient_bucketing_mismatch_detection(self):
         """Test that gradient bucketing mismatches are detected.
@@ -1562,6 +1587,7 @@ class TestDistributedProtectionsExtended:
         """
         # Full device sync ensures all gradient ops complete
         torch.cuda.synchronize()
+        assert torch.cuda.current_stream().query()
     
     def test_pipeline_bubble_tracking(self):
         """Test that pipeline bubbles are tracked.
@@ -1784,7 +1810,7 @@ class TestEnvironmentProtectionsExtended:
         """
         # Library versions are captured
         cudnn_version = torch.backends.cudnn.version()
-        assert cudnn_version is not None or True  # May not be available
+        assert cudnn_version is None or cudnn_version > 0
     
     def test_container_resource_limits_handling(self):
         """Test that container resource limits are handled.

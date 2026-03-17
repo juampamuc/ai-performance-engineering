@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import torch
 
+from core.common.device_utils import get_usable_cuda_or_cpu
 from core.utils.warning_filters import warn_optional_component_unavailable
 
 try:
@@ -33,16 +34,8 @@ from ch01.performance_common import (
 from ch01.workload_config import WORKLOAD
 
 
-def resolve_device() -> torch.device:
-    """Return a usable device, falling back to CPU if CUDA is unavailable or unsupported."""
-    if not torch.cuda.is_available():
-        return torch.device("cpu")
-    try:
-        torch.zeros(1, device="cuda")
-        return torch.device("cuda")
-    except Exception as exc:
-        print(f"WARNING: CUDA unavailable or unsupported ({exc}); falling back to CPU.")
-        return torch.device("cpu")
+def _warn_cuda_probe_failure(message: str) -> None:
+    print(f"WARNING: {message}")
 
 
 class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -53,7 +46,7 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def __init__(self):
         super().__init__()
-        self.device = resolve_device()
+        self.device = get_usable_cuda_or_cpu(warning_handler=_warn_cuda_probe_failure)
         self.model = None
         self.data = None
         self.target = None
@@ -200,7 +193,3 @@ def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselinePerformanceBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)

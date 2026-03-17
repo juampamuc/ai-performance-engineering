@@ -20,6 +20,7 @@ import pickle
 import subprocess
 import time
 import traceback
+import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -80,14 +81,19 @@ def _detect_git_cache_salt() -> str:
     across code changes while keeping cache keys stable within a commit.
     """
     try:
-        import subprocess
         head = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
         ).decode().strip()
         if head:
             return head[:12]
-    except Exception:
-        pass
+    except (
+        FileNotFoundError,
+        PermissionError,
+        subprocess.CalledProcessError,
+        subprocess.SubprocessError,
+        UnicodeDecodeError,
+    ):
+        return "nogit"
     return "nogit"
 
 
@@ -332,8 +338,12 @@ class TimingConfig:
                         iterations = cfg.get("iterations")
                     if min_run_time is None:
                         min_run_time = cfg.get("min_run_time_ms")
-            except Exception:
-                pass
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                warnings.warn(
+                    f"Failed to inspect {benchmark.__class__.__name__}.get_config() for verification timing: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         
         return cls(
             warmup_iterations=warmup,
@@ -804,7 +814,12 @@ class VerifyRunner:
         if cfg is None and hasattr(benchmark, "get_config"):
             try:
                 cfg = benchmark.get_config()
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                warnings.warn(
+                    f"Failed to inspect {benchmark.__class__.__name__}.get_config() during verification: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 cfg = None
 
         policy_name = normalize_backend_policy(getattr(cfg, "backend_policy", None))
@@ -857,8 +872,10 @@ class VerifyRunner:
                 if hasattr(benchmark, "mark_execution_complete"):
                     try:
                         benchmark.mark_execution_complete()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"mark_execution_complete() failed during verification: {exc}"
+                        ) from exc
 
                 # STRICT: Verification metadata must be surfaced post-run.
                 inputs_for_validation = self._extract_inputs(benchmark)
@@ -909,8 +926,8 @@ class VerifyRunner:
                         issues.append(
                             f"UNDECLARED STREAMS during verification: {len(undeclared_streams)} stream(s) not declared via get_custom_streams()."
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    issues.append(f"Failed to inspect stream audit info: {exc}")
                 if not audit_ok or audit_warnings:
                     issues.extend(audit_warnings)
                 if issues:
@@ -929,8 +946,12 @@ class VerifyRunner:
             if hasattr(benchmark, "teardown"):
                 try:
                     benchmark.teardown()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    warnings.warn(
+                        f"{benchmark.__class__.__name__}.teardown() failed during verification cleanup: {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
             restore_backend_policy(backend_state)
 
     def _validate_inputs_match_signature(
@@ -1012,14 +1033,12 @@ class VerifyRunner:
 
         skip_input = False
         skip_output = False
-        try:
-            skip_input = bool(benchmark.skip_input_verification())  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        try:
-            skip_output = bool(benchmark.skip_output_verification())  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        skip_input_method = getattr(benchmark, "skip_input_verification", None)
+        if callable(skip_input_method):
+            skip_input = bool(skip_input_method())
+        skip_output_method = getattr(benchmark, "skip_output_verification", None)
+        if callable(skip_output_method):
+            skip_output = bool(skip_output_method())
 
         if skip_input or skip_output:
             reason = getattr(benchmark, "verification_not_applicable_reason", None)
@@ -1195,13 +1214,14 @@ class VerifyRunner:
             
         except Exception as e:
             # Restore original input on error
+            restore_error: Optional[str] = None
             try:
                 with torch.no_grad():
                     input_tensor.copy_(original_input)
-            except Exception:
-                pass
+            except Exception as restore_exc:
+                restore_error = f" Input restore also failed: {restore_exc}"
             # Don't fail verification for jitter check errors - it's advisory
-            return True, f"Jitter check skipped due to error: {e}"
+            return True, f"Jitter check skipped due to error: {e}.{restore_error or ''}".rstrip()
     
     def verify_baseline(
         self,
@@ -1559,12 +1579,16 @@ class VerifyRunner:
                 parts.append(hashlib.sha256(cpu_tensor.view(torch.uint8).numpy().tobytes()).hexdigest()[:16])
             optimized_checksum = "-".join(parts)
 
+            advisory_warnings = [msg for msg in (fresh_msg, jitter_msg) if msg]
+            details = {"warnings": advisory_warnings} if advisory_warnings else None
+
             return VerifyResult.success(
                 signature_hash=sig_hash,
                 baseline_checksum=golden.checksum,
                 optimized_checksum=optimized_checksum,
                 comparison_details=comparison,
                 seed_info=seed_info,
+                details=details,
             )
 
         except Exception as e:
@@ -1760,7 +1784,11 @@ class VerifyRunner:
                     if start != 0:
                         return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries must start at layer 0"
                 else:
-                    assert prev_end is not None
+                    if prev_end is None:
+                        return False, (
+                            "PIPELINE METADATA INVALID: missing previous pipeline boundary while validating "
+                            "pipeline_stage_boundaries"
+                        )
                     if start != prev_end + 1:
                         return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries must be contiguous and non-overlapping"
                 prev_end = end

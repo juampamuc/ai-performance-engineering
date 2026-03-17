@@ -515,6 +515,25 @@ class NsightAutomation:
                     output=result.stdout,
                     stderr=result.stderr,
                 )
+            if not output_path.exists() and not self._wait_for_output_artifact(
+                output_path,
+                settle_seconds=10.0,
+            ):
+                self.last_run.update(
+                    {
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "returncode": result.returncode,
+                        "timeout_hit": False,
+                        "graceful_finalize_attempted": False,
+                    }
+                )
+                self.last_error = (
+                    "Nsight Systems exited successfully but no report artifact was "
+                    f"produced at {output_path}"
+                )
+                logger.error(self.last_error)
+                return None
             logger.info(f"Nsight Systems trace saved to {output_path}")
             self.last_run.update(
                 {

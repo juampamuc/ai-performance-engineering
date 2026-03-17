@@ -31,7 +31,7 @@ class BaselineMicroTilingMatmulBenchmark(CudaBinaryBenchmark):
         return compute_roofline_metrics(
             total_flops=self._total_flops,
             total_bytes=self._total_bytes,
-            elapsed_ms=getattr(self, "_last_elapsed_ms", 1.0),
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
             precision="fp32",
         )
 
@@ -45,7 +45,3 @@ def get_benchmark() -> BaselineMicroTilingMatmulBenchmark:
     return BaselineMicroTilingMatmulBenchmark()
 
 
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

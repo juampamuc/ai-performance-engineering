@@ -45,10 +45,13 @@ int main() {
     CUDA_CHECK(cudaEventCreate(&stop));
     
     const int iterations = 10;
+    const int block_size = 256;
+    const int grid_size = static_cast<int>((n + block_size - 1) / block_size);
+    const int launch_blocks = grid_size > 4096 ? 4096 : grid_size;
     CUDA_CHECK(cudaEventRecord(start));
     for (int i = 0; i < iterations; i++) {
         NVTX_RANGE("compute_kernel:baseline_copy");
-        baseline_copy<<<8, 64>>>(d_src, d_dst, n);
+        baseline_copy<<<launch_blocks, block_size>>>(d_src, d_dst, n);
     }
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -81,7 +84,6 @@ int main() {
     
     return 0;
 }
-
 
 
 

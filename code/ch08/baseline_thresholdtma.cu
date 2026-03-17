@@ -63,12 +63,9 @@ int main() {
     cudaStream_t stream;
     cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
 
+    cudaMemcpyAsync(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice, stream);
+    cudaStreamSynchronize(stream);
     for (int i = 0; i < 5; ++i) {
-        NVTX_RANGE("transfer_async:h2d");
-        cudaMemcpyAsync(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice, stream);
-        cudaStreamSynchronize(stream);
-        launch_threshold_naive(d_input, d_output, threshold, count, stream);
-        launch_threshold_naive(d_input, d_output, threshold, count, stream);
         launch_threshold_naive(d_input, d_output, threshold, count, stream);
     }
     cudaDeviceSynchronize();
@@ -76,11 +73,7 @@ int main() {
     const int iterations = 50;
     cudaEventRecord(start);
     for (int i = 0; i < iterations; ++i) {
-        NVTX_RANGE("transfer_async:h2d");
-        cudaMemcpyAsync(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice, stream);
-        cudaStreamSynchronize(stream);
-        launch_threshold_naive(d_input, d_output, threshold, count, stream);
-        launch_threshold_naive(d_input, d_output, threshold, count, stream);
+        NVTX_RANGE("iteration");
         launch_threshold_naive(d_input, d_output, threshold, count, stream);
     }
     cudaEventRecord(stop);

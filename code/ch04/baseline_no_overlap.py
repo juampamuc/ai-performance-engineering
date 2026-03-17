@@ -2,8 +2,10 @@
 
 This module exists to match the chapter text and expectations file.  It
 simply re-exports the BaselineNoOverlapBenchmark defined in
-`ddp_no_overlap.py`, which performs a single-process DDP-like step
-without communication/compute overlap.
+`ddp_no_overlap.py`, which performs a single-GPU simulation of the
+no-overlap pattern. The host-buffer round-trip is a stand-in for
+all-reduce latency; the real collective version lives in the
+`*_multigpu.py` benchmarks.
 """
 
 from __future__ import annotations
@@ -15,8 +17,3 @@ def get_benchmark() -> BaselineNoOverlapBenchmark:
     """Factory used by the harness."""
     return BaselineNoOverlapBenchmark()
 
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

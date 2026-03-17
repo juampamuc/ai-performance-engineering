@@ -104,10 +104,10 @@ class BaselineTrainingSingleBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_ai_optimization_metrics
         return compute_ai_optimization_metrics(
-            original_time_ms=getattr(self, '_original_ms', 10.0),
-            ai_optimized_time_ms=getattr(self, '_optimized_ms', 5.0),
-            suggestions_applied=getattr(self, '_suggestions_applied', 1),
-            suggestions_total=getattr(self, '_suggestions_total', 1),
+            original_time_ms=getattr(self, '_last_elapsed_ms', None),
+            ai_optimized_time_ms=None,
+            suggestions_applied=None,
+            suggestions_total=None,
         )
 
     def validate_result(self) -> Optional[str]:

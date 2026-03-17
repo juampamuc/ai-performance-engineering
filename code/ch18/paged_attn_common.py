@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from functools import partial
 import os
 from dataclasses import dataclass
 from typing import Optional
 
 import torch
+
+from core.benchmark.metrics import compute_roofline_metrics
+from core.common.device_utils import require_cuda_device
 
 ENV_PREFIX = "PAGED_ATTN_"
 
@@ -98,15 +102,71 @@ def resolve_paged_attn_config() -> PagedAttnConfig:
     )
     return config
 
-
-def resolve_device() -> torch.device:
-    """Return CUDA device, raising if unavailable."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("These paged attention demos require CUDA-capable hardware.")
-    return torch.device("cuda")
+resolve_device = partial(
+    require_cuda_device,
+    "These paged attention demos require CUDA-capable hardware.",
+)
 
 
 def seed_everything(seed: int = 42) -> None:
     """Deterministic seeding for repeatable benchmarks."""
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def compute_paged_attention_metrics(
+    *,
+    batch_size: int,
+    num_heads: int,
+    seq_len: int,
+    head_dim: int,
+    bytes_per_element: int,
+    elapsed_ms: Optional[float] = None,
+    block_size: int,
+    chunk_size: int,
+    uses_paged_kv: bool,
+    query_len: Optional[int] = None,
+) -> dict[str, float]:
+    """Compute workload/roofline metrics for the chapter's paged-attention demos."""
+    hidden_dim = num_heads * head_dim
+    effective_query_len = int(query_len) if query_len is not None else seq_len
+    total_flops = (
+        4.0
+        * float(batch_size)
+        * float(num_heads)
+        * float(effective_query_len)
+        * float(seq_len)
+        * float(head_dim)
+    )
+    total_bytes = (
+        4.0
+        * float(batch_size)
+        * float(num_heads)
+        * float(seq_len + effective_query_len)
+        * float(head_dim)
+        * float(bytes_per_element)
+    )
+    metrics = {
+        "paged_attn.batch_size": float(batch_size),
+        "paged_attn.seq_len": float(seq_len),
+        "paged_attn.query_len": float(effective_query_len),
+        "paged_attn.hidden_dim": float(hidden_dim),
+        "paged_attn.num_heads": float(num_heads),
+        "paged_attn.head_dim": float(head_dim),
+        "paged_attn.block_size": float(block_size),
+        "paged_attn.chunk_size": float(chunk_size),
+        "paged_attn.uses_paged_kv": 1.0 if uses_paged_kv else 0.0,
+        "paged_attn.total_flops": total_flops,
+        "paged_attn.total_bytes": total_bytes,
+    }
+    if elapsed_ms is None:
+        return metrics
+    return {
+        **metrics,
+        **compute_roofline_metrics(
+            total_flops=total_flops,
+            total_bytes=total_bytes,
+            elapsed_ms=elapsed_ms,
+            precision="fp16" if bytes_per_element <= 2 else "fp32",
+        ),
+    }

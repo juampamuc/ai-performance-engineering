@@ -1,36 +1,26 @@
 import json
-from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
+import core.engine as engine_module
+from core.perf_core import PerfCore
 from core.engine import get_engine, reset_engine
 from dashboard.api import server
 
 
-def test_configure_engine_uses_data_file(tmp_path):
-    data = {
-        "timestamp": "2025-01-01 00:00:00",
-        "results": [
-            {
-                "chapter": "ch01",
-                "benchmarks": [
-                    {
-                        "example": "example_a",
-                        "best_speedup": 2.0,
-                        "baseline_time_ms": 100.0,
-                        "baseline_gpu_metrics": {"power_draw_w": 250},
-                        "optimizations": [],
-                        "status": "succeeded",
-                    }
-                ],
-            }
-        ],
-    }
-    path = tmp_path / "benchmark_test_results.json"
-    path.write_text(json.dumps(data))
+class _TestPerfCore(PerfCore):
+    def __init__(self, *, history_root, data_file=None, bench_root=None):
+        super().__init__(data_file=data_file, bench_root=bench_root)
+        self._test_history_root = history_root
 
+    def _tier1_history_root(self):
+        return self._test_history_root
+
+
+def test_configure_engine_uses_data_file(sample_benchmark_results_file):
     reset_engine()
-    server._configure_engine(path)
+    server._configure_engine(sample_benchmark_results_file)
     result = get_engine().benchmark.data()
 
     assert result["summary"]["total_benchmarks"] == 1
@@ -46,7 +36,41 @@ def test_dashboard_cli_has_serve_command():
     assert "Start the dashboard API server." in result.output
 
 
-def test_engine_exposes_tier1_history_and_trends(tmp_path, monkeypatch):
+def test_dashboard_http_benchmark_overview_route_returns_success_envelope(sample_benchmark_results_file):
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    reset_engine()
+    server._configure_engine(sample_benchmark_results_file)
+    client = TestClient(server.fastapi_app)
+    response = client.get("/api/benchmark/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool"] == "benchmark.overview"
+    assert payload["status"] == "ok"
+    assert payload["success"] is True
+    assert payload["result"]["summary"]["total"] == 1
+    reset_engine()
+
+
+def test_dashboard_http_compare_route_returns_error_envelope() -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(server.fastapi_app)
+    response = client.get("/api/benchmark/compare")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tool"] == "benchmark.compare"
+    assert payload["status"] == "error"
+    assert payload["success"] is False
+    assert payload["error_type"] == "value_error"
+    assert "baseline is required" in payload["error"]
+
+
+def test_engine_exposes_tier1_history_and_trends(tmp_path, sample_benchmark_results_file):
     history_root = tmp_path / "artifacts" / "history" / "tier1"
     run_dir = history_root / "20260309_010000_tier1_local"
     run_dir.mkdir(parents=True)
@@ -150,12 +174,12 @@ def test_engine_exposes_tier1_history_and_trends(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(
-        "core.benchmark.suites.tier1.load_tier1_suite",
-        lambda *args, **kwargs: SimpleNamespace(history_root=str(history_root)),
-    )
-
     reset_engine()
+    engine_module._handler_instance = _TestPerfCore(
+        history_root=history_root,
+        data_file=sample_benchmark_results_file,
+        bench_root=tmp_path,
+    )
     history = get_engine().benchmark.tier1_history()
     trends = get_engine().benchmark.tier1_trends()
     target_history = get_engine().benchmark.tier1_target_history(key="flashattention4_alibi")

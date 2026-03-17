@@ -38,22 +38,38 @@ class ManagementConfig:
     cumulus_ssh_key: str | None
 
 
-def _clean_csv(value: str | None) -> list[str]:
+def _clean_csv(value: str | list[str] | tuple[str, ...] | None) -> list[str]:
     if not value:
         return []
-    return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, str):
+        items = value.split(",")
+    else:
+        items = [str(item) for item in value]
+    return [item.strip() for item in items if item and item.strip()]
 
 
-def management_config_from_env(*, ssh_user: str | None = None, ssh_key: str | None = None) -> ManagementConfig:
+def make_management_config(
+    *,
+    ib_mgmt_host: str | None = None,
+    ib_mgmt_user: str | None = None,
+    ib_mgmt_ssh_key: str | None = None,
+    nmx_url: str | None = None,
+    nmx_token: str | None = None,
+    cumulus_hosts: str | list[str] | tuple[str, ...] | None = None,
+    cumulus_user: str | None = None,
+    cumulus_ssh_key: str | None = None,
+    ssh_user: str | None = None,
+    ssh_key: str | None = None,
+) -> ManagementConfig:
     return ManagementConfig(
-        ib_mgmt_host=os.environ.get("AISP_FABRIC_IB_MGMT_HOST"),
-        ib_mgmt_user=os.environ.get("AISP_FABRIC_IB_MGMT_USER") or ssh_user,
-        ib_mgmt_ssh_key=os.environ.get("AISP_FABRIC_IB_MGMT_SSH_KEY") or ssh_key,
-        nmx_url=os.environ.get("AISP_FABRIC_NMX_URL"),
-        nmx_token=os.environ.get("AISP_FABRIC_NMX_TOKEN"),
-        cumulus_hosts=tuple(_clean_csv(os.environ.get("AISP_FABRIC_CUMULUS_HOSTS"))),
-        cumulus_user=os.environ.get("AISP_FABRIC_CUMULUS_USER") or ssh_user or "cumulus",
-        cumulus_ssh_key=os.environ.get("AISP_FABRIC_CUMULUS_SSH_KEY") or ssh_key,
+        ib_mgmt_host=(ib_mgmt_host or "").strip() or None,
+        ib_mgmt_user=(ib_mgmt_user or ssh_user or "").strip() or None,
+        ib_mgmt_ssh_key=(ib_mgmt_ssh_key or ssh_key or "").strip() or None,
+        nmx_url=(nmx_url or "").strip() or None,
+        nmx_token=(nmx_token or "").strip() or None,
+        cumulus_hosts=tuple(_clean_csv(cumulus_hosts)),
+        cumulus_user=(cumulus_user or ssh_user or "cumulus").strip() or None,
+        cumulus_ssh_key=(cumulus_ssh_key or ssh_key or "").strip() or None,
     )
 
 
@@ -194,14 +210,18 @@ def _result_state(results: list[dict[str, Any]]) -> str:
 
 
 def _command_record(name: str, result: dict[str, Any], *, notes: str = "") -> dict[str, Any]:
+    stdout = str(result.get("stdout") or "")
+    stderr = str(result.get("stderr") or "")
     return {
         "name": name,
         "status": result.get("status", "error"),
         "host": result.get("host"),
         "command": result.get("command"),
         "returncode": result.get("returncode"),
-        "stdout_excerpt": "\n".join(str(result.get("stdout") or "").splitlines()[:20]),
-        "stderr_excerpt": "\n".join(str(result.get("stderr") or "").splitlines()[:20]),
+        "stdout_excerpt": "\n".join(stdout.splitlines()[:20]),
+        "stderr_excerpt": "\n".join(stderr.splitlines()[:20]),
+        "stdout_line_count": len([line for line in stdout.splitlines() if line.strip()]),
+        "stderr_line_count": len([line for line in stderr.splitlines() if line.strip()]),
         "error": result.get("error"),
         "notes": notes,
     }
@@ -316,6 +336,77 @@ def _gpu_location_string(gpu: dict[str, Any]) -> str | None:
     return ".".join(str(part) for part in parts)
 
 
+def _health_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        health = str(item.get("Health") or "UNKNOWN")
+        counts[health] = counts.get(health, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _sample_gpu_fields(gpus: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not gpus:
+        return None
+    gpu = gpus[0]
+    return {
+        "id": gpu.get("ID"),
+        "name": gpu.get("Name"),
+        "device_id": gpu.get("DeviceID"),
+        "device_uid": gpu.get("DeviceUID"),
+        "system_uid": gpu.get("SystemUID"),
+        "domain_uuid": gpu.get("DomainUUID"),
+        "partition_id": gpu.get("PartitionID"),
+        "partition_name": gpu.get("PartitionName"),
+        "health": gpu.get("Health"),
+        "internal_description": gpu.get("InternalDescription"),
+        "description": gpu.get("Description"),
+        "alid_count": _safe_len(gpu.get("ALIDList")),
+        "port_count": _safe_len(gpu.get("PortIDList")),
+        "location": _location_info(gpu),
+    }
+
+
+def _sample_compute_node_fields(compute_nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not compute_nodes:
+        return None
+    node = compute_nodes[0]
+    return {
+        "id": node.get("ID") or node.get("id"),
+        "name": node.get("Name"),
+        "system_uid": node.get("SystemUID"),
+        "device_uid": node.get("DeviceUID"),
+        "gpu_id_count": _safe_len(node.get("GpuIDList")),
+        "location": _location_info(node),
+    }
+
+
+def _sample_switch_fields(switches: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not switches:
+        return None
+    switch = switches[0]
+    return {
+        "id": switch.get("ID"),
+        "device_id": switch.get("DeviceID"),
+        "domain_uuid": switch.get("DomainUUID"),
+        "health": switch.get("Health"),
+        "port_count": _safe_len(switch.get("PortIDList")),
+        "location": _location_info(switch),
+    }
+
+
+def _sample_chassis_fields(chassis: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not chassis:
+        return None
+    item = chassis[0]
+    return {
+        "id": item.get("ID") or item.get("id"),
+        "name": item.get("Name"),
+        "domain_uuid": item.get("DomainUUID"),
+        "health": item.get("Health"),
+        "location": _location_info(item),
+    }
+
+
 def _candidate_team_allocations(node_gpu_map: list[dict[str, Any]], *, team_size: int = 4) -> dict[str, Any]:
     remaining = [dict(item) for item in node_gpu_map]
 
@@ -378,6 +469,7 @@ def _build_nmx_summary(
     gpus: list[dict[str, Any]],
     switches: list[dict[str, Any]],
     switch_nodes: list[dict[str, Any]],
+    chassis: list[dict[str, Any]],
     ports: list[dict[str, Any]],
     partitions: list[dict[str, Any]],
     metrics_text: str,
@@ -390,11 +482,31 @@ def _build_nmx_summary(
     domain_uuids = sorted(
         {
             str(item.get("DomainUUID"))
-            for item in [*services, *gpus, *switches, *switch_nodes, *partitions]
+            for item in [*services, *gpus, *switches, *switch_nodes, *chassis, *partitions]
             if item.get("DomainUUID")
         }
     )
+    chassis_rows = [
+        {
+            "id": item.get("ID") or item.get("id"),
+            "name": item.get("Name"),
+            "health": item.get("Health"),
+            "location": _location_info(item),
+        }
+        for item in chassis
+    ]
+    chassis_serial_numbers = sorted(
+        {
+            str(location.get("chassis_serial_number"))
+            for location in (_location_info(item) for item in [*compute_nodes, *gpus, *switches, *switch_nodes, *chassis])
+            if location.get("chassis_serial_number")
+        }
+    )
+    node_gpu_grouping_field = "GpuIDList" if any(node.get("GpuIDList") for node in compute_nodes) else "SystemUID"
 
+    gpu_by_id: dict[str, dict[str, Any]] = {
+        str(gpu.get("ID")): gpu for gpu in gpus if gpu.get("ID") not in (None, "")
+    }
     gpu_groups: dict[str, list[dict[str, Any]]] = {}
     for gpu in gpus:
         system_uid = _str_or_none(gpu.get("SystemUID")) or _str_or_none(gpu.get("ComputeNodeID")) or _str_or_none(gpu.get("SystemId"))
@@ -405,7 +517,11 @@ def _build_nmx_summary(
     node_gpu_map: list[dict[str, Any]] = []
     for node in compute_nodes:
         system_uid = _str_or_none(node.get("SystemUID")) or _str_or_none(node.get("DeviceUID")) or _str_or_none(node.get("ID"))
-        node_gpus = gpu_groups.get(system_uid or "", [])
+        node_gpu_ids = [str(item) for item in (node.get("GpuIDList") or []) if item not in (None, "")]
+        if node_gpu_ids:
+            node_gpus = [gpu_by_id[gpu_id] for gpu_id in node_gpu_ids if gpu_id in gpu_by_id]
+        else:
+            node_gpus = gpu_groups.get(system_uid or "", [])
         node_location = _location_info(node)
         node_name = _str_or_none(node.get("Name")) or _str_or_none(node.get("Description")) or system_uid or "unknown-node"
         node_gpu_map.append(
@@ -441,15 +557,22 @@ def _build_nmx_summary(
                 "switch_node_switch_id_list": switch_node.get("SwitchIDList") or [],
             }
         )
+    sample_switch_tray = next((tray for tray in switch_trays if int(tray.get("switch_asic_count") or 0) >= 2), switch_trays[0] if switch_trays else None)
 
     gpu_facing_ports = [port for port in ports if str(port.get("Type") or "").upper() == "GPU"]
     switch_facing_ports = [port for port in ports if str(port.get("Type") or "").upper() == "SWITCH_ACCESS"]
+    expected_total_ports = len(gpus) * len(switches) * 2 if gpus and switches else 0
     ports_summary = {
         "total_ports": len(ports),
         "gpu_facing_ports": len(gpu_facing_ports),
         "switch_facing_ports": len(switch_facing_ports),
         "gpu_ports_with_base_lid": sum(1 for port in gpu_facing_ports if port.get("BaseLID") not in (None, "")),
         "switch_ports_with_base_lid": sum(1 for port in switch_facing_ports if port.get("BaseLID") not in (None, "")),
+        "gpu_facing_ports_have_base_lid": bool(gpu_facing_ports) and all(port.get("BaseLID") not in (None, "") for port in gpu_facing_ports),
+        "switch_facing_ports_have_base_lid": bool(switch_facing_ports) and all(port.get("BaseLID") not in (None, "") for port in switch_facing_ports),
+        "expected_total_ports": expected_total_ports,
+        "expected_formula": f"2 * gpu_count({len(gpus)}) * switch_asic_count({len(switches)}) = {expected_total_ports}" if expected_total_ports else "n/a",
+        "matches_expected_formula": bool(expected_total_ports) and len(ports) == expected_total_ports,
     }
 
     partition_rows: list[dict[str, Any]] = []
@@ -473,6 +596,12 @@ def _build_nmx_summary(
         for gpu in gpus
         if gpu.get("PartitionID") in (None, "", 0) or str(gpu.get("PartitionName") or "").lower() == "unassigned"
     )
+    unassigned_gpu_locations = [
+        location
+        for gpu in gpus
+        if gpu.get("PartitionID") in (None, "", 0) or str(gpu.get("PartitionName") or "").lower() == "unassigned"
+        if (location := _gpu_location_string(gpu))
+    ]
 
     metric_patterns = {
         "switch_temperature_series": r"^switch_temperature\b",
@@ -503,27 +632,49 @@ def _build_nmx_summary(
             "domain_uuids": domain_uuids,
         },
         "topology": {
+            "chassis_count": len(chassis_rows) or len({item.get("location", {}).get("chassis_id") for item in node_gpu_map if item.get("location", {}).get("chassis_id") is not None}),
+            "chassis_serial_numbers": chassis_serial_numbers,
             "compute_node_count": len(compute_nodes),
             "gpu_count": len(gpus),
             "switch_asic_count": len(switches),
             "switch_tray_count": len(switch_trays) if switch_trays else len(switch_nodes),
             "port_count": len(ports),
+            "gpu_health_counts": _health_counts(gpus),
+            "switch_health_counts": _health_counts(switches),
             "compute_nodes": node_gpu_map,
+            "chassis": chassis_rows,
             "switch_trays": switch_trays,
             "ports": ports_summary,
+            "sample_compute_node": _sample_compute_node_fields(compute_nodes),
+            "sample_gpu": _sample_gpu_fields(gpus),
+            "sample_switch": _sample_switch_fields(switches),
+            "sample_chassis": _sample_chassis_fields(chassis),
             "scenario_answers": {
                 "can_support_two_concurrent_4gpu_workloads": allocations["can_support_two_teams"],
                 "team_alpha_candidate": allocations["team_alpha"],
                 "team_beta_candidate": allocations["team_beta"],
+                "node_gpu_grouping_field": node_gpu_grouping_field,
+                "switch_asic_distinguishing_field": "DeviceID",
+                "switch_tray_grouping_fields": [
+                    "LocationInfo.ChassisID",
+                    "LocationInfo.SlotID",
+                    "LocationInfo.HostID",
+                    "LocationInfo.TrayIndex",
+                ],
+                "sample_switch_tray": sample_switch_tray,
+                "port_formula_matches_inventory": ports_summary["matches_expected_formula"],
             },
         },
         "partitions": {
             "partition_count": len(partitions),
             "default_partition": default_partition,
             "unassigned_gpu_count": unassigned_gpu_count,
+            "unassigned_gpu_locations": unassigned_gpu_locations,
             "partitions": partition_rows,
             "scenario_answers": {
                 "ready_for_new_partition_create": unassigned_gpu_count > 0,
+                "default_partition_present": default_partition is not None,
+                "default_partition_member_count": int((default_partition or {}).get("member_count") or 0),
                 "inspect_command": f"curl -k {api_base}/partitions | jq",
                 "create_command": (
                     "curl -k -X POST <nmx_api_base>/partitions "
@@ -697,7 +848,7 @@ def _collect_ib_control_plane(
         return [], "not_present", []
     host = management.ib_mgmt_host
     if not host:
-        return [], "not_configured", ["Set AISP_FABRIC_IB_MGMT_HOST to unlock InfiniBand fabric CLI verification."]
+        return [], "not_configured", ["Pass --ib-mgmt-host to unlock InfiniBand fabric CLI verification."]
 
     user = management.ib_mgmt_user or ssh_user
     key = management.ib_mgmt_ssh_key or ssh_key
@@ -739,25 +890,22 @@ def _collect_ib_control_plane(
     return results, status, recommendations
 
 
-def _collect_nvlink_management(
-    management: ManagementConfig,
-) -> tuple[list[dict[str, Any]], str, list[str], dict[str, Any] | None]:
-    if not management.nmx_url:
-        return [], "not_configured", ["Set AISP_FABRIC_NMX_URL to enable NVLink NetQ/NMX verification."], None
-    api_base = _nmx_api_base(management.nmx_url)
+def fetch_nmx_snapshot(nmx_url: str, nmx_token: str | None = None) -> dict[str, Any]:
+    api_base = _nmx_api_base(nmx_url)
     endpoints = [
         ("services", f"{api_base}/services"),
         ("compute_nodes", f"{api_base}/compute-nodes"),
         ("gpus", f"{api_base}/gpus"),
         ("switches", f"{api_base}/switches"),
         ("switch_nodes", f"{api_base}/switch-nodes"),
+        ("chassis", f"{api_base}/chassis"),
         ("ports", f"{api_base}/ports"),
         ("partitions", f"{api_base}/partitions"),
     ]
     records: list[dict[str, Any]] = []
     payloads: dict[str, list[dict[str, Any]]] = {}
     for name, url in endpoints:
-        result = _http_json(url, management.nmx_token)
+        result = _http_json(url, nmx_token)
         payload = _json_list(result.get("json"))
         payloads[name] = payload
         records.append(
@@ -770,7 +918,7 @@ def _collect_nvlink_management(
                 "error": result.get("error", ""),
             }
         )
-    metrics_result = _http_text(f"{api_base}/metrics", management.nmx_token)
+    metrics_result = _http_text(f"{api_base}/metrics", nmx_token)
     metrics_text = str(metrics_result.get("text") or "")
     records.append(
         {
@@ -790,6 +938,7 @@ def _collect_nvlink_management(
         gpus=payloads.get("gpus") or [],
         switches=payloads.get("switches") or [],
         switch_nodes=payloads.get("switch_nodes") or [],
+        chassis=payloads.get("chassis") or [],
         ports=payloads.get("ports") or [],
         partitions=payloads.get("partitions") or [],
         metrics_text=metrics_text,
@@ -803,7 +952,168 @@ def _collect_nvlink_management(
         recommendations.append("NMX partition inventory is unavailable; tenant carve-up workflows remain unverified until /partitions responds.")
     if metrics_result.get("status") != "ok":
         recommendations.append("NMX telemetry metrics are unavailable; switch temperature, throughput, BER, and cable diagnostics remain unverified.")
-    return records, status, sorted(dict.fromkeys(recommendations)), summary
+    return {
+        "api_base": api_base,
+        "records": records,
+        "payloads": payloads,
+        "metrics_text": metrics_text,
+        "status": status,
+        "summary": summary,
+        "recommendations": sorted(dict.fromkeys(recommendations)),
+    }
+
+
+def _collect_nvlink_management(
+    management: ManagementConfig,
+) -> tuple[list[dict[str, Any]], str, list[str], dict[str, Any] | None]:
+    if not management.nmx_url:
+        return [], "not_configured", ["Pass --nmx-url to the fabric CLI entrypoint to enable NVLink NetQ/NMX verification."], None
+    snapshot = fetch_nmx_snapshot(management.nmx_url, management.nmx_token)
+    return snapshot["records"], snapshot["status"], snapshot["recommendations"], snapshot["summary"]
+
+
+def _partition_post_command(*, api_base: str, name: str, domain_uuid: str, locations: list[str]) -> str:
+    members = json.dumps({"locations": locations}, separators=(",", ":"))
+    return (
+        f"curl -k -X POST {api_base}/partitions "
+        f'-H "Content-Type: application/json" '
+        f"-d '{json.dumps({'Name': name, 'DomainUUID': domain_uuid, 'Members': json.loads(members)}, separators=(',', ':'))}' | jq"
+    )
+
+
+def _partition_put_command(*, api_base: str, partition_id: str, domain_uuid: str, locations: list[str]) -> str:
+    return (
+        f"curl -k -X PUT {api_base}/partitions/{partition_id} "
+        f'-H "Content-Type: application/json" '
+        f"-d '{json.dumps({'DomainUUID': domain_uuid, 'Members': {'locations': locations}}, separators=(',', ':'))}' | jq"
+    )
+
+
+def _partition_delete_command(*, api_base: str, partition_id: str) -> str:
+    return f"curl -k -X DELETE {api_base}/partitions/{partition_id} | jq"
+
+
+def build_nmx_partition_lab_payload(
+    *,
+    nmx_url: str,
+    nmx_token: str | None = None,
+    alpha_name: str = "AlphaPartition",
+    beta_name: str = "BetaPartition",
+    alpha_size: int = 4,
+    beta_size: int = 4,
+) -> dict[str, Any]:
+    snapshot = fetch_nmx_snapshot(nmx_url, nmx_token)
+    summary = snapshot["summary"]
+    topology = summary.get("topology") or {}
+    partitions = summary.get("partitions") or {}
+    api_base = str(snapshot["api_base"])
+    domain_uuid = ""
+    service_info = summary.get("services") or {}
+    domain_uuids = service_info.get("domain_uuids") or []
+    if domain_uuids:
+        domain_uuid = str(domain_uuids[0])
+
+    unassigned = list(partitions.get("unassigned_gpu_locations") or [])
+    alpha_locations = unassigned[:alpha_size]
+    beta_locations = unassigned[alpha_size : alpha_size + beta_size]
+    ready_for_create = len(alpha_locations) == alpha_size and len(beta_locations) == beta_size and bool(domain_uuid)
+
+    existing_partitions = partitions.get("partitions") or []
+    beta_source = next((item for item in existing_partitions if str(item.get("name") or "").lower() == beta_name.lower()), None)
+    alpha_source = next((item for item in existing_partitions if str(item.get("name") or "").lower() == alpha_name.lower()), None)
+    borrow_count = min(2, len(beta_locations))
+    borrowed_locations = beta_locations[:borrow_count]
+    beta_after_borrow = beta_locations[borrow_count:]
+    alpha_after_borrow = alpha_locations + borrowed_locations
+
+    recommendations = list(snapshot.get("recommendations") or [])
+    if not ready_for_create:
+        recommendations.append(
+            "Not enough unassigned GPUs were visible to create both lab partitions directly; free GPUs from the default/source partition first."
+        )
+    if not domain_uuid:
+        recommendations.append("No DomainUUID was discovered from NMX services/inventory; fill it explicitly before issuing lab partition commands.")
+
+    commands = {
+        "inspect_partitions": f"curl -k {api_base}/partitions | jq",
+        "poll_operation": f"curl -k {api_base}/operations/<operation-id> | jq",
+        "verify_partitions": f"curl -k {api_base}/partitions | jq",
+        "verify_gpus": f"curl -k {api_base}/gpus | jq",
+    }
+    if ready_for_create:
+        commands["create_alpha"] = _partition_post_command(
+            api_base=api_base,
+            name=alpha_name,
+            domain_uuid=domain_uuid,
+            locations=alpha_locations,
+        )
+        commands["create_beta"] = _partition_post_command(
+            api_base=api_base,
+            name=beta_name,
+            domain_uuid=domain_uuid,
+            locations=beta_locations,
+        )
+        commands["update_beta_after_borrow"] = _partition_put_command(
+            api_base=api_base,
+            partition_id=str((beta_source or {}).get("id") or "<beta-partition-id>"),
+            domain_uuid=domain_uuid,
+            locations=beta_after_borrow,
+        )
+        commands["update_alpha_after_borrow"] = _partition_put_command(
+            api_base=api_base,
+            partition_id=str((alpha_source or {}).get("id") or "<alpha-partition-id>"),
+            domain_uuid=domain_uuid,
+            locations=alpha_after_borrow,
+        )
+        commands["delete_beta"] = _partition_delete_command(
+            api_base=api_base,
+            partition_id=str((beta_source or {}).get("id") or "<beta-partition-id>"),
+        )
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "fabric_family": "nvlink",
+        "collection_mode": "nmx_partition_lab",
+        "status": "ok" if snapshot["status"] in {"ok", "partial"} else "error",
+        "completeness": "lab_plan_ready" if ready_for_create else "inventory_only",
+        "evidence_refs": [record["url"] for record in snapshot["records"]],
+        "recommendations": sorted(dict.fromkeys(recommendations)),
+        "lab_only": True,
+        "api_base": api_base,
+        "domain_uuid": domain_uuid,
+        "topology": {
+            "chassis_count": topology.get("chassis_count", 0),
+            "compute_node_count": topology.get("compute_node_count", 0),
+            "gpu_count": topology.get("gpu_count", 0),
+            "switch_asic_count": topology.get("switch_asic_count", 0),
+            "switch_tray_count": topology.get("switch_tray_count", 0),
+            "port_count": topology.get("port_count", 0),
+            "ports": topology.get("ports") or {},
+            "sample_compute_node": topology.get("sample_compute_node"),
+            "team_alpha_candidate": (topology.get("scenario_answers") or {}).get("team_alpha_candidate") or {},
+            "team_beta_candidate": (topology.get("scenario_answers") or {}).get("team_beta_candidate") or {},
+            "node_gpu_grouping_field": (topology.get("scenario_answers") or {}).get("node_gpu_grouping_field"),
+            "switch_asic_distinguishing_field": (topology.get("scenario_answers") or {}).get("switch_asic_distinguishing_field"),
+            "switch_tray_grouping_fields": (topology.get("scenario_answers") or {}).get("switch_tray_grouping_fields") or [],
+            "sample_switch_tray": (topology.get("scenario_answers") or {}).get("sample_switch_tray") or {},
+            "sample_gpu": topology.get("sample_gpu"),
+            "sample_switch": topology.get("sample_switch"),
+            "sample_chassis": topology.get("sample_chassis"),
+        },
+        "partitions": {
+            "existing": existing_partitions,
+            "default_partition": partitions.get("default_partition"),
+            "unassigned_gpu_count": partitions.get("unassigned_gpu_count", 0),
+            "unassigned_gpu_locations": unassigned,
+            "alpha_seed_locations": alpha_locations,
+            "beta_seed_locations": beta_locations,
+            "borrowed_locations": borrowed_locations,
+            "alpha_after_borrow_locations": alpha_after_borrow,
+            "beta_after_borrow_locations": beta_after_borrow,
+            "ready_for_create": ready_for_create,
+        },
+        "commands": commands,
+    }
 
 
 def _collect_spectrum_control_plane(
@@ -815,7 +1125,7 @@ def _collect_spectrum_control_plane(
     if not present:
         return [], "not_present", []
     if not management.cumulus_hosts:
-        return [], "not_configured", ["Set AISP_FABRIC_CUMULUS_HOSTS to enable Spectrum-X / Cumulus verification."]
+        return [], "not_configured", ["Pass --cumulus-hosts to enable Spectrum-X / Cumulus verification."]
 
     commands = [
         ("adaptive_routing", "nv show router adaptive-routing"),
@@ -867,13 +1177,146 @@ def _runtime_family_status(
     connectivity_payload = _load_json_optional(connectivity) or {}
     world_size = int(connectivity_payload.get("world_size") or 0)
     refs.extend([_relative_to_run_dir(run_dir, p) for p in (multi_nccl, connectivity, alltoall) if p.exists()])
+    evidence["single_nccl_peak_algbw_gbps"] = _max_nccl_metric(single_nccl, "algbw_gbps")
     evidence["multi_nccl_peak_busbw_gbps"] = _max_nccl_metric(multi_nccl, "busbw_gbps")
     evidence["multi_nccl_peak_algbw_gbps"] = _max_nccl_metric(multi_nccl, "algbw_gbps")
     evidence["world_size"] = world_size
     evidence["alltoall_peak_busbw_gbps"] = _max_nccl_metric(alltoall, "busbw_gbps")
+    evidence["alltoall_peak_algbw_gbps"] = _max_nccl_metric(alltoall, "algbw_gbps")
     if evidence["multi_nccl_peak_algbw_gbps"] > 0 or world_size > 1:
         return "runtime_verified", evidence, refs
     return "present_unverified", evidence, refs
+
+
+def _records_named(records: list[dict[str, Any]], name: str) -> list[dict[str, Any]]:
+    return [record for record in records if str(record.get("name") or "") == name]
+
+
+def _any_record_ok(records: list[dict[str, Any]], name: str) -> bool:
+    return any(str(record.get("status") or "") == "ok" for record in _records_named(records, name))
+
+
+def _stdout_line_count(records: list[dict[str, Any]], name: str) -> int:
+    total = 0
+    for record in _records_named(records, name):
+        try:
+            total += int(record.get("stdout_line_count") or 0)
+        except Exception:
+            continue
+    return total
+
+
+def _runtime_ratio(runtime_evidence: dict[str, Any]) -> float:
+    try:
+        single = float(runtime_evidence.get("single_nccl_peak_algbw_gbps") or 0.0)
+        multi = float(runtime_evidence.get("multi_nccl_peak_algbw_gbps") or 0.0)
+    except Exception:
+        return 0.0
+    if single <= 0:
+        return 0.0
+    return multi / single
+
+
+def _ib_runtime_interpretation(runtime_status: str, runtime_evidence: dict[str, Any]) -> str:
+    ratio = _runtime_ratio(runtime_evidence)
+    if runtime_status != "runtime_verified":
+        return "Collect multi-node NCCL, all-to-all, and torchrun connectivity artifacts before drawing IB routing conclusions."
+    if ratio and ratio < 0.70:
+        return "Multi-node NCCL scales below 0.70x of single-node; inspect routing, congestion, subnet state, and HCA/interface binding."
+    return "Runtime artifacts show the IB path is alive; compare any residual NCCL or all-to-all anomalies against ibdiagnet, saquery, and path traces."
+
+
+def _spectrum_runtime_interpretation(runtime_status: str, runtime_evidence: dict[str, Any]) -> str:
+    ratio = _runtime_ratio(runtime_evidence)
+    if runtime_status != "runtime_verified":
+        return "Collect multi-node NCCL, all-to-all, and torchrun connectivity artifacts before drawing Spectrum-X / RoCE conclusions."
+    if ratio and ratio < 0.70:
+        return "Multi-node NCCL scales below 0.70x of single-node; inspect RoCE QoS, adaptive routing, BGP route visibility, and host RDMA binding."
+    return "Runtime artifacts show the Ethernet/RDMA path is alive; correlate any throughput or tail-latency knees with NVUE and BGP evidence."
+
+
+def _build_ib_scenario_summary(
+    *,
+    capability: dict[str, Any],
+    control: dict[str, Any],
+    runtime_status: str,
+    runtime_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    checks = list(control.get("checks") or [])
+    routing_checks_ok = [
+        name
+        for name in ("ibaddr", "ibtracert", "ibroute", "perfquery", "ibdiagnet")
+        if _any_record_ok(checks, name)
+    ]
+    return {
+        "capacity_and_path_visibility_ready": any(
+            _any_record_ok(checks, name)
+            for name in ("ibstat", "ibswitches", "ibhosts", "iblinkinfo", "ibnetdiscover", "saquery")
+        ),
+        "routing_and_counter_verification_ready": bool(routing_checks_ok),
+        "runtime_correlation_ready": runtime_status == "runtime_verified",
+        "visible_hca_count": len(capability.get("hcas") or []),
+        "visible_host_count": _stdout_line_count(checks, "ibhosts"),
+        "visible_switch_count": _stdout_line_count(checks, "ibswitches"),
+        "linkinfo_visible": _any_record_ok(checks, "iblinkinfo"),
+        "subnet_discovery_visible": _any_record_ok(checks, "ibnetdiscover"),
+        "saquery_visible": _any_record_ok(checks, "saquery"),
+        "ibdiagnet_visible": _any_record_ok(checks, "ibdiagnet"),
+        "routing_checks_ok": routing_checks_ok,
+        "single_node_nccl_peak_algbw_gbps": float(runtime_evidence.get("single_nccl_peak_algbw_gbps") or 0.0),
+        "multi_node_nccl_peak_algbw_gbps": float(runtime_evidence.get("multi_nccl_peak_algbw_gbps") or 0.0),
+        "alltoall_peak_algbw_gbps": float(runtime_evidence.get("alltoall_peak_algbw_gbps") or 0.0),
+        "multi_to_single_nccl_ratio": _runtime_ratio(runtime_evidence),
+        "world_size": int(runtime_evidence.get("world_size") or 0),
+        "runtime_interpretation": _ib_runtime_interpretation(runtime_status, runtime_evidence),
+    }
+
+
+def _build_spectrum_scenario_summary(
+    *,
+    control: dict[str, Any],
+    runtime_status: str,
+    runtime_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    checks = list(control.get("checks") or [])
+    def _record_host(record: dict[str, Any]) -> str:
+        host = str(record.get("host") or "").strip()
+        if host:
+            return host
+        notes = str(record.get("notes") or "")
+        if "switch=" in notes:
+            return notes.split("switch=", 1)[1].split()[0].strip()
+        return ""
+
+    targeted_hosts = sorted(
+        {
+            _record_host(record)
+            for record in checks
+            if _record_host(record)
+        }
+    )
+    adaptive_ok = _any_record_ok(checks, "adaptive_routing")
+    roce_ok = _any_record_ok(checks, "roce")
+    bgp_neighbors_ok = _any_record_ok(checks, "bgp_neighbors")
+    bgp_summary_ok = _any_record_ok(checks, "bgp_summary")
+    bgp_routes_ok = _any_record_ok(checks, "bgp_routes")
+    return {
+        "fabric_readiness_ready": adaptive_ok and roce_ok and (bgp_neighbors_ok or bgp_summary_ok),
+        "runtime_correlation_ready": runtime_status == "runtime_verified",
+        "switch_count_targeted": len(targeted_hosts),
+        "switches_targeted": targeted_hosts,
+        "adaptive_routing_visible": adaptive_ok,
+        "roce_qos_visible": roce_ok,
+        "bgp_neighbor_state_visible": bgp_neighbors_ok,
+        "bgp_summary_visible": bgp_summary_ok,
+        "bgp_route_visibility": bgp_routes_ok,
+        "single_node_nccl_peak_algbw_gbps": float(runtime_evidence.get("single_nccl_peak_algbw_gbps") or 0.0),
+        "multi_node_nccl_peak_algbw_gbps": float(runtime_evidence.get("multi_nccl_peak_algbw_gbps") or 0.0),
+        "alltoall_peak_algbw_gbps": float(runtime_evidence.get("alltoall_peak_algbw_gbps") or 0.0),
+        "multi_to_single_nccl_ratio": _runtime_ratio(runtime_evidence),
+        "world_size": int(runtime_evidence.get("world_size") or 0),
+        "runtime_interpretation": _spectrum_runtime_interpretation(runtime_status, runtime_evidence),
+    }
 
 
 def _build_ai_correlation(
@@ -884,7 +1327,7 @@ def _build_ai_correlation(
     capabilities: dict[str, Any],
 ) -> dict[str, Any]:
     structured = run_dir / "structured"
-    label = primary_label or next(iter(_clean_csv(primary_label or "")), "") or ""
+    label = (primary_label or "").strip()
     if not label:
         meta_records = _meta_records(structured, run_id)
         label = str(meta_records[0]["label"]) if meta_records else "localhost"
@@ -1059,7 +1502,7 @@ def build_fabric_payloads(
 ) -> dict[str, dict[str, Any]]:
     run_dir = run_dir.resolve()
     structured_dir = run_dir / "structured"
-    mgmt = management or management_config_from_env(ssh_user=ssh_user, ssh_key=ssh_key)
+    mgmt = management or make_management_config(ssh_user=ssh_user, ssh_key=ssh_key)
     command_runner = runner or default_command_runner
 
     catalog = generate_catalog_payload(source_root or DEFAULT_SOURCE_ROOT, run_id=run_id)
@@ -1117,7 +1560,7 @@ def build_fabric_payloads(
             completeness = "runtime_verified"
         else:
             completeness = capability.get("completeness", "not_present")
-        verification_families[family] = {
+        family_payload = {
             "present": bool(capability.get("present")),
             "completeness": completeness,
             "evidence_refs": sorted(set((capability.get("evidence_refs") or []) + runtime_refs)),
@@ -1127,6 +1570,20 @@ def build_fabric_payloads(
                 "evidence": runtime_evidence,
             },
         }
+        if family == "infiniband":
+            family_payload["scenario_summary"] = _build_ib_scenario_summary(
+                capability=capability,
+                control=control,
+                runtime_status=runtime_status,
+                runtime_evidence=runtime_evidence,
+            )
+        elif family == "spectrum-x":
+            family_payload["scenario_summary"] = _build_spectrum_scenario_summary(
+                control=control,
+                runtime_status=runtime_status,
+                runtime_evidence=runtime_evidence,
+            )
+        verification_families[family] = family_payload
 
     verification = {
         "schema_version": SCHEMA_VERSION,

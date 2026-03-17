@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from functools import partial
 import os
 import time
 from typing import Dict, Optional
@@ -11,14 +12,10 @@ from typing import Dict, Optional
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
-
-def resolve_device() -> torch.device:
-    """Resolve CUDA device for measurement."""
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for KV locality microbench")
-    return torch.device("cuda")
+resolve_device = partial(require_cuda_device, "CUDA device required for KV locality microbench")
 
 
 class _NumaHelper:
@@ -112,7 +109,8 @@ class KvLocalityMicrobench(VerificationPayloadMixin, BaseBenchmark):
             self.helper.move_to_node(self.pinned_remote, remote_node)
 
     def _bench_copy(self, src: torch.Tensor) -> float:
-        assert self.dst is not None
+        if self.dst is None:
+            raise RuntimeError("Destination tensor not initialized; call setup() before benchmarking copies")
         stream = torch.cuda.Stream()
         torch.cuda.synchronize()
         t0 = time.perf_counter()

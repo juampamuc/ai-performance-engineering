@@ -14,7 +14,7 @@ class _DummyExpectationsStore:
 def test_test_chapter_impl_uses_cuda_wrapper_detector_without_nameerror(tmp_path, monkeypatch):
     chapter_dir = tmp_path / "ch03"
     chapter_dir.mkdir()
-    baseline_path = chapter_dir / "baseline_numa_unaware.py"
+    baseline_path = chapter_dir / "baseline_pageable_copy.py"
     baseline_path.write_text(
         "from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark\n"
         "class DemoCudaWrapper(CudaBinaryBenchmark):\n"
@@ -35,7 +35,7 @@ def test_test_chapter_impl_uses_cuda_wrapper_detector_without_nameerror(tmp_path
     monkeypatch.setattr(run_benchmarks, "detect_execution_environment", lambda: {"kind": "test"})
     monkeypatch.setattr(run_benchmarks, "get_git_info", lambda: {"commit": "deadbeef"})
     monkeypatch.setattr(run_benchmarks, "clean_build_directories", lambda _chapter_dir: None)
-    monkeypatch.setattr(run_benchmarks, "reset_cuda_state", lambda: None)
+    monkeypatch.setattr(run_benchmarks, "reset_cuda_state", lambda **_kwargs: None)
     monkeypatch.setattr(run_benchmarks, "reset_gpu_state", lambda: None)
     monkeypatch.setattr(run_benchmarks, "emit_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_benchmarks, "start_progress_watchdog", lambda *args, **kwargs: (None, None))
@@ -45,15 +45,17 @@ def test_test_chapter_impl_uses_cuda_wrapper_detector_without_nameerror(tmp_path
     monkeypatch.setattr(
         run_benchmarks,
         "_discover_chapter_benchmark_pairs",
-        lambda *args, **kwargs: ([(baseline_path, [], "numa_unaware")], [], None, 0, 0),
+        lambda *args, **kwargs: ([(baseline_path, [], "pageable_copy")], [], None, 0, 0),
     )
 
     result = run_benchmarks._test_chapter_impl(chapter_dir, enable_profiling=False)
 
     assert detector_calls == [baseline_path]
     assert result["status"] == "completed"
-    assert result["summary"]["informational"] == 1
-    assert result["benchmarks"] == []
+    assert result["summary"]["informational"] == 0
+    assert len(result["benchmarks"]) == 1
+    assert result["benchmarks"][0]["example"] == "pageable_copy"
+    assert result["benchmarks"][0]["baseline_file"] == "baseline_pageable_copy.py"
 
 
 def test_benchmark_cuda_executable_treats_skip_exit_code_as_skip(tmp_path):

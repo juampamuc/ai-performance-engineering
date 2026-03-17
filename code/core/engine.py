@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -100,6 +101,7 @@ _handler_instance = None
 _analyzer_instance = None
 _handler_lock = threading.Lock()
 _analyzer_lock = threading.Lock()
+_EXPECTED_SAFE_CALL_EXCEPTIONS = (AttributeError, FileNotFoundError, PermissionError, ValueError)
 
 
 def _get_handler():
@@ -129,14 +131,32 @@ def _get_analyzer():
     return _analyzer_instance
 
 
+def _exception_type_name(exc: BaseException) -> str:
+    name = type(exc).__name__
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
+def _error_result(exc: BaseException, **extra: Any) -> Dict[str, Any]:
+    return {
+        "success": False,
+        "error": str(exc),
+        "error_type": _exception_type_name(exc),
+        **extra,
+    }
+
+
 def _safe_call(func: Callable, *args, **kwargs) -> Dict[str, Any]:
-    """Safely call a function, returning error dict on failure."""
+    """Call a function and adapt only expected user-facing failures.
+
+    Unexpected exceptions are re-raised so tests and audits can see them.
+    """
     try:
         return func(*args, **kwargs)
-    except AttributeError as e:
-        return {"error": f"Method not available: {e}", "success": False}
-    except Exception as e:
-        return {"error": str(e), "success": False}
+    except _EXPECTED_SAFE_CALL_EXCEPTIONS as exc:
+        if isinstance(exc, AttributeError):
+            exc = AttributeError(f"Method not available: {exc}")
+        return _error_result(exc)
 
 
 # =============================================================================
@@ -236,8 +256,8 @@ class GPUDomain:
         try:
             proc = subprocess.run(["nvidia-smi", "topo", "-m"], capture_output=True, text=True, timeout=5)
             return {"stdout": proc.stdout, "stderr": proc.stderr, "returncode": proc.returncode}
-        except Exception as e:
-            return {"error": str(e), "success": False}
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            return _error_result(exc)
 
 
 # =============================================================================
@@ -442,16 +462,10 @@ class AnalyzeDomain:
         llm_result = {}
         
         if mode in ["profile", "both"]:
-            try:
-                profile_result = _safe_call(_get_handler().detect_bottlenecks)
-            except Exception as e:
-                profile_result = {"error": str(e)}
+            profile_result = _safe_call(_get_handler().detect_bottlenecks)
         
         if mode in ["llm", "both"]:
-            try:
-                llm_result = _safe_call(_get_handler().run_ai_analysis, "bottleneck")
-            except Exception as e:
-                llm_result = {"error": str(e)}
+            llm_result = _safe_call(_get_handler().run_ai_analysis, "bottleneck")
         
         return {
             "profile": profile_result if mode != "llm" else None,
@@ -677,7 +691,7 @@ class DistributedDomain:
                 num_gpus=gpus,
                 num_nodes=nodes
             )
-        except Exception:
+        except (ImportError, AttributeError):
             return _safe_call(_get_handler().get_parallelism_recommendations)
     
     def nccl(self, nodes: int = 1, gpus: int = 8, diagnose: bool = False) -> Dict[str, Any]:
@@ -964,7 +978,7 @@ class AIDomain:
                 from core.book import get_book_citations
                 citations = get_book_citations(question, max_citations=3)
                 result["citations"] = citations
-            except Exception:
+            except ImportError:
                 result["citations"] = []
         
         # Get LLM response
@@ -973,6 +987,7 @@ class AIDomain:
             
             if not is_available():
                 result["error"] = "LLM not configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
+                result["error_type"] = "llm_unavailable"
                 return result
             
             # Build context
@@ -985,8 +1000,8 @@ class AIDomain:
             result["answer"] = response
             result["success"] = True
             
-        except Exception as e:
-            result["error"] = str(e)
+        except _EXPECTED_SAFE_CALL_EXCEPTIONS as exc:
+            result.update(_error_result(exc))
         
         return result
     
@@ -1059,8 +1074,8 @@ class AIDomain:
                 "citations": citation_payload,
                 "related_concepts": related_concepts,
             }
-        except Exception as exc:
-            return {"success": False, "concept": concept, "error": str(exc)}
+        except _EXPECTED_SAFE_CALL_EXCEPTIONS as exc:
+            return _error_result(exc, concept=concept)
     
     def analyze_kernel(self, code: str) -> Dict[str, Any]:
         """
@@ -1124,8 +1139,8 @@ class AIDomain:
             from core.optimization.parallelism_planner.troubleshooting import diagnose_error
 
             return diagnose_error(error_message=issue, symptoms=symptoms, config=config)
-        except Exception as exc:
-            return {"success": False, "error": str(exc), "issue": issue}
+        except _EXPECTED_SAFE_CALL_EXCEPTIONS as exc:
+            return _error_result(exc, issue=issue)
     
     def status(self) -> Dict[str, Any]:
         """Check AI/LLM backend availability."""
@@ -1143,15 +1158,15 @@ class AIDomain:
                 result["warning"] = status.get("warning", "LLM backend not configured")
                 result["setup_required"] = status.get("setup_required", False)
             return result
-        except Exception as e:
+        except _EXPECTED_SAFE_CALL_EXCEPTIONS as exc:
             return {
                 "llm_available": False,
                 "provider": None,
                 "model": None,
                 "book_available": True,
-                "error": str(e),
-                "warning": f"Error checking LLM status: {e}",
+                "warning": f"Error checking LLM status: {exc}",
                 "setup_required": True,
+                **_error_result(exc),
             }
 
 

@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import torch
+
+from ch03.baseline_gemm import BaselineGemmBenchmark
+from ch03.optimized_gemm import OptimizedGemmBenchmark
+import ch08.tiling_benchmark_base_tcgen05 as tiling_tcgen05_base
+from ch07.baseline_lookup import BaselineLookupBenchmark
+from ch07.optimized_lookup import OptimizedLookupBenchmark
+from ch08.baseline_nvfp4_mlp import BaselineChapter8NVFP4MLPBenchmark
+from ch08.baseline_thresholdtma import BaselineThresholdTMABenchmark
+from ch08.baseline_tiling import BaselineTilingBenchmark
+from ch08.baseline_tiling_tcgen05 import BaselineTilingBenchmarkTCGen05
+from ch08.baseline_tcgen05_custom_vs_cublas import BaselineTcgen05CustomVsCublasBenchmark
+from ch08.optimized_nvfp4_mlp import OptimizedChapter8NVFP4MLPBenchmark
+from ch08.optimized_thresholdtma import OptimizedThresholdTMABenchmark
+from ch08.optimized_tiling import OptimizedTilingBenchmark
+from ch08.optimized_tiling_tcgen05 import OptimizedTilingBenchmarkTCGen05
+from ch08.optimized_tcgen05_custom_vs_cublas import OptimizedTcgen05CustomVsCublasBenchmark
+from ch17.baseline_inference_full import BaselineInferenceFullBenchmark
+from ch17.optimized_inference_full import OptimizedInferenceFullBenchmark
+from core.analysis.performance_analyzer import load_benchmark_data
+from core.analysis.reporting.generator import generate_report
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, BenchmarkHarness, BenchmarkMode
+
+
+class _StoryMetadataSmokeBenchmark(BaseBenchmark):
+    allow_cpu = True
+    story_metadata = {
+        "pair_role": "control",
+        "chapter_alignment": "supplementary",
+        "chapter_native_exemplar": False,
+        "control_reason": "unit-test smoke benchmark",
+    }
+
+    def setup(self) -> None:
+        self.tensor = torch.ones(16, device=self.device)
+
+    def benchmark_fn(self) -> None:
+        self.tensor = self.tensor + 1
+
+    def teardown(self) -> None:
+        self.tensor = None
+        super().teardown()
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=1, warmup=5, validity_profile="portable")
+
+
+def test_ch03_gemm_reports_control_story_explicitly() -> None:
+    baseline = BaselineGemmBenchmark()
+    optimized = OptimizedGemmBenchmark()
+
+    baseline_metrics = baseline.get_custom_metrics()
+    optimized_metrics = optimized.get_custom_metrics()
+    baseline_story = baseline.get_story_metadata()
+    optimized_story = optimized.get_story_metadata()
+
+    assert baseline_metrics is not None
+    assert optimized_metrics is not None
+    assert baseline_story is not None
+    assert optimized_story is not None
+    assert baseline_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.chapter_native_exemplar"] == 0.0
+    assert baseline_metrics["launch.gemm_calls_per_iteration"] == 8.0
+    assert baseline_metrics["launch.block_k"] == 256.0
+    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["chapter_alignment"] == "supplementary"
+    assert baseline_story["chapter_native_exemplar"] is False
+    assert baseline_story["execution_pattern"] == "fragmented_gemm_launches"
+    assert baseline_story["chapter_native_targets"] == ["pageable_copy", "rack_prep", "docker", "kubernetes"]
+    assert optimized_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
+    assert optimized_metrics["launch.gemm_calls_per_iteration"] == 1.0
+    assert optimized_metrics["launch.block_k"] == 2048.0
+    assert optimized_story["pair_role"] == "control"
+    assert optimized_story["chapter_alignment"] == "supplementary"
+    assert optimized_story["chapter_native_exemplar"] is False
+    assert optimized_story["execution_pattern"] == "single_compiled_gemm_launch"
+    assert optimized_story["optimization_mechanism"] == 'use torch.compile(mode="reduce-overhead") to amortize launch fragmentation while keeping math fixed'
+
+
+def test_ch07_lookup_reports_layout_transform_explicitly() -> None:
+    baseline = BaselineLookupBenchmark()
+    optimized = OptimizedLookupBenchmark()
+
+    assert baseline.friendly_name == "Baseline Lookup (Scattered Reads)"
+    assert optimized.friendly_name == "Optimized Lookup (Pretransposed Paths)"
+    assert baseline.get_custom_metrics() == {
+        "reads_per_output": 64.0,
+        "layout_pretransposed": 0.0,
+        "pointer_chase_in_kernel": 1.0,
+    }
+    assert optimized.get_custom_metrics() == {
+        "reads_per_output": 64.0,
+        "layout_pretransposed": 1.0,
+        "pointer_chase_in_kernel": 0.0,
+    }
+
+
+def test_ch17_inference_control_reports_active_layer_delta() -> None:
+    baseline = BaselineInferenceFullBenchmark()
+    optimized = OptimizedInferenceFullBenchmark()
+
+    baseline_metrics = baseline.get_custom_metrics()
+    optimized_metrics = optimized.get_custom_metrics()
+    baseline_story = baseline.get_story_metadata()
+    optimized_story = optimized.get_story_metadata()
+
+    assert baseline_metrics is not None
+    assert optimized_metrics is not None
+    assert baseline_story is not None
+    assert optimized_story is not None
+    assert baseline_metrics["configured_layers"] == 24.0
+    assert baseline_metrics["active_layers"] == 24.0
+    assert baseline_metrics["identity_layers_skipped"] == 0.0
+    assert baseline_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.chapter_native_exemplar"] == 0.0
+    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["chapter_alignment"] == "supplementary"
+    assert baseline_story["chapter_native_exemplar"] is False
+    assert baseline_story["execution_pattern"] == "full_depth_inference"
+    assert optimized_metrics["configured_layers"] == 24.0
+    assert optimized_metrics["active_layers"] == 6.0
+    assert optimized_metrics["identity_layers_skipped"] == 18.0
+    assert optimized_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
+
+
+def test_ch08_bridge_controls_report_story_explicitly(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(tiling_tcgen05_base, "_check_tcgen05_extension_available", lambda: (True, None))
+
+    benches = [
+        BaselineThresholdTMABenchmark(),
+        OptimizedThresholdTMABenchmark(),
+        BaselineTilingBenchmark(),
+        OptimizedTilingBenchmark(),
+        BaselineTilingBenchmarkTCGen05(),
+        OptimizedTilingBenchmarkTCGen05(),
+        BaselineTcgen05CustomVsCublasBenchmark(),
+        OptimizedTcgen05CustomVsCublasBenchmark(),
+        BaselineChapter8NVFP4MLPBenchmark(),
+        OptimizedChapter8NVFP4MLPBenchmark(),
+    ]
+
+    for bench in benches:
+        metrics = bench.get_custom_metrics()
+        assert metrics is not None
+        assert metrics["story.control_pair"] == 1.0
+        assert metrics["story.chapter_native_exemplar"] == 0.0
+
+
+def test_harness_result_carries_story_metadata() -> None:
+    config = BenchmarkConfig(
+        iterations=1,
+        warmup=5,
+        validity_profile="portable",
+        allow_foreign_gpu_processes=True,
+    )
+    config.use_subprocess = False
+    harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
+    result = harness.benchmark(_StoryMetadataSmokeBenchmark())
+
+    assert result.story_metadata is not None
+    assert result.story_metadata["pair_role"] == "control"
+    assert result.story_metadata["chapter_alignment"] == "supplementary"
+    assert result.story_metadata["chapter_native_exemplar"] is False
+
+
+def test_aggregated_data_surfaces_story_metadata_and_story_note(tmp_path: Path) -> None:
+    raw_results = {
+        "timestamp": "2026-03-17 00:00:00",
+        "results": [
+            {
+                "chapter": "ch17",
+                "benchmarks": [
+                    {
+                        "example": "inference_full",
+                        "best_speedup": 3.2,
+                        "baseline_time_ms": 12.5,
+                        "status": "succeeded",
+                        "baseline_story_metadata": {
+                            "pair_role": "control",
+                            "chapter_alignment": "supplementary",
+                            "chapter_native_exemplar": False,
+                            "control_reason": "Model-side work reduction control benchmark",
+                            "chapter_native_targets": [
+                                "prefill_decode_disagg_ttft",
+                                "prefill_decode_disagg_overlap",
+                                "prefill_decode_disagg_batched",
+                            ],
+                        },
+                        "optimizations": [
+                            {
+                                "file": "optimized_inference_full.py",
+                                "technique": "early exit",
+                                "time_ms": 3.9,
+                                "speedup": 3.2,
+                                "status": "succeeded",
+                                "story_metadata": {
+                                    "pair_role": "control",
+                                    "chapter_alignment": "supplementary",
+                                    "chapter_native_exemplar": False,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    data_file = tmp_path / "benchmark_test_results.json"
+    data_file.write_text(json.dumps(raw_results), encoding="utf-8")
+
+    data = load_benchmark_data(data_file=data_file)
+    bench = data["benchmarks"][0]
+
+    assert bench["pair_role"] == "control"
+    assert bench["chapter_alignment"] == "supplementary"
+    assert bench["chapter_native_exemplar"] is False
+    assert "Supplementary control pair." in bench["story_note"]
+    assert "prefill_decode_disagg_ttft" in bench["story_note"]
+    assert bench["optimizations"][0]["story_metadata"]["pair_role"] == "control"
+
+
+def test_generate_report_from_raw_results_file_renders_story_note(tmp_path: Path) -> None:
+    raw_results = {
+        "timestamp": "2026-03-17 00:00:00",
+        "results": [
+            {
+                "chapter": "ch03",
+                "benchmarks": [
+                    {
+                        "example": "gemm",
+                        "best_speedup": 2.9,
+                        "baseline_time_ms": 0.548,
+                        "status": "succeeded",
+                        "baseline_story_metadata": {
+                            "pair_role": "control",
+                            "chapter_alignment": "supplementary",
+                            "chapter_native_exemplar": False,
+                            "control_reason": "Host/runtime overhead control benchmark",
+                            "chapter_native_targets": ["pageable_copy", "rack_prep"],
+                        },
+                        "optimizations": [
+                            {
+                                "file": "optimized_gemm.py",
+                                "technique": "compiled matmul",
+                                "time_ms": 0.189,
+                                "speedup": 2.9,
+                                "status": "succeeded",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    data_file = tmp_path / "benchmark_test_results.json"
+    data_file.write_text(json.dumps(raw_results), encoding="utf-8")
+    output_path = tmp_path / "story_report.html"
+
+    generate_report(data_file, output_path, format="html")
+    html = output_path.read_text(encoding="utf-8")
+
+    assert "Supplementary control pair." in html
+    assert "Chapter-native targets: pageable_copy, rack_prep." in html

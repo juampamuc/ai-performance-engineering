@@ -22,13 +22,10 @@ This example demonstrates:
 - Storage I/O monitoring
 - Sequential vs random read patterns
 """
-
-import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 import time
-import os
 import subprocess
 import psutil
 import numpy as np

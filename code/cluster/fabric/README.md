@@ -20,10 +20,22 @@ python -m cli.aisp cluster fabric-eval \
   --hosts localhost \
   --labels localhost \
   --ssh-user "$(id -un)" \
-  --primary-label localhost
+  --primary-label localhost \
+  --nmx-url https://<your-nmx-host>
 ```
 
 This path defaults to capability-aware partial completion. It keeps `not_present`, `not_configured`, and `unavailable` signals visible in structured outputs instead of failing on broader publish-grade completeness gates.
+
+Use the lab-only NMX helper when the question is "how would I carve this NVLink domain into Alpha/Beta partitions without hand-building the commands?":
+
+```bash
+python -m cli.aisp cluster nmx-partition-lab \
+  --nmx-url https://<your-nmx-host> \
+  --alpha-name AlphaPartition \
+  --beta-name BetaPartition
+```
+
+This helper is inventory-driven and read-only. It returns the suggested Alpha/Beta seed locations, the borrow/rebalance flow, and the exact `curl` commands for create/update/delete/poll/verify, but does not execute any mutating NMX partition calls.
 
 Use the preset when staying inside the common-eval surface:
 
@@ -34,7 +46,8 @@ python -m cli.aisp cluster common-eval \
   --hosts <h1,h2> \
   --labels <l1,l2> \
   --ssh-user <user> \
-  --ssh-key <key>
+  --ssh-key <key> \
+  --nmx-url https://<your-nmx-host>
 ```
 
 ## Structured Outputs
@@ -57,7 +70,9 @@ These artifacts are also folded into:
 For NMX-backed NVLink domains, the verification payload now answers the operator scenarios directly:
 
 - topology and capacity-planning counts for compute nodes, GPUs, switch ASICs, switch trays, and ports
+- chassis counts and chassis serial-number coverage
 - GPU-to-node mapping and candidate Alpha/Beta 4-GPU allocations
+- sample GPU, switch, and chassis objects with `DeviceID`, `DomainUUID`, health, port count, and `LocationInfo`
 - partition inventory, default-partition membership, and unassigned capacity
 - telemetry endpoint coverage for switch temperature, throughput, physical errors, and cable diagnostics
 
@@ -65,16 +80,17 @@ For NMX-backed NVLink domains, the verification payload now answers the operator
 
 The fabric evaluator is capability-aware. If management endpoints are missing, the run records `not_configured` instead of silently skipping.
 
-Environment variables:
+Preferred CLI arguments:
 
-- `AISP_FABRIC_NMX_URL`
-- `AISP_FABRIC_NMX_TOKEN`
-- `AISP_FABRIC_IB_MGMT_HOST`
-- `AISP_FABRIC_IB_MGMT_USER`
-- `AISP_FABRIC_IB_MGMT_SSH_KEY`
-- `AISP_FABRIC_CUMULUS_HOSTS`
-- `AISP_FABRIC_CUMULUS_USER`
-- `AISP_FABRIC_CUMULUS_SSH_KEY`
+- `--nmx-url https://<your-nmx-host>`
+- `--nmx-token <token>`
+- `--ib-mgmt-host <host>`
+- `--ib-mgmt-user <user>`
+- `--ib-mgmt-ssh-key <path>`
+- `--cumulus-hosts <host1,host2>`
+- `--cumulus-user <user>`
+- `--cumulus-ssh-key <path>`
+- `--require-management-plane`
 
 Use `--require-management-plane` for publish-grade runs when missing management access should fail the fabric step instead of downgrading completeness.
 

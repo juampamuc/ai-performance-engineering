@@ -89,10 +89,6 @@ def main():
     print(format_telemetry("baseline-1f1b-compare", cumulative))
 
 
-if __name__ == "__main__":
-    main()
-
-
 def get_benchmark():
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "pipeline_1f1b_to_gpipe_multigpu.py",
