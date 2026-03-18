@@ -67,9 +67,9 @@ The profiled `ozaki_scheme_dynamic` pair on the tuned default scenario points to
 
 - strict timing run (`20260318_183903__bench__profile_none_targets_labs_ozaki_scheme`) measured native FP64 at `6.714 ms` and dynamic Ozaki at `1.130 ms`
 - profiled dynamic pair run (`20260318_185200__bench__profile_minimal_targets_labs_ozaki_scheme_ozaki_scheme_dynamic`) kept the same verification-clean result while showing baseline `nsys total_gpu_time_ms ~= 258.4` versus dynamic `~= 157.0`
-- the matched NCU kernel metrics stayed almost flat on DRAM and L2 throughput, while active warps rose from about `44.85%` to `50.08%`
+- the minimal NCU pass did not expose a dramatically different bandwidth signature, and the sampled kernel counters stayed close run-to-run
 
-That combination suggests the speedup is primarily coming from the dynamic controller collapsing the amount of fixed-point emulation work needed for this low-range input distribution, rather than from a memory-system optimization.
+The strongest signal is therefore the large end-to-end `nsys` reduction, together with the stable numerical result: the dynamic controller appears to be collapsing the amount of fixed-point emulation work needed for this low-range input distribution, rather than benefiting from a memory-system optimization.
 
 ## What The Binary Emits
 Each CUDA binary prints:
