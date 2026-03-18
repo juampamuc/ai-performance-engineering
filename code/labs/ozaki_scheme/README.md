@@ -62,6 +62,22 @@ python -m cli.aisp bench run --targets labs/ozaki_scheme:ozaki_scheme_fixed --pr
 
 The canonical expectation file for this host is `labs/ozaki_scheme/expectations_b200.json`, generated from a strict `--profile none --update-expectations` run.
 
+## Exact Repro
+These are the commands behind the numbers quoted above:
+
+```bash
+python -m cli.aisp bench run --targets labs/ozaki_scheme --profile none --update-expectations
+python -m cli.aisp bench run --targets labs/ozaki_scheme --profile minimal
+python -m cli.aisp bench run --targets labs/ozaki_scheme:ozaki_scheme_dynamic --profile minimal
+python labs/ozaki_scheme/run_lab.py --skip-build
+```
+
+The timing table in this README comes from run `20260318_183903__bench__profile_none_targets_labs_ozaki_scheme`.
+
+The generic `--profile minimal` run captures full-lab profiling for the best optimized path (`fixed`) under run `20260318_184813__bench__profile_minimal_targets_labs_ozaki_scheme`.
+
+The dynamic-path explanation below comes from the dedicated profiled pair run `20260318_185200__bench__profile_minimal_targets_labs_ozaki_scheme_ozaki_scheme_dynamic`.
+
 ## Why Dynamic Wins Here
 The profiled `ozaki_scheme_dynamic` pair on the tuned default scenario points to a reduction in emulation work, not a bandwidth-driven win:
 
