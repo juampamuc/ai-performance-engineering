@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - defensive import
     enable_tf32 = None  # type: ignore
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.benchmark.verification import PrecisionFlags, simple_signature
+from core.benchmark.verification import InputSignature, PrecisionFlags
 from core.benchmark.wrapper_utils import attach_benchmark_metadata
 from core.harness.hardware_capabilities import detect_capabilities
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
@@ -414,15 +414,20 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.graph_next_token = torch.empty((bsz,), device=self.device, dtype=torch.long)
         # Ensure prompt buffer is initialized with valid tokens before capture
         self.gpu_prompt.copy_(self.host_prompt, non_blocking=False)
+
+        def _prime_decode_state() -> None:
+            prefill_state = self.prefill_fn(self.gpu_prompt)
+            self.state_buffer.copy_(prefill_state)
+            self.current_tokens.copy_(self.gpu_prompt[:, -1])
         
         # NO FALLBACK - CUDA graph capture must succeed
         # Warm up to populate kernels/caches prior to capture
         with torch.cuda.stream(self.graph_stream):
+            if not self.cfg.graph_full_iteration:
+                _prime_decode_state()
             for _ in range(2):
                 if self.cfg.graph_full_iteration:
-                    prefill_state = self.prefill_fn(self.gpu_prompt)
-                    self.state_buffer.copy_(prefill_state)
-                    self.current_tokens.copy_(self.gpu_prompt[:, -1])
+                    _prime_decode_state()
                 logits, next_state, next_token = self.decode_fn(self.current_tokens, self.state_buffer)
                 self.state_buffer.copy_(next_state)
                 self.graph_next_token.copy_(next_token)
@@ -432,12 +437,13 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Reset state before capture for determinism
         self.state_buffer.zero_()
         self.current_tokens.zero_()
+        if not self.cfg.graph_full_iteration:
+            with torch.cuda.stream(self.graph_stream):
+                _prime_decode_state()
         torch.cuda.synchronize()
         with torch.cuda.graph(self.decode_graph, stream=self.graph_stream):
             if self.cfg.graph_full_iteration:
-                prefill_state = self.prefill_fn(self.gpu_prompt)
-                self.state_buffer.copy_(prefill_state)
-                self.current_tokens.copy_(self.gpu_prompt[:, -1])
+                _prime_decode_state()
             for _ in range(self.cfg.decode_tokens):
                 logits, next_state, next_token = self.decode_fn(self.current_tokens, self.state_buffer)
                 self.state_buffer.copy_(next_state)
@@ -766,28 +772,41 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
             output_tolerance=(0.1, 1.0),
         )
 
-    def get_input_signature(self):
-        """Return a deterministic workload signature for strict input equivalence.
+    def _signature_parameter_count(self) -> int:
+        hs = int(self.cfg.hidden_size)
+        vs = int(self.cfg.vocab_size)
+        # embedding + lm_head + prefill/decode MLPs (+ layernorm/bias terms)
+        return int((2 * vs * hs) + (6 * hs * hs) + (9 * hs))
 
-        Keep this independent of implementation toggles (streams/graphs/compile)
-        so baseline vs optimized comparisons validate the same logical workload.
-        """
-        effective_batch = int(self.cfg.batch_size * self.cfg.prefetch_batches)
-        return simple_signature(
-            batch_size=effective_batch,
-            dtype=self.dtype,
+    def get_input_signature(self) -> InputSignature:
+        """Return the exact verification signature for strict input equivalence."""
+        shapes = {
+            "gpu_prompt": (int(self.cfg.batch_size), int(self.cfg.prompt_tokens)),
+            "state_buffer": (int(self.cfg.batch_size), int(self.cfg.hidden_size)),
+            "config": (5,),
+            "output": (1, min(8, int(self.cfg.hidden_size))),
+        }
+        dtypes = {
+            "gpu_prompt": str(torch.int64),
+            "state_buffer": str(self.dtype),
+            "config": str(torch.int64),
+            "output": str(torch.float32),
+        }
+        if self.cfg.host_payload_mb:
+            payload_bytes = int(self.cfg.host_payload_mb * 1024 * 1024)
+            shapes["host_payload"] = (payload_bytes,)
+            dtypes["host_payload"] = str(torch.uint8)
+        return InputSignature(
+            shapes=shapes,
+            dtypes=dtypes,
+            batch_size=int(self.cfg.batch_size * self.cfg.prefetch_batches),
+            parameter_count=int(self.parameter_count) if self.parameter_count else self._signature_parameter_count(),
             precision_flags=PrecisionFlags(
                 fp16=bool(self.dtype == torch.float16),
                 bf16=bool(self.dtype == torch.bfloat16),
                 fp8=bool(self._fp8_enabled),
-                # Force deterministic TF32 signature independent of ambient backend globals.
                 tf32=True,
             ),
-            prompt_tokens=int(self.cfg.prompt_tokens),
-            decode_tokens=int(self.cfg.decode_tokens),
-            hidden_size=int(self.cfg.hidden_size),
-            vocab_size=int(self.cfg.vocab_size),
-            host_payload_mb=int(self.cfg.host_payload_mb),
         )
 
     def validate_result(self) -> Optional[str]:

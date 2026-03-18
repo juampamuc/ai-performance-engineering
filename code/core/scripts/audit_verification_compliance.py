@@ -12,15 +12,83 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import importlib.util
+import os
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from unittest import mock
 
 import torch
 
 from core.benchmark.verification import InputSignature
+
+
+@contextlib.contextmanager
+def _capture_process_output() -> List[str]:
+    """Capture Python and subprocess stdout/stderr during benchmark import/load."""
+    captured: List[str] = []
+    sys.stdout.flush()
+    sys.stderr.flush()
+    stdout_fd = os.dup(1)
+    stderr_fd = os.dup(2)
+    with tempfile.TemporaryFile(mode="w+b") as stdout_tmp, tempfile.TemporaryFile(mode="w+b") as stderr_tmp:
+        try:
+            os.dup2(stdout_tmp.fileno(), 1)
+            os.dup2(stderr_tmp.fileno(), 2)
+            yield captured
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.dup2(stdout_fd, 1)
+            os.dup2(stderr_fd, 2)
+            os.close(stdout_fd)
+            os.close(stderr_fd)
+            stdout_tmp.seek(0)
+            stderr_tmp.seek(0)
+            combined = stdout_tmp.read().decode("utf-8", errors="replace")
+            combined += stderr_tmp.read().decode("utf-8", errors="replace")
+            captured.extend(line.strip() for line in combined.splitlines() if line.strip())
+
+
+@contextlib.contextmanager
+def _prepend_sys_path(path: Path):
+    """Temporarily prepend a benchmark's directory so sibling imports resolve."""
+    path_str = str(path)
+    sys.path.insert(0, path_str)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(ValueError):
+            sys.path.remove(path_str)
+
+
+def _should_retry_with_multigpu_floor(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    markers = (
+        "requires >=2 gpus",
+        "need >=2 gpus",
+        "requires multiple gpus",
+        "distributed benchmark requires multiple gpus",
+    )
+    return any(marker in message for marker in markers)
+
+
+@contextlib.contextmanager
+def _audit_gpu_floor(min_gpus: int = 2):
+    """Expose a device-count floor for load-only audit retries on single-GPU hosts."""
+    if not torch.cuda.is_available():
+        yield
+        return
+    available = torch.cuda.device_count()
+    if available >= min_gpus:
+        yield
+        return
+    with mock.patch("torch.cuda.device_count", return_value=min_gpus):
+        yield
 
 
 def _scan_source_compliance(filepath: Path) -> Dict[str, bool]:
@@ -155,11 +223,24 @@ def _scan_source_compliance(filepath: Path) -> Dict[str, bool]:
     return flags
 
 
-def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str]]:
+def _declares_get_benchmark(filepath: Path) -> bool:
+    """Return True when the source declares a top-level get_benchmark() factory."""
+    try:
+        source = filepath.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(filepath))
+    except Exception:
+        return True
+    return any(
+        isinstance(node, ast.FunctionDef) and node.name == "get_benchmark"
+        for node in tree.body
+    )
+
+
+def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str, List[str]]]:
     """Load benchmark class from a file.
     
     Returns:
-        Tuple of (benchmark_instance, class_name) or None if failed
+        Tuple of (benchmark_instance, class_name, captured_output) or None if failed
     """
     try:
         spec = importlib.util.spec_from_file_location("benchmark_module", filepath)
@@ -168,12 +249,19 @@ def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str]]:
         
         module = importlib.util.module_from_spec(spec)
         sys.modules["benchmark_module"] = module
-        spec.loader.exec_module(module)
-        
-        # Look for get_benchmark factory function
-        if hasattr(module, "get_benchmark"):
-            benchmark = module.get_benchmark()
-            return (benchmark, type(benchmark).__name__)
+        with _capture_process_output() as captured_output, _prepend_sys_path(filepath.parent):
+            spec.loader.exec_module(module)
+            
+            # Look for get_benchmark factory function
+            if hasattr(module, "get_benchmark"):
+                try:
+                    benchmark = module.get_benchmark()
+                except RuntimeError as exc:
+                    if not _should_retry_with_multigpu_floor(exc):
+                        raise
+                    with _audit_gpu_floor():
+                        benchmark = module.get_benchmark()
+                return (benchmark, type(benchmark).__name__, captured_output)
         
         return None
     except Exception as e:
@@ -308,6 +396,8 @@ def audit_directory(directory: Path) -> Dict[str, Dict[str, Any]]:
             continue
         if not (filepath.name.startswith("baseline_") or filepath.name.startswith("optimized_")):
             continue
+        if not _declares_get_benchmark(filepath):
+            continue
 
         source_flags = _scan_source_compliance(filepath)
         
@@ -321,7 +411,7 @@ def audit_directory(directory: Path) -> Dict[str, Dict[str, Any]]:
             }
             continue
         
-        benchmark, class_name = result
+        benchmark, class_name, load_output = result
         compliance = check_compliance(benchmark)
         compliance.update(source_flags)
         
@@ -340,6 +430,8 @@ def audit_directory(directory: Path) -> Dict[str, Dict[str, Any]]:
         is_compliant = all(compliance.get(m, False) for m in critical_methods)
 
         warnings: List[str] = []
+        if load_output:
+            warnings.append("Benchmark emitted output during audit load.")
         if compliance.get("backend_toggles_present", False):
             warnings.append("Backend policy toggles detected in benchmark file.")
         if compliance.get("determinism_toggles_present", False):
@@ -352,6 +444,7 @@ def audit_directory(directory: Path) -> Dict[str, Dict[str, Any]]:
             "class_name": class_name,
             "compliance": compliance,
             "warnings": warnings,
+            "load_output": load_output,
         }
     
     return results

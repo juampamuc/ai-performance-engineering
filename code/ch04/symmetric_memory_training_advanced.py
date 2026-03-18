@@ -64,6 +64,8 @@ When NOT to Use:
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 try:
     from ch04.distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -117,7 +119,7 @@ def init_distributed(allow_single_gpu: bool = False) -> Tuple[int, int, int]:
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = resolve_local_rank()
 
         torch.cuda.set_device(local_rank)
         dist.init_process_group(

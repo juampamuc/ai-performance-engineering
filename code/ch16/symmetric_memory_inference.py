@@ -32,6 +32,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+
+from core.common.device_utils import resolve_local_rank
 import random
 import string
 from dataclasses import dataclass, field
@@ -62,7 +64,7 @@ def init_distributed() -> Tuple[int, int, torch.device]:
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", max(1, torch.cuda.device_count())))
-        local_rank = int(os.environ.get("LOCAL_RANK", rank))
+        local_rank = resolve_local_rank()
         backend = "nccl" if torch.cuda.is_available() else "gloo"
         dist.init_process_group(
             backend=backend,

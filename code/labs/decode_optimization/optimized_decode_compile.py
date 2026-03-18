@@ -11,14 +11,13 @@ def get_benchmark() -> DecodeBenchmark:
         prompt_tokens=256,
         decode_tokens=64,
         hidden_size=1024,
-        use_pinned_host=True,
-        use_copy_stream=True,
-        use_compute_stream=True,
+        use_pinned_host=False,
+        use_copy_stream=False,
+        use_compute_stream=False,
         use_torch_compile=True,
         label="optimized_decode_compile",
         iterations=12,
         warmup=15,
     )
     return attach_benchmark_metadata(DecodeBenchmark(cfg), __file__)
-
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 from time import perf_counter
 from pathlib import Path
 
@@ -44,15 +46,16 @@ def main():
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     from labs.train_distributed.training_utils.utils import (
-        build_dataloader,
-        build_text_model,
-        build_tokenizer,
-        get_dataset,
-        set_seed,
-    )
+    build_dataloader,
+    build_text_model,
+    build_tokenizer,
+    configure_training_matmul_policy,
+    get_dataset,
+    set_seed,
+)
 
     args = parse_args()
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
         device = torch.device("cuda", local_rank)
@@ -65,11 +68,7 @@ def main():
     rank = dist.get_rank() if dist.is_initialized() else 0
     is_main = rank == 0
     set_seed(42)
-    torch.backends.cuda.matmul.allow_tf32 = True
-    try:
-        torch.set_float32_matmul_precision("high")
-    except AttributeError:
-        pass
+    configure_training_matmul_policy()
 
     tokenizer = build_tokenizer()
     dataset = get_dataset()["train"]

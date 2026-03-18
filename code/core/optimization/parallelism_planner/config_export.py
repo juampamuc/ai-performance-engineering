@@ -12,6 +12,8 @@ Export complete training configurations in various formats:
 
 import json
 import os
+
+from core.common.device_utils import resolve_local_rank
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 
@@ -380,7 +382,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments,
 def main():
     # Initialize distributed
     dist.init_process_group(backend="nccl")
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     
     # Load model

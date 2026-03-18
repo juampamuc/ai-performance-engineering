@@ -11,6 +11,8 @@ from pathlib import Path
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 import time
 from collections import deque
 from typing import Optional
@@ -74,7 +76,7 @@ def _resolve_batch_config(
 def _init_distributed() -> tuple[int, int, int]:
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("optimized_pipeline_parallel_1f1b requires torchrun (RANK/WORLD_SIZE missing).")
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl", device_id=local_rank)

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 
 from typing import Optional
 
+from core.common.device_utils import resolve_local_rank
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
@@ -40,9 +43,8 @@ class BaselineDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         """Setup: Initialize model and inputs."""
         # Only initialize distributed when launched under torchrun.
-        import os
         if dist.is_available() and "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            local_rank = resolve_local_rank()
             if torch.cuda.is_available():
                 torch.cuda.set_device(local_rank)
             if not dist.is_initialized():
@@ -182,4 +184,3 @@ class BaselineDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselineDisaggregatedBenchmark()
-

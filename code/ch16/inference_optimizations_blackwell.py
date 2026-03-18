@@ -23,7 +23,10 @@ Requirements:
 
 Author: Blackwell Optimization Project
 """
+import os
+
 from core.harness.arch_config import prefer_flash_sdpa
+from core.common.device_utils import resolve_local_rank
 
 
 import torch
@@ -636,7 +639,7 @@ class TensorParallelMultiGPU:
         self.model = model
         self.num_gpus = num_gpus
         self.rank = rank
-        self.local_rank = int(os.environ.get("LOCAL_RANK", rank))
+        self.local_rank = resolve_local_rank()
         self.device = torch.device(f"cuda:{self.local_rank}")
         
         # Move model to current GPU
@@ -645,7 +648,6 @@ class TensorParallelMultiGPU:
         # Initialize process group if not already done
         import torch.distributed as dist
         if not dist.is_initialized():
-            import os
             os.environ.setdefault("MASTER_ADDR", "localhost")
             os.environ.setdefault("MASTER_PORT", "12355")
             os.environ.setdefault("RANK", str(rank))
@@ -715,7 +717,7 @@ def benchmark_multigpu_tensor_parallel():
     
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    local_rank = resolve_local_rank()
     device = torch.device(f"cuda:{local_rank}")
 
     props = torch.cuda.get_device_properties(0)

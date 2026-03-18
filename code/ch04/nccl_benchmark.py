@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 import time
 
 import torch
@@ -39,7 +41,7 @@ def init_runtime() -> tuple[int, int, torch.device, bool]:
         torch.cuda.set_device(device.index or 0)
         return 0, 1, device, False
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
         dist.init_process_group("nccl", init_method="env://", device_id=local_rank)

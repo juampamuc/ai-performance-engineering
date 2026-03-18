@@ -9,6 +9,7 @@ import torch
 from core.common.device_utils import (
     get_usable_cuda_or_cpu,
     require_cuda_device,
+    resolve_local_rank,
     resolve_requested_device,
 )
 
@@ -22,6 +23,37 @@ def test_require_cuda_device_honors_local_rank_env() -> None:
     with patch("core.common.device_utils.torch.cuda.is_available", return_value=True):
         with patch.dict(os.environ, {"LOCAL_RANK": "3"}):
             assert require_cuda_device("CUDA required", local_rank_env="LOCAL_RANK") == torch.device("cuda:3")
+
+
+def test_resolve_local_rank_defaults_to_zero_for_single_process() -> None:
+    with patch.dict(os.environ, {"WORLD_SIZE": "1"}, clear=True):
+        assert resolve_local_rank() == 0
+
+
+def test_resolve_local_rank_uses_env_value_when_present() -> None:
+    with patch.dict(os.environ, {"WORLD_SIZE": "8", "LOCAL_RANK": "5"}, clear=True):
+        assert resolve_local_rank() == 5
+
+
+def test_resolve_local_rank_supports_custom_env_names() -> None:
+    with patch.dict(
+        os.environ,
+        {"OMPI_COMM_WORLD_SIZE": "4", "OMPI_COMM_WORLD_LOCAL_RANK": "2"},
+        clear=True,
+    ):
+        assert (
+            resolve_local_rank(
+                local_rank_env="OMPI_COMM_WORLD_LOCAL_RANK",
+                world_size_env="OMPI_COMM_WORLD_SIZE",
+            )
+            == 2
+        )
+
+
+def test_resolve_local_rank_requires_env_for_multi_process() -> None:
+    with patch.dict(os.environ, {"WORLD_SIZE": "2"}, clear=True):
+        with pytest.raises(RuntimeError, match="LOCAL_RANK must be set when WORLD_SIZE > 1"):
+            resolve_local_rank()
 
 
 def test_require_cuda_device_raises_custom_error_when_cuda_missing() -> None:

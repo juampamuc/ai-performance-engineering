@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 import time
 from typing import Optional
 
@@ -90,7 +92,7 @@ def _run_worker(iters: int, warmup: int) -> None:
 
     dist.init_process_group(backend="nccl")
     rank = dist.get_rank()
-    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
 
     cfg = DecodeConfig(

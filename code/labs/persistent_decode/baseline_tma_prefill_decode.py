@@ -106,7 +106,7 @@ class BaselineTmaPrefillDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
         # Keep short; this is primarily for profiling with --profile / nsys
         return BenchmarkConfig(
             iterations=8,
-            warmup=5,
+            warmup=10,
             measurement_timeout_seconds=120,
         )
 
@@ -127,4 +127,3 @@ class BaselineTmaPrefillDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineTmaPrefillDecodeBenchmark()
-

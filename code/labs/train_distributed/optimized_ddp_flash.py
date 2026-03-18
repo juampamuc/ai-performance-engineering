@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 from time import perf_counter
 from pathlib import Path
 from contextlib import nullcontext
@@ -54,7 +56,7 @@ def _maybe_fused_adamw(params, lr):
 
 def main():
     args = parse_args()
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     if not torch.cuda.is_available():
         raise RuntimeError("DDP optimized run requires CUDA GPUs.")
 

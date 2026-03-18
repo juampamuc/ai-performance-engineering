@@ -44,6 +44,11 @@ class BaselineDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Match constants from baseline_warp_specialized_two_pipelines_common.cuh
         self.tile_elems = 1024
         # Warp specialization benchmark - fixed dimensions for pipeline analysis
+        total_elems = self.tiles * self.tile_elems
+        self.register_workload_metadata(
+            tokens_per_iteration=float(total_elems * 2),
+            requests_per_iteration=1.0,
+        )
 
     def setup(self) -> None:
         # Gracefully skip on GPUs without DSMEM/cluster support.

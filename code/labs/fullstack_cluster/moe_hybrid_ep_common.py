@@ -6,6 +6,8 @@ import argparse
 import json
 import math
 import os
+
+from core.common.device_utils import resolve_local_rank
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -89,7 +91,7 @@ def init_topology(backend: str = "nccl") -> TopologyInfo:
 
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    local_rank = resolve_local_rank()
     local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", str(world_size)))
     if local_world_size <= 0:
         local_world_size = max(world_size, 1)
@@ -935,7 +937,7 @@ def run_cli(*, optimized: bool) -> Dict[str, float]:
         shutdown_topology(topology)
 
 
-class MoEHybridEPBenchmark(BaseBenchmark, VerificationPayloadMixin):
+class MoEHybridEPBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(
         self,
         *,

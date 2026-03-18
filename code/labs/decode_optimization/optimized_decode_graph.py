@@ -1,4 +1,4 @@
-"""Optimized: CUDA Graphs for decode loop capture."""
+"""Optimized: CUDA Graph capture for the decode loop only."""
 
 from __future__ import annotations
 
@@ -11,16 +11,15 @@ def get_benchmark() -> DecodeBenchmark:
         prompt_tokens=256,
         decode_tokens=64,
         hidden_size=1024,
-        use_pinned_host=True,
-        use_copy_stream=True,
-        use_compute_stream=True,
+        use_pinned_host=False,
+        use_copy_stream=False,
+        use_compute_stream=False,
         use_torch_compile=False,
         use_cuda_graphs=True,
-        graph_full_iteration=True,
+        graph_full_iteration=False,
         label="optimized_decode_graph",
         iterations=12,
         warmup=15,
     )
     return attach_benchmark_metadata(DecodeBenchmark(cfg), __file__)
-
 

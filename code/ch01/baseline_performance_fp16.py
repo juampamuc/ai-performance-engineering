@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import torch
+
+from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
 from core.harness.benchmark_harness import BaseBenchmark
 from ch01.baseline_performance import BaselinePerformanceBenchmark
 from ch01.performance_fp16_common import PERFORMANCE_FP16_WORKLOAD
@@ -19,8 +22,25 @@ class BaselinePerformanceFP16Benchmark(BaselinePerformanceBenchmark):
             samples_per_iteration=PERFORMANCE_FP16_WORKLOAD.samples_per_iteration,
         )
 
+    def benchmark_fn(self) -> None:
+        """Mirror the inherited baseline loop explicitly for pair-audit equivalence."""
+        config = self.get_config()
+        enable_nvtx = get_nvtx_enabled(config) if config else False
+
+        with nvtx_range("baseline_performance_fp16", enable=enable_nvtx):
+            total = len(self.microbatches)
+            for start in range(0, total, self.fusion):
+                group_data = self.microbatches[start : start + self.fusion]
+                group_targets = self.targets[start : start + self.fusion]
+                group_size = max(1, len(group_data))
+                self.optimizer.zero_grad(set_to_none=True)
+                for data, target in zip(group_data, group_targets):
+                    logits = self.model(data)
+                    loss = torch.nn.functional.cross_entropy(logits, target)
+                    (loss / group_size).backward()
+                self.optimizer.step()
+
 
 def get_benchmark() -> BaseBenchmark:
     return BaselinePerformanceFP16Benchmark()
-
 

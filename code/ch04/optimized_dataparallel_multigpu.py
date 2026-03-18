@@ -142,7 +142,7 @@ class OptimizedDataParallelMultiGPUBenchmark(VerificationPayloadMixin, BaseBench
                 grads = [param.grad for param in param_group]
                 if grads[0] is None:
                     continue
-                reduced = grads[0].detach().clone()
+                reduced = grads[0].detach()
                 master_device = reduced.device
                 for grad in grads[1:]:
                     if grad is None:
@@ -236,4 +236,3 @@ class OptimizedDataParallelMultiGPUBenchmark(VerificationPayloadMixin, BaseBench
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedDataParallelMultiGPUBenchmark()
-

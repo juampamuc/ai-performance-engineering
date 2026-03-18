@@ -35,6 +35,8 @@ Usage:
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 try:
     from ch04.distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -64,7 +66,7 @@ def setup_distributed():
     if dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend="nccl", init_method="env://", device_id=local_rank)
 

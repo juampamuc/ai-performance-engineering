@@ -114,7 +114,7 @@ class BaselineRouterDenseBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.output = None
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=10, warmup=5)  # Min warmup for CUDA
+        return BenchmarkConfig(iterations=10, warmup=10)  # Match compiled variants warmup
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
@@ -143,5 +143,4 @@ class BaselineRouterDenseBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineRouterDenseBenchmark()
-
 

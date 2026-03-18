@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 import torch
 import torch.distributed as dist
 
@@ -36,7 +38,7 @@ class OptimizedReinitCommBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         """Setup: Initialize NCCL once."""
         setup_single_gpu_env()
-        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        self.local_rank = resolve_local_rank()
         torch.cuda.set_device(self.local_rank)
         if not dist.is_initialized():
             dist.init_process_group(

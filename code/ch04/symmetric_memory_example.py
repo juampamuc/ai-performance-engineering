@@ -14,6 +14,8 @@ import argparse
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 from core.optimization.symmetric_memory_patch import (
     create_symmetric_memory_handle,
     maybe_create_symmetric_memory_handle,
@@ -43,12 +45,13 @@ def setup_distributed():
     """Initialize distributed environment for multi-GPU operation."""
     setup_single_gpu_env()  # Auto-setup for single-GPU mode
     if dist.is_initialized():
+        torch.cuda.set_device(resolve_local_rank())
         return dist.get_rank(), dist.get_world_size()
 
     # For single-node multi-GPU
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
 
     torch.cuda.set_device(local_rank)
     # Use NCCL backend for GPU communication with timeout
@@ -143,7 +146,7 @@ def enable_nvlink_c2c_optimizations() -> None:
 def benchmark_traditional_p2p(tensor: torch.Tensor, peer_rank: int, iterations: int = 100):
     """Benchmark traditional peer-to-peer copy using torch.cuda.comm."""
     rank = dist.get_rank()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
     
     # Warmup
     for _ in range(10):
@@ -182,7 +185,7 @@ def benchmark_symmetric_memory(tensor: torch.Tensor, iterations: int = 100):
     """Benchmark symmetric memory for ultralow-latency cross-GPU access."""
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
     
     # Check if symmetric memory is available
     try:
@@ -241,7 +244,7 @@ def benchmark_traditional_ring(tensor: torch.Tensor, iterations: int = 100) -> f
     """Benchmark ring send/recv using NCCL P2P ops across all ranks."""
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
     recv_tensor = torch.empty_like(tensor)
     next_rank = (rank + 1) % world_size
     prev_rank = (rank - 1) % world_size
@@ -278,7 +281,7 @@ def benchmark_symmetric_ring(tensor: torch.Tensor, iterations: int = 100) -> flo
     """Benchmark ring traffic using symmetric memory buffers."""
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
     flat = tensor.flatten()
     local = torch.stack([flat, flat.clone()])
     handle = create_symmetric_memory_handle(local, group=dist.group.WORLD)
@@ -328,7 +331,7 @@ def benchmark_multigpu_symmetric_memory(
     """
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
     
     if world_size < 2:
         if rank == 0:
@@ -508,7 +511,7 @@ def main():
     args = _parse_args()
     # Setup
     rank, world_size = setup_distributed()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
 
     if args.benchmark_mode != "auto":
         if world_size < 2:

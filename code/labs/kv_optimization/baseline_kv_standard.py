@@ -64,8 +64,7 @@ class BaselineKVStandard(VerificationPayloadMixin, BaseBenchmark):
         memory_per_token = num_layers * 2 * num_heads * head_dim * 2  # 2 for K/V, 2 bytes for BF16
         total_memory_gb = (batch_size * max_seq_length * memory_per_token) / (1024**3)
 
-        logger.info(f"Baseline KV Cache (BF16)")
-        logger.info(f"  Estimated memory: {total_memory_gb:.2f} GB")
+        self._estimated_memory_gb = total_memory_gb
 
     def setup(self):
         """Initialize KV cache."""
@@ -97,7 +96,9 @@ class BaselineKVStandard(VerificationPayloadMixin, BaseBenchmark):
         )
         self._generated_v_steps = torch.randn_like(self._generated_k_steps)
 
-        logger.info("KV cache allocated")
+        logger.debug("Baseline KV Cache (BF16)")
+        logger.debug(f"  Estimated memory: {self._estimated_memory_gb:.2f} GB")
+        logger.debug("KV cache allocated")
 
     def append_kv(
         self,
@@ -177,8 +178,8 @@ class BaselineKVStandard(VerificationPayloadMixin, BaseBenchmark):
         memory_gb = torch.cuda.max_memory_allocated(self.device) / (1024**3)
         tokens_per_sec = (self.batch_size * self.num_decode_steps) / elapsed_s
 
-        logger.info(f"Throughput: {tokens_per_sec:.2f} tokens/sec")
-        logger.info(f"Memory: {memory_gb:.2f} GB")
+        logger.debug(f"Throughput: {tokens_per_sec:.2f} tokens/sec")
+        logger.debug(f"Memory: {memory_gb:.2f} GB")
 
         self._last_metrics = {
             "latency_ms": elapsed_ms_value,
@@ -254,5 +255,4 @@ def run_benchmark(
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselineKVStandard()
-
 

@@ -45,6 +45,8 @@ Author: AI Performance Engineering Team
 """
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 try:
     from ch04.distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -211,7 +213,7 @@ def setup_multigpu_distributed(tp_size: int = 2, dp_size: Optional[int] = None) 
     
     # Get environment variables
     rank = int(os.environ.get("RANK", 0))
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count() or 1))
     
     # Initialize process group

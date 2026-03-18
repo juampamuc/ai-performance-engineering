@@ -83,6 +83,8 @@ import time
 import torch
 import torch.distributed as dist
 
+from core.common.device_utils import resolve_local_rank
+
 # Import test script
 from ch16.gpt_large_benchmark import main
 
@@ -105,7 +107,7 @@ def profile_workload():
     
     # Initialize distributed
     if not dist.is_initialized():
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = resolve_local_rank()
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl")
     

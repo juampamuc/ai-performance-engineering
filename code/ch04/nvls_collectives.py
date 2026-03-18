@@ -8,6 +8,8 @@ it cleanly reports SKIPPED so the harness stays green.
 from __future__ import annotations
 
 import os
+
+from core.common.device_utils import resolve_local_rank
 from typing import Optional
 
 import torch
@@ -38,7 +40,7 @@ class NVLSCollectivesBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if not dist.is_initialized():
             if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
                 raise RuntimeError("SKIPPED: launch with torchrun to enable NCCL NVLS demo")
-            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            local_rank = resolve_local_rank()
             torch.cuda.set_device(local_rank)
             dist.init_process_group("nccl", device_id=local_rank)
 

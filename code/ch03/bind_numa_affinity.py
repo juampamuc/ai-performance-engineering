@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import os
+
+from core.common.device_utils import resolve_local_rank
 import re
 import subprocess
 from functools import partial
@@ -312,7 +314,7 @@ def main() -> None:
         # Distributed mode
         dist.init_process_group(backend="nccl", init_method="env://")
         try:
-            local_rank = int(os.environ.get("LOCAL_RANK", torch.cuda.current_device()))
+            local_rank = resolve_local_rank()
             torch.cuda.set_device(local_rank)
             device = torch.device("cuda", local_rank)
 

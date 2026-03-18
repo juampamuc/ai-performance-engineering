@@ -34,6 +34,8 @@ Note: As of PyTorch 2.10, NVSHMEM support is experimental.
 This module demonstrates concepts and provides PyTorch alternatives.
 """
 import os
+
+from core.common.device_utils import resolve_local_rank
 import sys
 from typing import Optional
 
@@ -158,7 +160,7 @@ def benchmark_put_latency(
         Latency measurements
     """
     rank = dist.get_rank()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
     
     num_elements = size_bytes // 4
     tensor = torch.randn(num_elements, device=device, dtype=torch.float32)
@@ -212,9 +214,11 @@ def main() -> None:
     """Main demonstration."""
     if not dist.is_initialized():
         setup_single_gpu_env()
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = resolve_local_rank()
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl", device_id=local_rank)
+    else:
+        torch.cuda.set_device(resolve_local_rank())
     
     rank = dist.get_rank()
     world_size = dist.get_world_size()

@@ -70,6 +70,8 @@ When to Stick with NCCL:
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 from core.optimization.symmetric_memory_patch import (
     SymmetricMemoryHandle,
     maybe_create_symmetric_memory_handle,
@@ -127,7 +129,7 @@ def init_process_group() -> Tuple[int, int, int]:
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = resolve_local_rank()
 
         torch.cuda.set_device(local_rank)
         dist.init_process_group(

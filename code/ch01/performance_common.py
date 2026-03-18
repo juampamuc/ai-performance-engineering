@@ -41,6 +41,17 @@ def set_tf32_state(enabled: bool) -> None:
         torch.backends.cudnn.allow_tf32 = enabled
 
 
+def restore_tf32_state(state: Tuple[bool, bool | None] | None) -> None:
+    """Restore a snapshot returned by capture_tf32_state()."""
+    if state is None:
+        return
+    matmul_state, cudnn_state = state
+    set_tf32_state(matmul_state)
+    if cudnn_state is None or not torch.backends.cudnn.is_available():
+        return
+    torch.backends.cudnn.allow_tf32 = cudnn_state
+
+
 def get_environment_custom_metrics() -> dict:
     """Return real runtime environment metrics for Chapter 1 benchmarks."""
     gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0

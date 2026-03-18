@@ -19,6 +19,8 @@ from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
 import argparse
 import json
 import os
+
+from core.common.device_utils import resolve_local_rank
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -51,7 +53,7 @@ class CompletionRecord:
 def _init_distributed() -> None:
     if not dist.is_initialized():
         if torch.cuda.is_available():
-            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            local_rank = resolve_local_rank()
             torch.cuda.set_device(local_rank)
             backend = "nccl"
             dist.init_process_group(backend=backend, device_id=local_rank)

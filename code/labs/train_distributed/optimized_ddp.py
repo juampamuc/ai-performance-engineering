@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 from time import perf_counter
 from contextlib import nullcontext
 
@@ -16,6 +18,7 @@ from labs.train_distributed.training_utils.utils import (
     build_dataloader,
     build_text_model,
     build_tokenizer,
+    configure_training_matmul_policy,
     get_dataset,
     set_seed,
 )
@@ -51,7 +54,7 @@ def _maybe_fused_adamw(params, lr):
 
 def main():
     args = parse_args()
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     if not torch.cuda.is_available():
         raise RuntimeError("DDP optimized run requires CUDA GPUs.")
 
@@ -68,11 +71,7 @@ def main():
     world_size = dist.get_world_size()
     is_main = rank == 0
     set_seed(42)
-    torch.backends.cuda.matmul.allow_tf32 = True
-    try:
-        torch.set_float32_matmul_precision("high")
-    except AttributeError:
-        pass
+    configure_training_matmul_policy()
     use_ddp = dist.is_initialized()
     tokenizer = build_tokenizer()
     dataset = get_dataset()["train"]

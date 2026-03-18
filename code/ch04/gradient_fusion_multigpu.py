@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+
+from core.common.device_utils import resolve_local_rank
 from typing import Tuple
 
 import torch
@@ -20,7 +22,7 @@ def init_distributed() -> Tuple[int, int, torch.device]:
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = resolve_local_rank()
         torch.cuda.set_device(local_rank)
         dist.init_process_group(
             backend="nccl",

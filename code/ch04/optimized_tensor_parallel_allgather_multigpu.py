@@ -10,6 +10,8 @@ from pathlib import Path
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 import time
 from typing import Optional
 
@@ -57,7 +59,7 @@ def _resolve_hidden(hidden: Optional[int], world_size: int) -> int:
 def _init_distributed() -> tuple[int, int, int]:
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("optimized_tensor_parallel_allgather_multigpu requires torchrun (RANK/WORLD_SIZE missing).")
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl", device_id=local_rank)

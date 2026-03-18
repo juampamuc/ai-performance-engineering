@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+
+from core.common.device_utils import resolve_local_rank
 import random
 from pathlib import Path
 from typing import Callable
@@ -112,6 +114,15 @@ def set_seed(seed: int = 1337) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
+def configure_training_matmul_policy() -> None:
+    """Enable the shared matmul policy used by the DDP demos."""
+    torch.backends.cuda.matmul.allow_tf32 = True
+    try:
+        torch.set_float32_matmul_precision("high")
+    except AttributeError:
+        pass
+
+
 class cache_mesh:
     """Small decorator to reuse the last device mesh/process group when handy."""
 
@@ -140,7 +151,7 @@ def get(key, dm: dist.device_mesh.DeviceMesh | None = None):
     if key == "pg":
         return pg
     if key == "lrank":
-        return dm.get_local_rank() if dm else int(os.environ.get("LOCAL_RANK", 0))
+        return dm.get_local_rank() if dm else resolve_local_rank()
     raise ValueError(f"Invalid string: {key}")
 
 

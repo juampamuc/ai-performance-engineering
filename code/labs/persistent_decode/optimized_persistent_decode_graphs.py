@@ -234,7 +234,7 @@ class OptimizedPersistentDecodeGraphsBenchmark(VerificationPayloadMixin, BaseBen
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=3,
+            iterations=12,
             warmup=5,
             enable_profiling=False,
             enable_ncu=False,

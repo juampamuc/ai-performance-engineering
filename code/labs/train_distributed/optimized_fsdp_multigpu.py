@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 from functools import partial
 from pathlib import Path
 from contextlib import nullcontext
@@ -60,7 +62,7 @@ def parse_args():
 
 
 def _init_distributed() -> tuple[int, int, int]:
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl", device_id=local_rank)

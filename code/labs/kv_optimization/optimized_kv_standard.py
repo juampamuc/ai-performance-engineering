@@ -83,9 +83,8 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
         memory_per_token = num_layers * 2 * num_heads * head_dim * self.bytes_per_element
         total_memory_gb = (batch_size * max_seq_length * memory_per_token) / (1024**3)
 
-        logger.info(f"Optimized KV Cache ({self.cache_dtype})")
-        logger.info(f"  Compression: {compression_ratio}×")
-        logger.info(f"  Estimated memory: {total_memory_gb:.2f} GB")
+        self._compression_ratio = compression_ratio
+        self._estimated_memory_gb = total_memory_gb
 
     def setup(self):
         torch.manual_seed(42)
@@ -120,7 +119,10 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
         )
         self._generated_v_steps = torch.randn_like(self._generated_k_steps)
 
-        logger.info("Compressed KV cache allocated")
+        logger.debug(f"Optimized KV Cache ({self.cache_dtype})")
+        logger.debug(f"  Compression: {self._compression_ratio}x")
+        logger.debug(f"  Estimated memory: {self._estimated_memory_gb:.2f} GB")
+        logger.debug("Compressed KV cache allocated")
     
     def _compute_scale(self, x: torch.Tensor) -> torch.Tensor:
         """Compute dynamic scaling factor."""
@@ -236,8 +238,8 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
         memory_gb = torch.cuda.max_memory_allocated(self.device) / (1024**3)
         tokens_per_sec = (self.batch_size * self.num_decode_steps) / elapsed_s
 
-        logger.info(f"Throughput: {tokens_per_sec:.2f} tokens/sec")
-        logger.info(f"Memory: {memory_gb:.2f} GB (FP8 compressed)")
+        logger.debug(f"Throughput: {tokens_per_sec:.2f} tokens/sec")
+        logger.debug(f"Memory: {memory_gb:.2f} GB (FP8 compressed)")
 
         self._last_metrics = {
             "latency_ms": elapsed_ms_value,
@@ -314,5 +316,3 @@ def run_benchmark(
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedKVFP8Compressed()
-
-

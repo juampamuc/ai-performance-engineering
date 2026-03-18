@@ -511,7 +511,7 @@ def benchmark_nccl_allreduce(
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device("cuda", torch.cuda.current_device())
 
     # Create tensor
     num_elements = tensor_size_mb * 1024 * 1024 // 4  # float32 = 4 bytes

@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 from functools import partial
 import os
+
+from core.common.device_utils import resolve_local_rank
 from typing import Optional
 
 import torch
@@ -83,7 +85,7 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
         # Initialize distributed if environment variables are set
         if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            local_rank = resolve_local_rank()
             torch.cuda.set_device(local_rank)
             if not dist.is_initialized():
                 dist.init_process_group(backend="nccl", device_id=local_rank)

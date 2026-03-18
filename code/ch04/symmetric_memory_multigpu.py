@@ -36,6 +36,8 @@ from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 from core.optimization.symmetric_memory_patch import symmetric_memory_available
 from core.benchmark.gpu_requirements import require_min_gpus
 
@@ -67,7 +69,7 @@ def setup_distributed():
 
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
 
     torch.cuda.set_device(local_rank)
     dist.init_process_group(

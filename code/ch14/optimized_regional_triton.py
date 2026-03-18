@@ -74,6 +74,7 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.sequence_schedule: List[int] = [128, 256, 384, 512]
         self._step = 0
         self.model: Optional[nn.Module] = None
+        self._compiled_model: Optional[nn.Module] = None
         self.inputs: Dict[int, torch.Tensor] = {}
         max_tokens = self.batch_size * max(self.sequence_schedule) * self.hidden
         self._workload = WorkloadMetadata(
@@ -107,6 +108,7 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
             dynamic=True,
             mode="max-autotune",
         )
+        self._compiled_model = self.model
 
         for seq in self.sequence_schedule:
             self.inputs[seq] = torch.randn(
@@ -129,13 +131,13 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return seq
 
     def benchmark_fn(self) -> None:
-        if self.model is None:
+        if self._compiled_model is None:
             raise RuntimeError("Model not initialized")
         seq_len = self._next_sequence_length()
         x = self.inputs[seq_len]
         with torch.no_grad(), self._nvtx_range("optimized_regional_triton"):
             self._last_input = x
-            self.output = self.model(x)
+            self.output = self._compiled_model(x)
         if self.output is None or self._last_input is None:
             raise RuntimeError("benchmark_fn() must produce output")
         self._payload_dtype = self._last_input.dtype
@@ -160,6 +162,7 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def teardown(self) -> None:
         self.model = None
+        self._compiled_model = None
         self.inputs.clear()
         super().teardown()
 
@@ -196,5 +199,4 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedRegionalTritonBenchmark()
-
 

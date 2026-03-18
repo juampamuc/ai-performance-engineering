@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import math
 import os
+
+from core.common.device_utils import resolve_local_rank
 from time import perf_counter
 from contextlib import nullcontext
 
@@ -25,6 +27,7 @@ from labs.train_distributed.training_utils.utils import (
     build_dataloader,
     build_text_model,
     build_tokenizer,
+    configure_training_matmul_policy,
     get_dataset,
 )
 from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
@@ -61,17 +64,13 @@ def _maybe_fused_adamw(params, lr):
 def main():
     require_min_gpus(2, script_name="optimized_ddp_multigpu.py")
     args = parse_args()
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     if not torch.cuda.is_available():
         raise RuntimeError("DDP optimized run requires CUDA GPUs.")
 
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    torch.backends.cuda.matmul.allow_tf32 = True
-    try:
-        torch.set_float32_matmul_precision("high")
-    except AttributeError:
-        pass
+    configure_training_matmul_policy()
 
     if not dist.is_initialized():
         if "RANK" in os.environ and "WORLD_SIZE" in os.environ:

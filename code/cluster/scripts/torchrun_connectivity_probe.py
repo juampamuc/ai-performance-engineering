@@ -32,6 +32,8 @@ if __package__ in {None, ""}:
         _env,
     )
 
+from core.common.device_utils import resolve_local_rank
+
 
 def _env_int(name: str, default: int) -> int:
     value = os.environ.get(name)
@@ -57,7 +59,7 @@ def _probe_rank(
     payload_bytes: int,
     timeout_s: int,
 ) -> Dict[str, Any]:
-    local_rank = _env_int("LOCAL_RANK", 0)
+    local_rank = resolve_local_rank()
     rank = _env_int("RANK", 0)
     world_size = _env_int("WORLD_SIZE", 1)
 

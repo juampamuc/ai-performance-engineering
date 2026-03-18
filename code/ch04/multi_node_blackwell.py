@@ -16,6 +16,8 @@ detailed SDPA analysis and optimization techniques.
 from core.utils import compile_utils as _compile_utils_patch  # noqa: F401
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 try:
     from ch04.distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -117,7 +119,7 @@ def setup_blackwell_distributed(
     """
     # Get environment variables
     rank = int(os.environ.get("RANK", 0))
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     local_world_size = torch.cuda.device_count()
     

@@ -95,7 +95,7 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 raise RuntimeError("Tensors not initialized")
             out = self._attention(self.q, self.k, self.v)
             self._last = float(out.sum())
-            self.output = out.detach().clone()
+            self.output = out.detach()
         if self.q is None or self.k is None or self.v is None or self.output is None:
             raise RuntimeError("Verification input/output not initialized")
 

@@ -8,6 +8,37 @@ from typing import Callable, Optional, Tuple
 import torch
 
 
+def resolve_local_rank(
+    *,
+    local_rank_env: str = "LOCAL_RANK",
+    world_size_env: str = "WORLD_SIZE",
+) -> int:
+    """Resolve a local rank from the environment with multi-process validation."""
+    raw_rank = os.environ.get(local_rank_env)
+    if raw_rank not in (None, ""):
+        try:
+            return int(raw_rank)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid {local_rank_env} value {raw_rank!r}; expected an integer rank."
+            ) from exc
+
+    raw_world_size = os.environ.get(world_size_env)
+    if raw_world_size in (None, ""):
+        return 0
+
+    try:
+        world_size = int(raw_world_size)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid {world_size_env} value {raw_world_size!r}; expected an integer world size."
+        ) from exc
+
+    if world_size > 1:
+        raise RuntimeError(f"{local_rank_env} must be set when {world_size_env} > 1")
+    return 0
+
+
 def get_preferred_device() -> Tuple[torch.device, Optional[str]]:
     """Return the best available device and an error message if CUDA is absent."""
     if torch.cuda.is_available():
@@ -35,13 +66,7 @@ def require_cuda_device(
         raise RuntimeError(error_message)
     if local_rank_env is None:
         return torch.device("cuda")
-    raw_rank = os.environ.get(local_rank_env, "0")
-    try:
-        rank = int(raw_rank)
-    except ValueError as exc:
-        raise RuntimeError(
-            f"{error_message} Invalid {local_rank_env} value {raw_rank!r}; expected an integer rank."
-        ) from exc
+    rank = resolve_local_rank(local_rank_env=local_rank_env)
     return torch.device(f"cuda:{rank}")
 
 
@@ -77,6 +102,7 @@ def get_usable_cuda_or_cpu(
 __all__ = [
     "get_preferred_device",
     "cuda_supported",
+    "resolve_local_rank",
     "require_cuda_device",
     "resolve_requested_device",
     "get_usable_cuda_or_cpu",

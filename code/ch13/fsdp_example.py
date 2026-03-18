@@ -1,5 +1,7 @@
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 from core.utils.architecture_runtime import (
     get_arch_config,
     get_architecture,
@@ -122,7 +124,7 @@ def setup_distributed():
     world_size = dist.get_world_size()
     
     if torch.cuda.is_available():
-        local_rank = int(os.environ.get("LOCAL_RANK", rank % torch.cuda.device_count()))
+        local_rank = resolve_local_rank()
         torch.cuda.set_device(local_rank)
     
     return rank, world_size

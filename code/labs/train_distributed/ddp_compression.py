@@ -2,6 +2,8 @@
 
 import argparse
 import os
+
+from core.common.device_utils import resolve_local_rank
 from time import perf_counter
 from types import SimpleNamespace
 
@@ -148,7 +150,7 @@ def main():
     expected_cuda_seed = torch.cuda.initial_seed() if torch.cuda.is_available() else None
 
     args = parse_args()
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
         device = torch.device("cuda", local_rank)

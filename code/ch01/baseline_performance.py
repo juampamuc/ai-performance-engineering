@@ -28,6 +28,7 @@ from ch01.performance_common import (
     build_training_mlp,
     capture_tf32_state,
     get_environment_custom_metrics,
+    restore_tf32_state,
     seed_chapter1,
     set_tf32_state,
 )
@@ -149,11 +150,7 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         """Cleanup."""
         del self.model, self.microbatches, self.targets, self.optimizer
-        if self._tf32_state is not None:
-            matmul_state, cudnn_state = self._tf32_state
-            torch.backends.cuda.matmul.allow_tf32 = matmul_state
-            if cudnn_state is not None and torch.backends.cudnn.is_available():
-                torch.backends.cudnn.allow_tf32 = cudnn_state
+        restore_tf32_state(self._tf32_state)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
@@ -192,4 +189,3 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
     return BaselinePerformanceBenchmark()
-

@@ -207,6 +207,12 @@ VLLM_WHEEL_ARCH="$(uname -m)"
 VLLM_EXTRA_INDEX_URL="${VLLM_EXTRA_INDEX_URL:-https://wheels.vllm.ai/cu130}"
 VLLM_PIP_SPEC="${VLLM_PIP_SPEC:-vllm==0.16.0}"
 FLASHINFER_EXPECTED_VERSION="${FLASHINFER_EXPECTED_VERSION:-0.6.3}"
+TORCHTITAN_TOMLI_VERSION="${TORCHTITAN_TOMLI_VERSION:-2.4.0}"
+TORCHTITAN_TYRO_VERSION="${TORCHTITAN_TYRO_VERSION:-1.0.10}"
+TORCHTITAN_RUNTIME_DEPS=(
+    "tomli==${TORCHTITAN_TOMLI_VERSION}"
+    "tyro==${TORCHTITAN_TYRO_VERSION}"
+)
 VLLM_RUNTIME_DEPS=(
     "cbor2==5.8.0"
     "msgspec==0.20.0"
@@ -2002,6 +2008,12 @@ if [ -f "$REQUIREMENTS_FILE" ]; then
     pip_install --no-input --no-deps "torchtitan==${TORCHTITAN_VERSION}" || {
         echo "  Warning: torchtitan installation failed, but continuing..."
     }
+
+    echo "  Installing torchtitan runtime dependencies..."
+    pip_install --no-input "${TORCHTITAN_RUNTIME_DEPS[@]}" || {
+        echo "  ERROR: torchtitan runtime dependency install failed"
+        exit 1
+    }
     
     # CRITICAL: Verify PyTorch CUDA wasn't overridden by accelerate/torchtitan dependencies
     echo "  Verifying PyTorch CUDA wasn't overridden..."
@@ -2010,8 +2022,23 @@ if [ -f "$REQUIREMENTS_FILE" ]; then
         exit 1
     fi
     echo "  ✓ PyTorch CUDA verified"
+
+    echo "  Verifying torchtitan runtime imports..."
+    if ! python3 <<'PY'; then
+import torchtitan
+from torchtitan.config.job_config import JobConfig
+from torchtitan.distributed.tensor_parallel import maybe_enable_async_tp
+
+print(f"  torchtitan: {torchtitan.__file__}")
+print(f"  JobConfig: {JobConfig.__module__}")
+print(f"  maybe_enable_async_tp: {maybe_enable_async_tp.__module__}")
+PY
+        echo "  ERROR: torchtitan runtime verification failed"
+        exit 1
+    fi
+    echo "  ✓ torchtitan runtime verified"
     
-    echo "✓ accelerate and torchtitan installed (PyTorch CUDA verified)"
+    echo "✓ accelerate and torchtitan installed (PyTorch CUDA + torchtitan runtime verified)"
 fi
 
 # TRT-LLM dependencies

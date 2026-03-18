@@ -14,6 +14,7 @@ benchmarks remain deterministic and GPU-friendly on B200/B300 and GB200/GB300.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -31,9 +32,11 @@ def _torch_version_tuple() -> Tuple[int, int]:
 _TORCH_MIN = (2, 10)
 if _torch_version_tuple() < _TORCH_MIN:
     # Soft guard only; we do not raise to keep CI runs alive on older stacks.
-    print(
+    warnings.warn(
         "[ch15] placement_sim expects torch>=2.10 with CUDA 13 for Blackwell (B200/B300, GB200/GB300); "
-        "falling back to compatibility mode."
+        "falling back to compatibility mode.",
+        RuntimeWarning,
+        stacklevel=1,
     )
 
 

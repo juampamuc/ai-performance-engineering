@@ -1694,6 +1694,8 @@ if TYPER_AVAILABLE:
                         qr = _to_quarantine_reason(baseline_result.reason)
                         if qr is not None:
                             quarantine_mgr.quarantine(str(baseline_path), qr)
+                elif baseline_result.passed:
+                    quarantine_mgr.clear_quarantine(str(baseline_path))
 
                 for optimized_path in selected_opts:
                     pair_name = f"{base_example}/{optimized_path.stem.replace('optimized_', '')}"
@@ -1760,6 +1762,7 @@ if TYPER_AVAILABLE:
                         result = verify_runner.verify_optimized(optimized, config=verify_config)
 
                         if result.passed:
+                            quarantine_mgr.clear_quarantine(str(optimized_path))
                             typer.echo(f"      ✅ PASSED")
                             passed_count += 1
                             results.append({
@@ -3072,6 +3075,12 @@ if TYPER_AVAILABLE:
         )
         
         code_dir = Path(__file__).parent.parent.parent
+
+        def _count_audit_results(results: dict[str, dict[str, object]]) -> tuple[int, int, int]:
+            compliant = sum(1 for result in results.values() if result.get("status") == "compliant")
+            needs_work = sum(1 for result in results.values() if result.get("status") == "needs_work")
+            errors = sum(1 for result in results.values() if result.get("status") == "error")
+            return compliant, needs_work, errors
         
         total_compliant = 0
         total_needs_work = 0
@@ -3093,13 +3102,14 @@ if TYPER_AVAILABLE:
             
             results = audit_directory(chapter_dir)
             if results:
+                c, n, e = _count_audit_results(results)
+                total_compliant += c
+                total_needs_work += n
+                total_errors += e
                 if json_output:
                     all_results[ch] = results
                 else:
-                    c, n, e = print_summary(results, f"{ch.upper()}")
-                    total_compliant += c
-                    total_needs_work += n
-                    total_errors += e
+                    print_summary(results, f"{ch.upper()}")
         
         # Audit labs
         if lab:
@@ -3120,13 +3130,14 @@ if TYPER_AVAILABLE:
             
             results = audit_directory(lab_dir)
             if results:
+                c, n, e = _count_audit_results(results)
+                total_compliant += c
+                total_needs_work += n
+                total_errors += e
                 if json_output:
                     all_results[f"lab:{lb}"] = results
                 else:
-                    c, n, e = print_summary(results, f"LAB: {lb}")
-                    total_compliant += c
-                    total_needs_work += n
-                    total_errors += e
+                    print_summary(results, f"LAB: {lb}")
         
         # Output
         if json_output:

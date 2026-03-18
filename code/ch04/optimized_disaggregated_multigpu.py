@@ -8,6 +8,8 @@ Implements BaseBenchmark for harness integration.
 
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -15,6 +17,7 @@ import copy
 
 from core.utils.compile_utils import compile_model
 from core.benchmark.gpu_requirements import skip_if_insufficient_gpus
+from core.common.device_utils import resolve_local_rank
 
 from typing import Optional
 
@@ -58,9 +61,8 @@ class OptimizedDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         skip_if_insufficient_gpus()
         
         # Only initialize distributed when launched under torchrun.
-        import os
         if dist.is_available() and "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            local_rank = resolve_local_rank()
             if torch.cuda.is_available():
                 torch.cuda.set_device(local_rank)
             if not dist.is_initialized():

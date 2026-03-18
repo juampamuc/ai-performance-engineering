@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 import torch
 import torch.distributed as dist
 
@@ -47,7 +49,7 @@ class BaselineReinitCommBenchmark(VerificationPayloadMixin, BaseBenchmark):
         setup_single_gpu_env()
         self.rank = int(os.environ.get("RANK", "0"))
         self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
-        self.local_rank = int(os.environ.get("LOCAL_RANK", self.rank))
+        self.local_rank = resolve_local_rank()
         self.device = torch.device(f"cuda:{self.local_rank}")
         torch.cuda.set_device(self.local_rank)
         torch.manual_seed(42)

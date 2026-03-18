@@ -49,6 +49,11 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.tiles = 8192
         self.baseline_total_elements = self.tiles * self.tile_elems
         # Warp specialization benchmark - fixed dimensions for pipeline analysis
+        total_elems = self.tiles * self.tile_elems
+        self.register_workload_metadata(
+            tokens_per_iteration=float(total_elems * 2),
+            requests_per_iteration=1.0,
+        )
 
     def setup(self) -> None:
         torch.manual_seed(42)  # Match baseline seed

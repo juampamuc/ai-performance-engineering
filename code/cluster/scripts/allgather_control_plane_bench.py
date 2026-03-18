@@ -18,6 +18,8 @@ import gc
 import json
 import math
 import os
+
+from core.common.device_utils import resolve_local_rank
 import socket
 import sys
 import time
@@ -183,7 +185,7 @@ def main() -> int:
         raise SystemExit(f"ERROR: --warmup must be >= 0 (got {args.warmup})")
 
     dist.init_process_group(backend="nccl")
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
 
     rank = dist.get_rank()

@@ -64,6 +64,8 @@ When NOT to Use:
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 from core.optimization.symmetric_memory_patch import (
     SymmetricMemoryHandle,
     maybe_create_symmetric_memory_handle,
@@ -119,7 +121,7 @@ def init_distributed() -> Tuple[int, int, int]:
 
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", max(1, gpu_count)))
-    local_rank = int(os.environ.get("LOCAL_RANK", rank % max(1, gpu_count)))
+    local_rank = resolve_local_rank()
 
     if local_rank >= gpu_count:
         raise RuntimeError(

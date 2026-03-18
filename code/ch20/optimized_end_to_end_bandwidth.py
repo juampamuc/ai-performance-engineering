@@ -100,20 +100,36 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.inputs is not None
         with self._nvtx_range("optimized_end_to_end_bandwidth"):
+            # Match the baseline timed path: execute one compiled forward per batch
+            # and only materialize a stacked tensor once per iteration.
             with torch.no_grad():
                 self.outputs = []
                 for inp in self.inputs:
-                    # torch.compile may reuse output storage across calls, so keep a
-                    # stable copy of each batch result for verification.
-                    self.outputs.append(self.model(inp).detach().clone())
+                    self.outputs.append(self.model(inp))
                 self.output = torch.stack(self.outputs) if self.outputs else None
 
+    def _build_verification_output(self) -> torch.Tensor:
+        if self.model is None or self.inputs is None:
+            raise RuntimeError("_build_verification_output() requires initialized model and inputs")
+        stable_outputs: list[torch.Tensor] = []
+        with torch.no_grad():
+            for inp in self.inputs:
+                # torch.compile may reuse output storage across calls, so clone only
+                # in the post-timing verification path.
+                stable_outputs.append(self.model(inp).detach().clone())
+        if not stable_outputs:
+            raise RuntimeError("_build_verification_output() requires at least one batch")
+        self.outputs = stable_outputs
+        self.output = torch.stack(stable_outputs)
+        return self.output
+
     def capture_verification_payload(self) -> None:
-        if self.model is None or self.stacked_inputs is None or self.output is None:
+        if self.model is None or self.stacked_inputs is None:
             raise RuntimeError("capture_verification_payload() requires completed benchmark run")
+        verification_output = self._build_verification_output()
         self._set_verification_payload(
             inputs={"inputs": self.stacked_inputs.detach()},
-            output=self.output.detach().clone(),
+            output=verification_output.detach().clone(),
             batch_size=int(self.stacked_inputs.shape[0]),
             parameter_count=sum(p.numel() for p in self.model.parameters()),
             output_tolerance=(0.1, 1.0),

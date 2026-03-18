@@ -28,6 +28,8 @@ Async-TP currently requires:
 
 import os
 
+from core.common.device_utils import resolve_local_rank
+
 try:
     from ch04.distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -85,12 +87,8 @@ def init_distributed(tp_degree: int) -> int:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA devices are required to run this demo.")
 
-    if "LOCAL_RANK" in os.environ:
-        local_rank = int(os.environ["LOCAL_RANK"])
-    else:  # pragma: no cover - torchrun always sets LOCAL_RANK
-        local_rank = 0
-
     setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl", device_id=local_rank)

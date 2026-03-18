@@ -6,6 +6,39 @@ import argparse
 import torch
 import torch.distributed as dist
 
+
+def _resolve_local_rank() -> int:
+    raw_rank = os.environ.get("LOCAL_RANK")
+    if raw_rank not in (None, ""):
+        try:
+            return int(raw_rank)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid LOCAL_RANK value {raw_rank!r}; expected an integer rank."
+            ) from exc
+
+    raw_world_size = os.environ.get("WORLD_SIZE")
+    if raw_world_size in (None, "", "1"):
+        return 0
+    raise RuntimeError("LOCAL_RANK must be set when WORLD_SIZE > 1")
+
+
+def _resolve_device(backend: str, local_rank: int) -> torch.device:
+    if backend != "nccl":
+        return torch.device("cpu")
+
+    gpu_count = torch.cuda.device_count()
+    if gpu_count <= 0:
+        raise RuntimeError("NCCL backend requested but no CUDA devices are visible.")
+    if local_rank < 0 or local_rank >= gpu_count:
+        raise RuntimeError(
+            f"LOCAL_RANK {local_rank} is out of range for available GPUs ({gpu_count})."
+        )
+
+    torch.cuda.set_device(local_rank)
+    return torch.device("cuda", local_rank)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Multi-node Gloo all-reduce benchmark")
     parser.add_argument(
@@ -29,20 +62,19 @@ def main():
         print("Falling back to Gloo backend.", flush=True)
         args.backend = "gloo"
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = _resolve_local_rank()
+    device = _resolve_device(args.backend, local_rank)
 
     # Initialize the default ProcessGroup over env:// (uses MASTER_ADDR, MASTER_PORT, etc.)
     try:
         init_kwargs = {"backend": args.backend, "init_method": "env://"}
         if args.backend == "nccl":
-            torch.cuda.set_device(local_rank)
             init_kwargs["device_id"] = local_rank
         dist.init_process_group(**init_kwargs)
     except Exception as e:
         print(f"Failed to initialize process group: {e}", flush=True)
         print("Running single-process benchmark instead.", flush=True)
         # Single process benchmark
-        device = "cuda" if args.backend == "nccl" and torch.cuda.is_available() else "cpu"
         tensor = torch.ones(args.data_size, dtype=torch.float32, device=device)
         
         start = time.time()
@@ -59,7 +91,6 @@ def main():
     world_size = dist.get_world_size()
     
     # Allocate a large tensor
-    device = "cuda" if args.backend == "nccl" else "cpu"
     tensor = torch.ones(args.data_size, dtype=torch.float32, device=device)
     
     # Warm up and barrier

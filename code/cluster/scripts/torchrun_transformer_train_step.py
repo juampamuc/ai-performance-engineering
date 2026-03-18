@@ -27,6 +27,7 @@ if __package__ in {None, ""}:
         _env,
     )
 
+from core.common.device_utils import resolve_local_rank
 from core.harness.benchmark_harness import (  # type: ignore
     _resolve_physical_device_index,
     lock_gpu_clocks,
@@ -171,7 +172,7 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-4)
     args = ap.parse_args()
 
-    local_rank = _env_int("LOCAL_RANK", 0)
+    local_rank = resolve_local_rank()
     rank = _env_int("RANK", 0)
     world_size = _env_int("WORLD_SIZE", 1)
     node = socket.gethostname()

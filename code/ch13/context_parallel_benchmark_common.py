@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import os
+
+from core.common.device_utils import resolve_local_rank
 import time
 from typing import Callable, Optional, Tuple
 
@@ -71,7 +73,7 @@ def build_attention_workspace(
 def init_distributed() -> Tuple[int, int, int]:
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("Context-parallel benchmarks require torchrun (RANK/WORLD_SIZE missing).")
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl", device_id=local_rank)

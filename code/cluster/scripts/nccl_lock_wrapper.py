@@ -18,6 +18,7 @@ if __package__ in {None, ""}:
         _env,
     )
 
+from core.common.device_utils import resolve_local_rank
 from core.harness.benchmark_harness import (  # type: ignore
     lock_gpu_clocks,
     ramp_gpu_clocks,
@@ -81,7 +82,10 @@ def main() -> int:
     setup_logging(level="INFO")
     logger = get_logger("nccl_lock_wrapper")
 
-    local_rank = _get_env_int("OMPI_COMM_WORLD_LOCAL_RANK", 0)
+    local_rank = resolve_local_rank(
+        local_rank_env="OMPI_COMM_WORLD_LOCAL_RANK",
+        world_size_env="OMPI_COMM_WORLD_SIZE",
+    )
     world_rank = _get_env_int("OMPI_COMM_WORLD_RANK", 0)
     world_size = _get_env_int("OMPI_COMM_WORLD_SIZE", 1)
     node = socket.gethostname()
