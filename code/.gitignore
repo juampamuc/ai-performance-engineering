@@ -172,6 +172,7 @@ single_gpu_load_test.json
 # Generated summary files
 *summary.md
 **/summary.md
+**/BENCHMARK_PAIR_REVIEW_REPORT.md
 
 # Expectations backups
 *.json.bak

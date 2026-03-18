@@ -253,9 +253,12 @@ def test_ch13_regional_compile_moves_fp32_verification_conversion_out_of_hot_loo
     assert "output=self._verify_output.float().clone()" in capture_section
 
 
-def test_ch13_memory_profiling_pair_keeps_compute_dtype_fixed_and_captures_output_in_graph() -> None:
+def test_ch13_memory_profiling_pair_keeps_compute_dtype_fixed_and_direct_output_capture() -> None:
     baseline_source = (REPO_ROOT / "ch13" / "baseline_memory_profiling.py").read_text(encoding="utf-8")
     optimized_source = (REPO_ROOT / "ch13" / "optimized_memory_profiling.py").read_text(encoding="utf-8")
+    baseline_benchmark = baseline_source.split("def benchmark_fn", maxsplit=1)[1].split(
+        "def capture_verification_payload", maxsplit=1
+    )[0]
     optimized_benchmark = optimized_source.split("def benchmark_fn", maxsplit=1)[1].split(
         "def capture_verification_payload", maxsplit=1
     )[0]
@@ -265,9 +268,11 @@ def test_ch13_memory_profiling_pair_keeps_compute_dtype_fixed_and_captures_outpu
     assert "dtype=torch.bfloat16" not in optimized_source
     assert "self.inputs_fp32" not in optimized_source
     assert "self.targets_fp32" not in optimized_source
-    assert "self.output_buffer.copy_(outputs)" in optimized_source
-    assert "self.output = self.output_buffer.detach().clone()" in optimized_benchmark
-    assert "self.model(self.inputs)" not in optimized_benchmark
+    for source in (baseline_source, optimized_source):
+        assert "dtype=torch.float32" in source
+    assert "self.output = outputs.detach().clone()" in baseline_benchmark
+    assert "self.output = outputs.detach().clone()" in optimized_benchmark
+    assert "self.output_buffer" not in optimized_source
 
 
 def test_ch12_kernel_launches_pair_keeps_hot_path_work_fixed() -> None:
@@ -369,6 +374,40 @@ def test_persistent_decode_verification_clone_stays_out_of_hot_path() -> None:
         benchmark_section = text.split("def capture_verification_payload", maxsplit=1)[0]
         assert ".float().clone()" not in benchmark_section
         assert ".detach().clone()" not in benchmark_section
+
+
+def test_iteration_seed_and_clone_fixes_for_reviewed_pairs_remain_applied() -> None:
+    baseline_pipeline = (REPO_ROOT / "ch10" / "baseline_pipeline_3stage.py").read_text(encoding="utf-8")
+    optimized_pipeline = (REPO_ROOT / "ch10" / "optimized_pipeline_3stage.py").read_text(encoding="utf-8")
+    baseline_gluon = (
+        REPO_ROOT / "labs" / "flashattention_gluon" / "baseline_flashattention_gluon.py"
+    ).read_text(encoding="utf-8")
+    optimized_gluon = (
+        REPO_ROOT / "labs" / "flashattention_gluon" / "optimized_flashattention_gluon.py"
+    ).read_text(encoding="utf-8")
+    blackwell = (REPO_ROOT / "labs" / "blackwell_matmul" / "blackwell_benchmarks.py").read_text(
+        encoding="utf-8"
+    )
+    baseline_double_buffer = (REPO_ROOT / "ch19" / "baseline_memory_double_buffering.py").read_text(
+        encoding="utf-8"
+    )
+    optimized_double_buffer = (REPO_ROOT / "ch19" / "optimized_memory_double_buffering.py").read_text(
+        encoding="utf-8"
+    )
+    optimized_rack_prep = (REPO_ROOT / "ch03" / "optimized_rack_prep.py").read_text(encoding="utf-8")
+
+    for source in (baseline_pipeline, optimized_pipeline, baseline_gluon, optimized_gluon):
+        assert "iterations=10" in source
+        assert "warmup=5" in source
+
+    assert "torch.manual_seed(42)" in blackwell
+    assert "torch.cuda.manual_seed_all(42)" in blackwell
+    for source in (baseline_double_buffer, optimized_double_buffer):
+        assert "torch.manual_seed(42)" in source
+        assert "torch.cuda.manual_seed_all(42)" in source
+
+    assert "host_template.pin_memory()" in optimized_rack_prep
+    assert "host_template.clone().pin_memory()" in optimized_rack_prep
 
 
 def test_ch15_optimized_monolithic_uses_token_equivalent_decode_steps() -> None:

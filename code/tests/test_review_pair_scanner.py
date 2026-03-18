@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from core.verification import review_baseline_optimized_pairs as pair_review
@@ -297,6 +298,12 @@ def get_benchmark():
     issues = reviewer.compare_pair(baseline, [optimized])
 
     assert any(issue["type"] == "seed_mismatch" for issue in issues)
+    issue = next(issue for issue in issues if issue["type"] == "seed_mismatch")
+    assert issue["issue_id"] == "PAIR_SEED_MISMATCH"
+    assert issue["category"] == "environment"
+    assert issue["scope"] == ""
+    assert issue["baseline_path"] == str(baseline)
+    assert issue["optimized_path"] == str(optimized)
 
 
 def test_compare_pair_flags_config_mismatch(tmp_path: Path) -> None:
@@ -689,6 +696,102 @@ def get_benchmark():
     assert not any(issue["type"] == "precision_mismatch" for issue in issues)
 
 
+def test_compare_pair_skips_precision_mismatch_when_signature_ignores_precision_flags(tmp_path: Path) -> None:
+    reviewer = CodeReviewer()
+    baseline = _write(
+        tmp_path,
+        "baseline_model_dtype.py",
+        _BENCHMARK_PREFIX
+        + """
+class BaselineModelDTypeBenchmark(BaseBenchmark):
+    signature_equivalence_ignore_fields = ("precision_flags",)
+
+    def setup(self):
+        self.x = torch.randn(8, device=self.device, dtype=torch.float32)
+
+    def benchmark_fn(self):
+        return None
+
+
+def get_benchmark():
+    return BaselineModelDTypeBenchmark()
+""",
+    )
+    optimized = _write(
+        tmp_path,
+        "optimized_model_dtype.py",
+        _BENCHMARK_PREFIX
+        + """
+class OptimizedModelDTypeBenchmark(BaseBenchmark):
+    signature_equivalence_ignore_fields = ("precision_flags",)
+
+    def setup(self):
+        self.x = torch.randn(8, device=self.device, dtype=torch.float16)
+
+    def benchmark_fn(self):
+        self.output = self.model(self.x.to(dtype=torch.float16))
+
+
+def get_benchmark():
+    return OptimizedModelDTypeBenchmark()
+""",
+    )
+
+    issues = reviewer.compare_pair(baseline, [optimized])
+
+    assert not any(issue["type"] == "precision_mismatch" for issue in issues)
+    assert not any(
+        issue["type"] == "hot_path_extra_work" and "dtype_casts" in str(issue.get("evidence"))
+        for issue in issues
+    )
+
+
+def test_compare_pair_skips_route_mode_delta_for_routing_targets(tmp_path: Path) -> None:
+    reviewer = CodeReviewer()
+    baseline = _write(
+        tmp_path,
+        "baseline_moe_routing.py",
+        _BENCHMARK_PREFIX
+        + """
+class BaselineMoERoutingBenchmark(BaseBenchmark):
+    route_mode = "uniform"
+
+    def benchmark_fn(self):
+        return None
+
+
+def get_benchmark():
+    return BaselineMoERoutingBenchmark()
+""",
+    )
+    optimized = _write(
+        tmp_path,
+        "optimized_moe_routing.py",
+        _BENCHMARK_PREFIX
+        + """
+class OptimizedMoERoutingBenchmark(BaseBenchmark):
+    route_mode = "topology_aware"
+
+    def benchmark_fn(self):
+        return None
+
+
+def get_benchmark():
+    return OptimizedMoERoutingBenchmark()
+""",
+    )
+
+    issues = reviewer.compare_pair(baseline, [optimized])
+
+    assert not any(issue["type"] == "algorithmic_pair_mismatch" for issue in issues)
+
+
+def test_is_informational_benchmark_supports_lab_scope_aliases() -> None:
+    path = Path("labs/persistent_decode/optimized_persistent_decode_cuda.py").resolve()
+
+    assert pair_review._is_informational_benchmark(path) is True
+
+
 def test_review_main_scopes_to_requested_chapters(monkeypatch, capsys) -> None:
     calls: list[str] = []
 
@@ -703,6 +806,57 @@ def test_review_main_scopes_to_requested_chapters(monkeypatch, capsys) -> None:
     rc = pair_review.main(["--chapter", "ch12"])
 
     captured = capsys.readouterr()
-    assert rc == 1
+    assert rc == 0
     assert calls == ["ch12"]
     assert "No benchmark pairs found for the requested scope." in captured.out
+
+
+def test_write_review_outputs_emits_json_and_markdown(tmp_path: Path) -> None:
+    report = pair_review.ReviewReport(
+        timestamp="2026-03-18T00:00:00+00:00",
+        chapters=["ch12"],
+        total_pairs=1,
+        findings=[
+            pair_review._make_issue(
+                file="baseline.py vs optimized.py",
+                issue_type="config_mismatch",
+                severity="high",
+                message="BenchmarkConfig differs",
+            )
+        ],
+    )
+
+    written = pair_review.write_review_outputs(report, tmp_path, write_json=True, write_markdown=True)
+
+    json_path = Path(written["json"])
+    markdown_path = Path(written["markdown"])
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["total_pairs"] == 1
+    assert payload["findings"][0]["issue_id"] == "PAIR_CONFIG_MISMATCH"
+    assert "PAIR_CONFIG_MISMATCH" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_review_main_is_advisory_even_when_findings_exist(tmp_path: Path, monkeypatch) -> None:
+    report = pair_review.ReviewReport(
+        timestamp="2026-03-18T00:00:00+00:00",
+        chapters=["ch11"],
+        total_pairs=1,
+        findings=[
+            pair_review._make_issue(
+                file="baseline.py vs optimized.py",
+                issue_type="report_drift",
+                severity="medium",
+                message="stale report",
+            )
+        ],
+    )
+
+    monkeypatch.setattr(pair_review, "run_review", lambda chapters: report)
+    output_dir = tmp_path / "audit"
+
+    rc = pair_review.main(["--json", "--markdown", "--output-dir", str(output_dir)])
+
+    assert rc == 0
+    assert (output_dir / "review_findings.json").exists()
+    assert (output_dir / "review_findings.md").exists()

@@ -15,14 +15,124 @@ from __future__ import annotations
 import argparse
 import ast
 from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 from core.discovery import discover_benchmark_pairs
+
+
+FINDING_METADATA: Dict[str, Dict[str, str]] = {
+    "error": {"issue_id": "AUDIT_FILE_READ_ERROR", "category": "tooling"},
+    "sleep_call": {"issue_id": "BENCHMARK_SLEEP_CALL", "category": "timing"},
+    "artificial_delay": {"issue_id": "BENCHMARK_ARTIFICIAL_DELAY", "category": "timing"},
+    "suspicious_pattern": {"issue_id": "BENCHMARK_SUSPICIOUS_PATTERN", "category": "documentation"},
+    "work_reduction": {"issue_id": "PAIR_WORKLOAD_MISMATCH", "category": "workload"},
+    "sync_mismatch": {"issue_id": "PAIR_SYNC_MISMATCH", "category": "timing"},
+    "seed_mismatch": {"issue_id": "PAIR_SEED_MISMATCH", "category": "environment"},
+    "config_mismatch": {"issue_id": "PAIR_CONFIG_MISMATCH", "category": "config"},
+    "precision_mismatch": {"issue_id": "PAIR_PRECISION_MISMATCH", "category": "workload"},
+    "hot_path_extra_work": {"issue_id": "PAIR_HOT_PATH_EXTRA_WORK", "category": "hot_path"},
+    "algorithmic_pair_mismatch": {"issue_id": "PAIR_ALGORITHMIC_MISMATCH", "category": "semantic"},
+    "report_drift": {"issue_id": "PAIR_REVIEW_REPORT_DRIFT", "category": "documentation"},
+}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _scope_from_paths(baseline_path: Optional[Path], optimized_path: Optional[Path], file_label: str) -> str:
+    for path in (baseline_path, optimized_path):
+        if path is None:
+            continue
+        try:
+            return path.parent.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            continue
+    if " vs " in file_label:
+        lhs = file_label.split(" vs ", 1)[0]
+        try:
+            return Path(lhs).resolve().parent.relative_to(REPO_ROOT).as_posix()
+        except Exception:
+            return ""
+    return ""
+
+
+def _make_issue(
+    *,
+    file: str,
+    issue_type: str,
+    severity: str,
+    message: str,
+    baseline_path: Optional[Path] = None,
+    optimized_path: Optional[Path] = None,
+    evidence: Optional[Any] = None,
+    status: str = "finding",
+    skip_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    metadata = FINDING_METADATA.get(issue_type, {"issue_id": f"UNKNOWN_{issue_type.upper()}", "category": "unknown"})
+    return {
+        "file": file,
+        "type": issue_type,
+        "issue_id": metadata["issue_id"],
+        "severity": severity,
+        "category": metadata["category"],
+        "scope": _scope_from_paths(baseline_path, optimized_path, file),
+        "baseline_path": str(baseline_path) if baseline_path is not None else None,
+        "optimized_path": str(optimized_path) if optimized_path is not None else None,
+        "message": message,
+        "evidence": evidence,
+        "status": status,
+        "skip_reason": skip_reason,
+    }
+
+
+@dataclass
+class ReviewReport:
+    timestamp: str
+    chapters: List[str]
+    total_pairs: int
+    findings: List[Dict[str, Any]] = field(default_factory=list)
+
+    def severity_counts(self) -> Dict[str, int]:
+        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for finding in self.findings:
+            severity = str(finding.get("severity", "low"))
+            if severity not in counts:
+                counts[severity] = 0
+            counts[severity] += 1
+        return counts
+
+    def pair_statuses(self) -> Dict[str, str]:
+        statuses = {}
+        for finding in self.findings:
+            baseline_path = finding.get("baseline_path")
+            optimized_path = finding.get("optimized_path")
+            if not baseline_path or not optimized_path:
+                continue
+            key = f"{_benchmark_scope_key(Path(baseline_path))}:{_benchmark_example_name(Path(optimized_path))}"
+            statuses[key] = "FLAG"
+        return statuses
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "timestamp": self.timestamp,
+            "chapters": self.chapters,
+            "summary": {
+                "total_pairs": self.total_pairs,
+                "total_findings": len(self.findings),
+                "severity_counts": self.severity_counts(),
+            },
+            "pair_statuses": self.pair_statuses(),
+            "findings": self.findings,
+        }
 
 
 def _get_attr_name(node: ast.AST) -> Optional[str]:
@@ -572,6 +682,16 @@ def _is_intentional_precision_target(baseline_path: Path, opt_path: Path) -> boo
     return any(any(keyword in name for keyword in keywords) for name in names)
 
 
+def _ignores_precision_flags_in_signature(content: str) -> bool:
+    return bool(
+        re.search(
+            r"signature_equivalence_ignore_fields\s*=\s*.*precision_flags",
+            content,
+            re.DOTALL,
+        )
+    )
+
+
 def _benchmark_example_name(path: Path) -> str:
     stem = path.stem
     for prefix in ("baseline_", "optimized_"):
@@ -594,11 +714,14 @@ def _is_informational_benchmark(path: Path) -> bool:
         return False
     scope = _benchmark_scope_key(path)
     example_name = _benchmark_example_name(path)
-    return example_name in INFORMATIONAL_BENCHMARKS.get(scope, set())
+    scope_candidates = [scope]
+    if scope:
+        scope_candidates.append(Path(scope).name)
+    return any(example_name in INFORMATIONAL_BENCHMARKS.get(candidate, set()) for candidate in scope_candidates)
 
 
-def dedupe_issues(issues: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    deduped: List[Dict[str, str]] = []
+def dedupe_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
     seen: Set[Tuple[str, str, str]] = set()
     for issue in issues:
         key = (issue["type"], issue["file"], issue["message"])
@@ -613,33 +736,41 @@ class CodeReviewer:
     """Review code for questionable practices."""
     
     def __init__(self):
-        self.issues: List[Dict[str, str]] = []
+        self.issues: List[Dict[str, Any]] = []
     
-    def check_file(self, file_path: Path, pair_type: str) -> List[Dict[str, str]]:
+    def check_file(self, file_path: Path, pair_type: str) -> List[Dict[str, Any]]:
         """Check a single file for issues."""
         file_issues = []
         
         try:
             content = file_path.read_text()
         except Exception as e:
-            file_issues.append({
-                "file": str(file_path),
-                "type": "error",
-                "severity": "high",
-                "message": f"Could not read file: {e}"
-            })
+            file_issues.append(
+                _make_issue(
+                    file=str(file_path),
+                    issue_type="error",
+                    severity="high",
+                    message=f"Could not read file: {e}",
+                    baseline_path=file_path if pair_type == "baseline" else None,
+                    optimized_path=file_path if pair_type == "optimized" else None,
+                )
+            )
             return file_issues
         
         # Check for sleep calls
         if re.search(r'\btime\.sleep\s*\(', content):
             # Check if it's in benchmark_fn or setup/teardown
             if self._is_in_benchmark_code(content, 'time.sleep'):
-                file_issues.append({
-                    "file": str(file_path),
-                    "type": "sleep_call",
-                    "severity": "critical",
-                    "message": "time.sleep() found in benchmark code - this artificially inflates timing"
-                })
+                file_issues.append(
+                    _make_issue(
+                        file=str(file_path),
+                        issue_type="sleep_call",
+                        severity="critical",
+                        message="time.sleep() found in benchmark code - this artificially inflates timing",
+                        baseline_path=file_path if pair_type == "baseline" else None,
+                        optimized_path=file_path if pair_type == "optimized" else None,
+                    )
+                )
         
         # Check for artificial delays
         delay_patterns = [
@@ -650,12 +781,16 @@ class CodeReviewer:
         for pattern, desc in delay_patterns:
             if re.search(pattern, content):
                 if self._is_in_benchmark_code(content, pattern):
-                    file_issues.append({
-                        "file": str(file_path),
-                        "type": "artificial_delay",
-                        "severity": "critical",
-                        "message": f"{desc} found in benchmark code"
-                    })
+                    file_issues.append(
+                        _make_issue(
+                            file=str(file_path),
+                            issue_type="artificial_delay",
+                            severity="critical",
+                            message=f"{desc} found in benchmark code",
+                            baseline_path=file_path if pair_type == "baseline" else None,
+                            optimized_path=file_path if pair_type == "optimized" else None,
+                        )
+                    )
         
         # Check for missing synchronizations in optimized but present in baseline
         # This is harder - we'll do pair-wise comparison
@@ -667,12 +802,16 @@ class CodeReviewer:
         )
         for line in content.splitlines():
             if suspicious_comment_pattern.search(line):
-                file_issues.append({
-                    "file": str(file_path),
-                    "type": "suspicious_pattern",
-                    "severity": "medium",
-                    "message": "Suspicious comment suggesting benchmark deception",
-                })
+                file_issues.append(
+                    _make_issue(
+                        file=str(file_path),
+                        issue_type="suspicious_pattern",
+                        severity="medium",
+                        message="Suspicious comment suggesting benchmark deception",
+                        baseline_path=file_path if pair_type == "baseline" else None,
+                        optimized_path=file_path if pair_type == "optimized" else None,
+                    )
+                )
                 break
         
         return file_issues
@@ -702,31 +841,37 @@ class CodeReviewer:
         
         return False
     
-    def compare_pair(self, baseline_path: Path, optimized_paths: List[Path]) -> List[Dict[str, str]]:
+    def compare_pair(self, baseline_path: Path, optimized_paths: List[Path]) -> List[Dict[str, Any]]:
         """Compare a baseline/optimized pair for fairness."""
         pair_issues = []
         
         try:
             baseline_content = baseline_path.read_text()
         except Exception as e:
-            pair_issues.append({
-                "file": f"{baseline_path} (pair)",
-                "type": "error",
-                "severity": "high",
-                "message": f"Could not read baseline: {e}"
-            })
+            pair_issues.append(
+                _make_issue(
+                    file=f"{baseline_path} (pair)",
+                    issue_type="error",
+                    severity="high",
+                    message=f"Could not read baseline: {e}",
+                    baseline_path=baseline_path,
+                )
+            )
             return pair_issues
         
         for opt_path in optimized_paths:
             try:
                 opt_content = opt_path.read_text()
             except Exception as e:
-                pair_issues.append({
-                    "file": f"{opt_path} (pair)",
-                    "type": "error",
-                    "severity": "high",
-                    "message": f"Could not read optimized: {e}"
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{opt_path} (pair)",
+                        issue_type="error",
+                        severity="high",
+                        message=f"Could not read optimized: {e}",
+                        optimized_path=opt_path,
+                    )
+                )
                 continue
 
             if _is_informational_benchmark(opt_path):
@@ -737,15 +882,20 @@ class CodeReviewer:
             opt_workload = self._extract_workload_info(opt_content)
 
             if baseline_workload and opt_workload and not self._workloads_similar(baseline_workload, opt_workload):
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "work_reduction",
-                    "severity": "medium",
-                    "message": (
-                        "Declared workload differs between baseline and optimized: "
-                        f"baseline={baseline_workload}, optimized={opt_workload}"
-                    ),
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="work_reduction",
+                        severity="medium",
+                        message=(
+                            "Declared workload differs between baseline and optimized: "
+                            f"baseline={baseline_workload}, optimized={opt_workload}"
+                        ),
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"baseline_workload": baseline_workload, "optimized_workload": opt_workload},
+                    )
+                )
             
             # Check for synchronization mismatches
             baseline_syncs = self._count_synchronizations(baseline_content)
@@ -753,25 +903,40 @@ class CodeReviewer:
             
             # Optimized should have same or fewer syncs (not more, which would slow it down unfairly)
             if opt_syncs > baseline_syncs * 1.5:  # Allow some variance
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "sync_mismatch",
-                    "severity": "low",
-                    "message": f"Optimized has more synchronizations ({opt_syncs} vs {baseline_syncs}) - may be unfair"
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="sync_mismatch",
+                        severity="low",
+                        message=f"Optimized has more synchronizations ({opt_syncs} vs {baseline_syncs}) - may be unfair",
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"baseline_syncs": baseline_syncs, "optimized_syncs": opt_syncs},
+                    )
+                )
 
             baseline_seed = extract_seed_info(baseline_path, baseline_content)
             opt_seed = extract_seed_info(opt_path, opt_content)
             if baseline_seed != opt_seed and not (_calls_super_setup(baseline_content) or _calls_super_setup(opt_content)):
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "seed_mismatch",
-                    "severity": "high",
-                    "message": f"Seed setup differs: baseline={baseline_seed}, optimized={opt_seed}",
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="seed_mismatch",
+                        severity="high",
+                        message=f"Seed setup differs: baseline={baseline_seed}, optimized={opt_seed}",
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"baseline_seed": baseline_seed, "optimized_seed": opt_seed},
+                    )
+                )
 
             baseline_config = extract_benchmark_config_from_source(baseline_content) or {}
             opt_config = extract_benchmark_config_from_source(opt_content) or {}
+            precision_target = (
+                _is_intentional_precision_target(baseline_path, opt_path)
+                or _ignores_precision_flags_in_signature(baseline_content)
+                or _ignores_precision_flags_in_signature(opt_content)
+            )
             config_keys = {
                 "iterations",
                 "warmup",
@@ -788,12 +953,17 @@ class CodeReviewer:
                 and key in opt_config
             }
             if config_diffs:
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "config_mismatch",
-                    "severity": "high",
-                    "message": f"BenchmarkConfig differs: {config_diffs}",
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="config_mismatch",
+                        severity="high",
+                        message=f"BenchmarkConfig differs: {config_diffs}",
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"config_diffs": config_diffs},
+                    )
+                )
 
             baseline_dtype = extract_primary_dtype(baseline_content)
             opt_dtype = extract_primary_dtype(opt_content)
@@ -801,15 +971,20 @@ class CodeReviewer:
                 baseline_dtype
                 and opt_dtype
                 and baseline_dtype != opt_dtype
-                and not _is_intentional_precision_target(baseline_path, opt_path)
+                and not precision_target
                 and not (_calls_super_setup(baseline_content) or _calls_super_setup(opt_content))
             ):
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "precision_mismatch",
-                    "severity": "high",
-                    "message": f"Primary compute dtype differs: baseline=torch.{baseline_dtype}, optimized=torch.{opt_dtype}",
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="precision_mismatch",
+                        severity="high",
+                        message=f"Primary compute dtype differs: baseline=torch.{baseline_dtype}, optimized=torch.{opt_dtype}",
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"baseline_dtype": baseline_dtype, "optimized_dtype": opt_dtype},
+                    )
+                )
 
             baseline_hot = extract_hot_path_features(baseline_content)
             opt_hot = extract_hot_path_features(opt_content)
@@ -818,13 +993,24 @@ class CodeReviewer:
                 for key in baseline_hot
                 if opt_hot[key] > baseline_hot[key]
             }
+            if precision_target:
+                hot_diffs = {
+                    key: value
+                    for key, value in hot_diffs.items()
+                    if key != "dtype_casts"
+                }
             if hot_diffs and not (_uses_cuda_graphs(baseline_content) or _uses_cuda_graphs(opt_content)):
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "hot_path_extra_work",
-                    "severity": "medium",
-                    "message": f"Hot-path operations differ: {hot_diffs}",
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="hot_path_extra_work",
+                        severity="medium",
+                        message=f"Hot-path operations differ: {hot_diffs}",
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"hot_path_diffs": hot_diffs},
+                    )
+                )
 
             baseline_algo = extract_algorithmic_markers(baseline_content)
             opt_algo = extract_algorithmic_markers(opt_content)
@@ -833,13 +1019,21 @@ class CodeReviewer:
                 for key in baseline_algo
                 if baseline_algo[key] != opt_algo[key]
             }
+            route_mode_target = "routing" in baseline_path.stem or "routing" in opt_path.stem
+            if route_mode_target and set(algo_diffs) == {"route_modes"}:
+                algo_diffs = {}
             if algo_diffs:
-                pair_issues.append({
-                    "file": f"{baseline_path} vs {opt_path}",
-                    "type": "algorithmic_pair_mismatch",
-                    "severity": "high",
-                    "message": f"Pair semantics differ beyond execution strategy: {algo_diffs}",
-                })
+                pair_issues.append(
+                    _make_issue(
+                        file=f"{baseline_path} vs {opt_path}",
+                        issue_type="algorithmic_pair_mismatch",
+                        severity="high",
+                        message=f"Pair semantics differ beyond execution strategy: {algo_diffs}",
+                        baseline_path=baseline_path,
+                        optimized_path=opt_path,
+                        evidence={"algorithmic_diffs": algo_diffs},
+                    )
+                )
         
         return pair_issues
     
@@ -930,6 +1124,124 @@ def _discover_pairs_for_review(chapters: Optional[List[str]]) -> List[Tuple[Path
     return all_pairs
 
 
+def run_review(chapters: Optional[List[str]] = None) -> ReviewReport:
+    requested_chapters = chapters or ["all"]
+    pairs = _discover_pairs_for_review(chapters)
+    reviewer = CodeReviewer()
+    all_issues: List[Dict[str, Any]] = []
+
+    for baseline_path, optimized_paths, _example_name in pairs:
+        all_issues.extend(reviewer.check_file(baseline_path, "baseline"))
+        for opt_path in optimized_paths:
+            all_issues.extend(reviewer.check_file(opt_path, "optimized"))
+        all_issues.extend(reviewer.compare_pair(baseline_path, optimized_paths))
+
+    report = ReviewReport(
+        timestamp=_utc_now_iso(),
+        chapters=requested_chapters,
+        total_pairs=len(pairs),
+        findings=dedupe_issues(all_issues),
+    )
+    return report
+
+
+def _render_review_markdown(report: ReviewReport) -> str:
+    counts = report.severity_counts()
+    lines = [
+        "# Benchmark Pair Advisory Audit",
+        "",
+        f"- Timestamp: `{report.timestamp}`",
+        f"- Scope: `{', '.join(report.chapters)}`",
+        f"- Pairs reviewed: `{report.total_pairs}`",
+        f"- Findings: `{len(report.findings)}`",
+        "",
+        "## Severity Summary",
+        "",
+        "| Severity | Count |",
+        "|---|---:|",
+        f"| critical | {counts.get('critical', 0)} |",
+        f"| high | {counts.get('high', 0)} |",
+        f"| medium | {counts.get('medium', 0)} |",
+        f"| low | {counts.get('low', 0)} |",
+        "",
+    ]
+    if not report.findings:
+        lines.extend(
+            [
+                "## Findings",
+                "",
+                "No findings.",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "## Findings",
+            "",
+            "| Issue ID | Severity | Scope | Type | File | Message |",
+            "|---|---|---|---|---|---|",
+        ]
+    )
+    for finding in report.findings:
+        lines.append(
+            "| {issue_id} | {severity} | {scope} | {type} | `{file}` | {message} |".format(
+                issue_id=finding["issue_id"],
+                severity=finding["severity"],
+                scope=finding.get("scope") or "-",
+                type=finding["type"],
+                file=finding["file"],
+                message=str(finding["message"]).replace("|", "\\|"),
+            )
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_review_outputs(report: ReviewReport, output_dir: Path, *, write_json: bool, write_markdown: bool) -> Dict[str, str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: Dict[str, str] = {}
+    if write_json:
+        json_path = output_dir / "review_findings.json"
+        json_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        paths["json"] = str(json_path)
+    if write_markdown:
+        markdown_path = output_dir / "review_findings.md"
+        markdown_path.write_text(_render_review_markdown(report), encoding="utf-8")
+        paths["markdown"] = str(markdown_path)
+    return paths
+
+
+def print_review_summary(report: ReviewReport) -> None:
+    counts = report.severity_counts()
+    print("Discovering benchmark pairs...")
+    print(f"Found {report.total_pairs} pairs to review")
+    print()
+    print("=" * 80)
+    print("REVIEW SUMMARY")
+    print("=" * 80)
+    print(f"Scope:            {', '.join(report.chapters)}")
+    print(f"Pairs reviewed:   {report.total_pairs}")
+    print(f"Findings:         {len(report.findings)}")
+    print(f"Critical issues:  {counts.get('critical', 0)}")
+    print(f"High issues:      {counts.get('high', 0)}")
+    print(f"Medium issues:    {counts.get('medium', 0)}")
+    print(f"Low issues:       {counts.get('low', 0)}")
+    if not report.findings:
+        print("\n✓ No issues found!")
+        return
+    for severity in ("critical", "high", "medium", "low"):
+        matches = [item for item in report.findings if item["severity"] == severity]
+        if not matches:
+            continue
+        print(f"\n{severity.title()} findings: {len(matches)}")
+        for finding in matches[:20]:
+            print(f"  [{finding['type']}] {finding['file']}: {finding['message']}")
+        if len(matches) > 20:
+            print(f"  ... and {len(matches) - 20} more")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Main review function."""
     parser = argparse.ArgumentParser(
@@ -941,73 +1253,41 @@ def main(argv: Optional[List[str]] = None) -> int:
         dest="chapters",
         help="Limit the review to a chapter or lab path (repeatable). Example: --chapter ch12 --chapter labs/fullstack_cluster",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Write structured JSON findings to --output-dir/review_findings.json",
+    )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Write markdown findings to --output-dir/review_findings.md",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Directory for structured output artifacts",
+    )
     args = parser.parse_args(argv)
+    if (args.json or args.markdown) and args.output_dir is None:
+        parser.error("--output-dir is required when --json or --markdown is set")
 
-    print("Discovering benchmark pairs...")
-    pairs = _discover_pairs_for_review(args.chapters)
-    print(f"Found {len(pairs)} pairs to review\n")
-
-    if not pairs:
+    report = run_review(args.chapters)
+    if report.total_pairs == 0:
         print("No benchmark pairs found for the requested scope.")
-        return 1
-    
-    reviewer = CodeReviewer()
-    all_issues = []
-    
-    for baseline_path, optimized_paths, example_name in pairs:
-        print(f"Reviewing: {example_name} ({baseline_path.name})")
-        
-        # Check baseline
-        baseline_issues = reviewer.check_file(baseline_path, "baseline")
-        all_issues.extend(baseline_issues)
-        
-        # Check optimized files
-        for opt_path in optimized_paths:
-            opt_issues = reviewer.check_file(opt_path, "optimized")
-            all_issues.extend(opt_issues)
-        
-        # Compare pair
-        pair_issues = reviewer.compare_pair(baseline_path, optimized_paths)
-        all_issues.extend(pair_issues)
+    print_review_summary(report)
 
-    all_issues = dedupe_issues(all_issues)
-    
-    # Report issues
-    print("\n" + "="*80)
-    print("REVIEW SUMMARY")
-    print("="*80)
-    
-    if not all_issues:
-        print("✓ No issues found!")
-        return 0
-    
-    # Group by severity
-    critical = [i for i in all_issues if i['severity'] == 'critical']
-    high = [i for i in all_issues if i['severity'] == 'high']
-    medium = [i for i in all_issues if i['severity'] == 'medium']
-    low = [i for i in all_issues if i['severity'] == 'low']
-    
-    print(f"\nCritical issues: {len(critical)}")
-    for issue in critical:
-        print(f"  [{issue['type']}] {issue['file']}: {issue['message']}")
-    
-    print(f"\nHigh severity issues: {len(high)}")
-    for issue in high:
-        print(f"  [{issue['type']}] {issue['file']}: {issue['message']}")
-    
-    print(f"\nMedium severity issues: {len(medium)}")
-    for issue in medium[:20]:  # Limit output
-        print(f"  [{issue['type']}] {issue['file']}: {issue['message']}")
-    if len(medium) > 20:
-        print(f"  ... and {len(medium) - 20} more")
-    
-    print(f"\nLow severity issues: {len(low)}")
-    for issue in low[:10]:  # Limit output
-        print(f"  [{issue['type']}] {issue['file']}: {issue['message']}")
-    if len(low) > 10:
-        print(f"  ... and {len(low) - 10} more")
-    
-    return 1 if critical or high else 0
+    if args.output_dir:
+        written = write_review_outputs(
+            report,
+            args.output_dir,
+            write_json=args.json,
+            write_markdown=args.markdown,
+        )
+        for label, path in written.items():
+            print(f"{label.title()} report written to {path}")
+
+    return 0
 
 
 if __name__ == "__main__":

@@ -259,6 +259,33 @@ def test_ch17_memory_pair_keeps_discrete_input_distribution() -> None:
     assert "random_(0, 256).floor_()" in optimized_memory
     assert "discrete 0..255 population" in optimized_memory
 
+
+def test_ch10_flashattention3_pair_keeps_shared_warmup_and_unfused_qkv_structure() -> None:
+    baseline_source = _read("ch10/baseline_flashattention3_pipeline.py")
+    optimized_source = _read("ch10/optimized_flashattention3_pipeline.py")
+
+    assert "for _ in range(3):" in baseline_source
+    assert "for _ in range(3):" in optimized_source
+    for source in (baseline_source, optimized_source):
+        assert "self.q_proj = nn.Linear(" in source
+        assert "self.k_proj = nn.Linear(" in source
+        assert "self.v_proj = nn.Linear(" in source
+        assert "qkv_proj" not in source
+
+
+def test_persistent_decode_keeps_canonical_iteration_parity_and_marks_cuda_variant_informational() -> None:
+    baseline_source = _read("labs/persistent_decode/baseline_persistent_decode.py")
+    triton_source = _read("labs/persistent_decode/optimized_persistent_decode_triton.py")
+    cuda_source = _read("labs/persistent_decode/optimized_persistent_decode_cuda.py")
+
+    assert "iterations=12" in baseline_source
+    assert "iterations=12" in triton_source
+    assert "warmup=5" in baseline_source
+    assert "warmup=5" in triton_source
+    assert "iterations=5" in cuda_source
+    assert "use_subprocess=True" in cuda_source
+    assert "persistent_decode_cuda" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
+
     sample = torch.empty(4096, dtype=torch.float32)
     sample.random_(0, 256).floor_()
     assert torch.equal(sample, sample.floor())
