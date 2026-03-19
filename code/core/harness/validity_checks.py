@@ -19,6 +19,7 @@ import os
 import re
 import statistics
 import sys
+import time
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
@@ -973,6 +974,79 @@ def _read_process_cmdline_arg_value(
     return None
 
 
+def _filter_foreign_cuda_compute_processes(
+    *,
+    foreign_procs: List[Dict[str, Any]],
+    current_pid: int,
+    probe_env: Dict[str, str],
+    proc_root: Path = Path("/proc"),
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Drop owned, same-run, and dead CUDA processes from an NVML sample."""
+    owned_related_pids = _collect_process_tree_pids(current_pid, proc_root=proc_root)
+    owned_related_pids.update(_collect_process_lineage_pids(current_pid, proc_root=proc_root))
+
+    owned_run_marker = str(probe_env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+    owned_owner_pid = str(probe_env.get("AISP_BENCHMARK_OWNER_PID", "")).strip()
+
+    owned_owner_related_pids: Set[int] = set()
+    if owned_owner_pid:
+        try:
+            owner_pid_int = int(owned_owner_pid)
+        except ValueError:
+            owner_pid_int = None
+        if owner_pid_int is not None and owner_pid_int > 0:
+            owned_owner_related_pids = _collect_process_tree_pids(owner_pid_int, proc_root=proc_root)
+            owned_owner_related_pids.update(
+                _collect_process_lineage_pids(owner_pid_int, proc_root=proc_root)
+            )
+
+    filtered_foreign: List[Dict[str, Any]] = []
+    for proc in foreign_procs:
+        pid = int(proc.get("pid", -1))
+        if pid <= 0:
+            continue
+        if pid in owned_related_pids or pid in owned_owner_related_pids:
+            continue
+        if owned_run_marker:
+            same_run_marker = _read_process_environ_value(
+                pid,
+                "AISP_BENCHMARK_OWNER_RUN_ID",
+                proc_root=proc_root,
+            )
+            if same_run_marker != owned_run_marker:
+                same_run_marker = _read_process_cmdline_arg_value(
+                    pid,
+                    "--aisp-owner-run-id",
+                    proc_root=proc_root,
+                )
+            if same_run_marker == owned_run_marker:
+                continue
+        if owned_owner_pid:
+            same_owner_pid = _read_process_environ_value(
+                pid,
+                "AISP_BENCHMARK_OWNER_PID",
+                proc_root=proc_root,
+            )
+            if same_owner_pid != owned_owner_pid:
+                same_owner_pid = _read_process_cmdline_arg_value(
+                    pid,
+                    "--aisp-owner-pid",
+                    proc_root=proc_root,
+                )
+            if same_owner_pid == owned_owner_pid:
+                continue
+        if not _pid_is_live_process(pid, proc_root=proc_root):
+            continue
+        filtered_foreign.append(proc)
+
+    details: Dict[str, Any] = {}
+    if owned_run_marker:
+        details["owned_benchmark_run_id"] = owned_run_marker
+    if owned_owner_pid:
+        details["owned_benchmark_owner_pid"] = owned_owner_pid
+    return filtered_foreign, details
+
+
 def validate_environment(
     *,
     device: Optional["torch.device"] = None,
@@ -1042,69 +1116,59 @@ def validate_environment(
                 if foreign_err:
                     warnings_list.append(f"Could not validate foreign CUDA compute processes: {foreign_err}")
                 else:
-                    owned_process_tree = _collect_process_tree_pids(os.getpid())
-                    owned_process_lineage = _collect_process_lineage_pids(os.getpid())
-                    owned_related_pids = owned_process_tree | owned_process_lineage
-                    owned_run_marker = str(probe.env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
-                    owned_owner_pid = str(probe.env.get("AISP_BENCHMARK_OWNER_PID", "")).strip()
-                    owned_owner_related_pids: Set[int] = set()
-                    if owned_run_marker:
-                        details["owned_benchmark_run_id"] = owned_run_marker
-                    if owned_owner_pid:
-                        details["owned_benchmark_owner_pid"] = owned_owner_pid
-                        try:
-                            owner_pid_int = int(owned_owner_pid)
-                        except ValueError:
-                            owner_pid_int = None
-                        if owner_pid_int is not None and owner_pid_int > 0:
-                            owned_owner_related_pids = _collect_process_tree_pids(owner_pid_int)
-                            owned_owner_related_pids.update(
-                                _collect_process_lineage_pids(owner_pid_int)
-                            )
-                    foreign_procs = [
-                        proc
-                        for proc in foreign_procs
-                        if int(proc.get("pid", -1)) not in owned_related_pids
-                        and int(proc.get("pid", -1)) not in owned_owner_related_pids
-                        and (
-                            not owned_run_marker
-                            or (
-                                _read_process_environ_value(
-                                    int(proc.get("pid", -1)),
-                                    "AISP_BENCHMARK_OWNER_RUN_ID",
-                                )
-                                != owned_run_marker
-                                and _read_process_cmdline_arg_value(
-                                    int(proc.get("pid", -1)),
-                                    "--aisp-owner-run-id",
-                                )
-                                != owned_run_marker
-                            )
-                        )
-                        and (
-                            not owned_owner_pid
-                            or (
-                                _read_process_environ_value(
-                                    int(proc.get("pid", -1)),
-                                    "AISP_BENCHMARK_OWNER_PID",
-                                )
-                                != owned_owner_pid
-                                and _read_process_cmdline_arg_value(
-                                    int(proc.get("pid", -1)),
-                                    "--aisp-owner-pid",
-                                )
-                                != owned_owner_pid
-                            )
-                        )
-                        and _pid_is_live_process(int(proc.get("pid", -1)))
-                    ]
-                    details["foreign_cuda_compute_processes"] = foreign_procs
+                    foreign_procs, owner_details = _filter_foreign_cuda_compute_processes(
+                        foreign_procs=foreign_procs,
+                        current_pid=os.getpid(),
+                        probe_env=probe.env,
+                    )
+                    details.update(owner_details)
                     details["foreign_cuda_compute_process_min_mb"] = min_foreign_mb
                     significant_foreign = []
                     for proc in foreign_procs:
                         mem = proc.get("used_memory_mb")
                         if mem is None or float(mem) >= min_foreign_mb:
                             significant_foreign.append(proc)
+                    if significant_foreign:
+                        # NVML can briefly report just-exited worker processes between phases.
+                        # Re-confirm only the would-be blocking sample before failing strict mode.
+                        time.sleep(0.15)
+                        confirm_procs, confirm_err = _list_foreign_cuda_compute_processes(
+                            device_index=device_index,
+                            current_pid=os.getpid(),
+                        )
+                        if confirm_err:
+                            warnings_list.append(
+                                "Could not re-confirm foreign CUDA compute processes after initial detection: "
+                                f"{confirm_err}"
+                            )
+                        else:
+                            confirm_procs, _ = _filter_foreign_cuda_compute_processes(
+                                foreign_procs=confirm_procs,
+                                current_pid=os.getpid(),
+                                probe_env=probe.env,
+                            )
+                            foreign_procs = confirm_procs
+                            details["foreign_cuda_compute_processes_reconfirmed"] = True
+                            transient_pids = sorted(
+                                {
+                                    int(proc.get("pid", -1))
+                                    for proc in significant_foreign
+                                    if int(proc.get("pid", -1)) > 0
+                                }
+                                - {
+                                    int(proc.get("pid", -1))
+                                    for proc in foreign_procs
+                                    if int(proc.get("pid", -1)) > 0
+                                }
+                            )
+                            if transient_pids:
+                                details["transient_foreign_cuda_compute_process_pids"] = transient_pids
+                            significant_foreign = []
+                            for proc in foreign_procs:
+                                mem = proc.get("used_memory_mb")
+                                if mem is None or float(mem) >= min_foreign_mb:
+                                    significant_foreign.append(proc)
+                    details["foreign_cuda_compute_processes"] = foreign_procs
                     if significant_foreign:
                         preview: List[str] = []
                         for proc in significant_foreign[:5]:

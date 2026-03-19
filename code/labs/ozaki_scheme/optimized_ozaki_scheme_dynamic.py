@@ -33,6 +33,7 @@ class OptimizedOzakiSchemeDynamicBenchmark(CudaBinaryBenchmark):
             "--iters", "10",
             "--seed", "2026",
             "--input-scale", "0.001",
+            "--emulation-strategy", "eager",
             "--dynamic-max-bits", "16",
             "--dynamic-offset", "-56",
         ]
@@ -50,6 +51,7 @@ class OptimizedOzakiSchemeDynamicBenchmark(CudaBinaryBenchmark):
                 "K": self._shape[2],
                 "dtype": "float64",
                 "input_scale": 0.001,
+                "emulation_strategy": "eager",
                 "dynamic_max_bits": 16,
                 "dynamic_offset": -56,
                 "matmul_iters": 10,
@@ -71,6 +73,8 @@ class OptimizedOzakiSchemeDynamicBenchmark(CudaBinaryBenchmark):
             "variant": "dynamic",
             "source_library": "cuBLAS",
             "retained_bits_mode": "runtime dynamic",
+            "emulation_strategy": "eager",
+            "adaptive_behavior": True,
         }
 
     def benchmark_fn(self) -> None:

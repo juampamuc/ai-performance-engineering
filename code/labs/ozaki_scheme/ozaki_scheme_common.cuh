@@ -27,6 +27,12 @@ enum class Variant {
     kFixed,
 };
 
+enum class EmulationStrategy {
+    kLibraryDefault,
+    kPerformant,
+    kEager,
+};
+
 struct Options {
     int m = 4096;
     int n = 4096;
@@ -39,6 +45,7 @@ struct Options {
     int fixed_bits = 12;
     double input_scale = 0.001;
     std::size_t workspace_bytes = 64ull << 20;
+    EmulationStrategy emulation_strategy = EmulationStrategy::kEager;
 };
 
 struct Metrics {
@@ -59,6 +66,18 @@ inline const char* variant_name(Variant variant) {
             return "ozaki_dynamic";
         case Variant::kFixed:
             return "ozaki_fixed";
+    }
+    return "unknown";
+}
+
+inline const char* emulation_strategy_name(EmulationStrategy strategy) {
+    switch (strategy) {
+        case EmulationStrategy::kLibraryDefault:
+            return "default";
+        case EmulationStrategy::kPerformant:
+            return "performant";
+        case EmulationStrategy::kEager:
+            return "eager";
     }
     return "unknown";
 }
@@ -125,8 +144,23 @@ inline void print_usage(const char* program) {
         << "  --dynamic-max-bits <int>     Max retained bits for dynamic Ozaki (default 16)\n"
         << "  --dynamic-offset <int>       Dynamic mantissa bias (default -56)\n"
         << "  --fixed-bits <int>           Retained bits for fixed Ozaki (default 12)\n"
+        << "  --emulation-strategy <str>   One of default|performant|eager (default eager)\n"
         << "  --workspace-mb <int>         cuBLAS workspace cap in MiB (default 64)\n"
         << "  -h, --help                   Show this help text\n";
+}
+
+inline EmulationStrategy parse_emulation_strategy(const std::string& raw) {
+    if (raw == "default") {
+        return EmulationStrategy::kLibraryDefault;
+    }
+    if (raw == "performant") {
+        return EmulationStrategy::kPerformant;
+    }
+    if (raw == "eager") {
+        return EmulationStrategy::kEager;
+    }
+    throw std::runtime_error(std::string("Invalid value for --emulation-strategy: ") + raw +
+        " (expected default|performant|eager)");
 }
 
 inline Options parse_args(int argc, char** argv) {
@@ -159,6 +193,8 @@ inline Options parse_args(int argc, char** argv) {
             parse_numeric_arg(value, &options.dynamic_offset, "--dynamic-offset");
         } else if (arg == "--fixed-bits") {
             parse_numeric_arg(value, &options.fixed_bits, "--fixed-bits");
+        } else if (arg == "--emulation-strategy") {
+            options.emulation_strategy = parse_emulation_strategy(value);
         } else if (arg == "--input-scale") {
             parse_numeric_arg(value, &options.input_scale, "--input-scale");
         } else if (arg == "--workspace-mb") {
@@ -247,7 +283,6 @@ inline HandleState create_handle_state(
     }
 
     const cublasMath_t math_mode = CUBLAS_FP64_EMULATED_FIXEDPOINT_MATH;
-    const cublasEmulationStrategy_t strategy = CUBLAS_EMULATION_STRATEGY_EAGER;
     const cudaEmulationMantissaControl mantissa_control =
         variant == Variant::kDynamic
             ? CUDA_EMULATION_MANTISSA_CONTROL_DYNAMIC
@@ -256,7 +291,13 @@ inline HandleState create_handle_state(
     const int offset = variant == Variant::kDynamic ? options.dynamic_offset : 0;
 
     OZAKI_CHECK_CUBLAS(cublasSetMathMode(state.handle, math_mode));
-    OZAKI_CHECK_CUBLAS(cublasSetEmulationStrategy(state.handle, strategy));
+    if (options.emulation_strategy != EmulationStrategy::kLibraryDefault) {
+        const cublasEmulationStrategy_t strategy =
+            options.emulation_strategy == EmulationStrategy::kPerformant
+                ? CUBLAS_EMULATION_STRATEGY_PERFORMANT
+                : CUBLAS_EMULATION_STRATEGY_EAGER;
+        OZAKI_CHECK_CUBLAS(cublasSetEmulationStrategy(state.handle, strategy));
+    }
     OZAKI_CHECK_CUBLAS(cublasSetFixedPointEmulationMantissaControl(state.handle, mantissa_control));
     OZAKI_CHECK_CUBLAS(cublasSetFixedPointEmulationMaxMantissaBitCount(state.handle, max_bits));
     OZAKI_CHECK_CUBLAS(cublasSetFixedPointEmulationMantissaBitOffset(state.handle, offset));
@@ -458,11 +499,15 @@ inline void print_metrics(Variant variant, const Options& options, const Metrics
     } else if (variant == Variant::kFixed) {
         std::cout << "FIXED_BITS: " << options.fixed_bits << "\n";
     }
+    if (variant != Variant::kNative) {
+        std::cout << "EMULATION_STRATEGY: " << emulation_strategy_name(options.emulation_strategy) << "\n";
+    }
     std::cout << "EMULATION_USED: " << metrics.emulation_used << "\n";
     std::cout << "RETAINED_BITS: " << metrics.retained_bits << "\n";
     std::cout << "TFLOPS: " << metrics.tflops << "\n";
     std::cout << "MAX_ABS_ERROR: " << metrics.max_abs_error << "\n";
     std::cout << "MEAN_ABS_ERROR: " << metrics.mean_abs_error << "\n";
+    std::cout << "RESULT_CHECKSUM: " << metrics.checksum << "\n";
     VERIFY_PRINT_CHECKSUM(static_cast<float>(metrics.checksum));
     std::cout << "TIME_MS: " << metrics.time_ms << "\n";
 }

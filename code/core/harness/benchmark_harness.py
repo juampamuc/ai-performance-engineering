@@ -153,6 +153,33 @@ def _emit_harness_warning(message: str, *, exc: Optional[BaseException] = None) 
     warnings.warn(detail, RuntimeWarning, stacklevel=2)
 
 
+def _normalize_target_override_chapter(label: str) -> str:
+    return label.replace("\\", "/").replace("/", "_")
+
+
+def _lookup_target_extra_args(
+    overrides_map: Dict[str, Union[str, Sequence[str]]],
+    target_label: Optional[str],
+) -> Optional[Union[str, Sequence[str]]]:
+    """Resolve per-target overrides across slash/underscore chapter labels."""
+    if not target_label:
+        return None
+    if target_label in overrides_map:
+        return overrides_map[target_label]
+
+    target_chapter, target_sep, target_example = target_label.partition(":")
+    normalized_target_chapter = _normalize_target_override_chapter(target_chapter)
+    for candidate_label, overrides in overrides_map.items():
+        candidate_chapter, candidate_sep, candidate_example = str(candidate_label).partition(":")
+        if bool(candidate_sep) != bool(target_sep):
+            continue
+        if target_sep and candidate_example != target_example:
+            continue
+        if _normalize_target_override_chapter(candidate_chapter) == normalized_target_chapter:
+            return overrides
+    return None
+
+
 def _format_environment_invalid_message(errors: Sequence[str], config: "BenchmarkConfig") -> str:
     """Build a consistent environment failure message with recovery guidance.
 
@@ -2188,16 +2215,20 @@ class BenchmarkHarness:
         if not target_label:
             return
         overrides_map = getattr(config, "target_extra_args", {}) or {}
-        overrides = overrides_map.get(target_label)
+        overrides = _lookup_target_extra_args(overrides_map, target_label)
         if not overrides:
             return
         argv = shlex.split(overrides) if isinstance(overrides, str) else list(overrides)
         if not argv:
             return
+        override_signature = (target_label, tuple(argv))
+        if getattr(benchmark, "_applied_target_override_signature", None) == override_signature:
+            return
         hook = getattr(benchmark, "apply_target_overrides", None)
         if callable(hook):
             try:
                 hook(argv)
+                setattr(benchmark, "_applied_target_override_signature", override_signature)
             except Exception:
                 if LOGGER_AVAILABLE:
                     logger.warning("Ignoring target overrides for %s due to error", target_label, exc_info=True)
@@ -2392,7 +2423,10 @@ class BenchmarkHarness:
         extra_args: List[str] = []
         target_label = getattr(config, "target_label", None)
         if target_label:
-            target_overrides = (getattr(config, "target_extra_args", {}) or {}).get(target_label)
+            target_overrides = _lookup_target_extra_args(
+                (getattr(config, "target_extra_args", {}) or {}),
+                target_label,
+            )
             if target_overrides:
                 if isinstance(target_overrides, str):
                     extra_args.extend(shlex.split(target_overrides))
@@ -2669,6 +2703,9 @@ class BenchmarkHarness:
             # Callable benchmarks run in-process to avoid JSON parsing of custom stdout
             config.use_subprocess = False
             config.execution_mode = ExecutionMode.THREAD
+        # Benchmarks sometimes derive get_config() from per-target CLI state (for example
+        # forward vs fwd_bwd). Apply run-level target overrides before reading get_config().
+        self._apply_target_overrides(benchmark, config)
         bench_config = benchmark.get_config()
         if bench_config is not None:
             # Benchmarks often return a persistent config instance. Work on a copy so

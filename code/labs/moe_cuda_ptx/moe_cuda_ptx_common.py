@@ -1,0 +1,1029 @@
+"""Shared workload generation and benchmark logic for the MoE CUDA/PTX lab."""
+
+from __future__ import annotations
+
+import argparse
+import math
+from dataclasses import dataclass
+from typing import Callable, Optional, Sequence
+
+import torch
+import torch.nn.functional as F
+
+from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+
+from labs.moe_cuda_ptx.moe_cuda_ptx_extension import ensure_moe_ptx_supported, load_moe_ptx_extension
+
+resolve_device = lambda: require_cuda_device("MoE CUDA/PTX lab requires CUDA.")
+
+_MXFP8_BLOCK_SIZE = 32
+_MXFP8_E4M3_MAX = 448.0
+_MXFP8_E8M0_MIN = float(2.0 ** -127)
+
+
+@dataclass(frozen=True)
+class GroupedMatmulWorkUnit:
+    """Logical grouped matmul tile descriptor used for schedule metadata."""
+
+    expert_idx: int
+    row_block_idx: int
+    col_block_idx: int
+    reduction_block_start_idx: int
+    reduction_block_end_idx: int
+
+
+@dataclass
+class MoECudaPtxWorkload:
+    num_tokens: int = 32768
+    num_experts: int = 8
+    top_k: int = 2
+    hidden_dim: int = 7168
+    expert_ffn_dim: int = 2048
+    capacity_factor: float = 1.25
+    mode: str = "forward"
+    dtype: torch.dtype = torch.bfloat16
+    histogram: str = "balanced"
+
+    @property
+    def routed_tokens(self) -> int:
+        return int(self.num_tokens * self.top_k)
+
+    @property
+    def capacity_tokens_per_expert(self) -> int:
+        average = self.routed_tokens / max(1, self.num_experts)
+        return int(math.ceil(self.capacity_factor * average))
+
+    @property
+    def dtype_name(self) -> str:
+        return "bf16" if self.dtype == torch.bfloat16 else "fp16"
+
+    def validate(self) -> None:
+        if self.num_tokens <= 0:
+            raise ValueError("num_tokens must be > 0")
+        if self.num_experts <= 1:
+            raise ValueError("num_experts must be > 1")
+        if self.top_k <= 0 or self.top_k > self.num_experts:
+            raise ValueError("top_k must be in [1, num_experts]")
+        if self.hidden_dim <= 0 or self.expert_ffn_dim <= 0:
+            raise ValueError("hidden_dim and expert_ffn_dim must be > 0")
+        if self.capacity_factor < 1.0:
+            raise ValueError("capacity_factor must be >= 1.0")
+        if self.mode not in {"forward", "fwd_bwd"}:
+            raise ValueError("mode must be 'forward' or 'fwd_bwd'")
+        if self.histogram not in {"balanced", "skewed"}:
+            raise ValueError("histogram must be 'balanced' or 'skewed'")
+
+
+@dataclass
+class MoELabState:
+    x: torch.Tensor
+    expert_indices: torch.Tensor
+    expert_weights: torch.Tensor
+    gate_proj: torch.Tensor
+    up_proj: torch.Tensor
+    down_proj: torch.Tensor
+    loss_grad: torch.Tensor
+
+
+@dataclass
+class PackedRoutes:
+    packed_tokens: torch.Tensor
+    packed_weights: torch.Tensor
+    token_indices: torch.Tensor
+    expert_indices: torch.Tensor
+    counts: torch.Tensor
+    starts: torch.Tensor
+    padded_indices: torch.Tensor
+    counts_cpu: tuple[int, ...]
+    max_count: int
+    uniform_count: int
+
+
+@dataclass
+class QuantizedMatrix:
+    quantized: torch.Tensor
+    scales: torch.Tensor
+    original_shape: tuple[int, int]
+
+
+@dataclass
+class QuantizedBundle:
+    forward: QuantizedMatrix
+    transpose: Optional[QuantizedMatrix] = None
+
+
+def _workload_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--num-tokens", type=int, default=None)
+    parser.add_argument("--num-experts", type=int, default=None)
+    parser.add_argument("--top-k", type=int, default=None)
+    parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument("--expert-ffn-dim", type=int, default=None)
+    parser.add_argument("--capacity-factor", type=float, default=None)
+    parser.add_argument("--mode", choices=("forward", "fwd_bwd"), default=None)
+    parser.add_argument("--dtype", choices=("bf16", "fp16"), default=None)
+    parser.add_argument("--histogram", choices=("balanced", "skewed"), default=None)
+    return parser
+
+
+def apply_workload_overrides(workload: MoECudaPtxWorkload, argv: list[str]) -> MoECudaPtxWorkload:
+    args, _ = _workload_parser().parse_known_args(argv)
+    dtype = workload.dtype
+    if args.dtype == "bf16":
+        dtype = torch.bfloat16
+    elif args.dtype == "fp16":
+        dtype = torch.float16
+    updated = MoECudaPtxWorkload(
+        num_tokens=args.num_tokens or workload.num_tokens,
+        num_experts=args.num_experts or workload.num_experts,
+        top_k=args.top_k or workload.top_k,
+        hidden_dim=args.hidden_dim or workload.hidden_dim,
+        expert_ffn_dim=args.expert_ffn_dim or workload.expert_ffn_dim,
+        capacity_factor=args.capacity_factor or workload.capacity_factor,
+        mode=args.mode or workload.mode,
+        dtype=dtype,
+        histogram=args.histogram or workload.histogram,
+    )
+    updated.validate()
+    return updated
+
+
+def _counts_from_weights(total: int, weights: torch.Tensor) -> torch.Tensor:
+    normalized = (weights / weights.sum()) * float(total)
+    base = torch.floor(normalized).to(torch.long)
+    remainder = int(total - int(base.sum().item()))
+    if remainder > 0:
+        frac = (normalized - base.to(normalized.dtype))
+        order = torch.argsort(frac, descending=True, stable=True)
+        base[order[:remainder]] += 1
+    return base
+
+
+def _build_primary_routes(workload: MoECudaPtxWorkload, device: torch.device) -> torch.Tensor:
+    if workload.histogram == "balanced":
+        return torch.arange(workload.num_tokens, device=device, dtype=torch.long) % workload.num_experts
+
+    weights = torch.linspace(
+        workload.capacity_factor,
+        max(0.25, 2.0 - workload.capacity_factor),
+        steps=workload.num_experts,
+        device=device,
+        dtype=torch.float32,
+    )
+    counts = _counts_from_weights(workload.num_tokens, weights)
+    routes = [
+        torch.full((int(count.item()),), expert, device=device, dtype=torch.long)
+        for expert, count in enumerate(counts)
+        if int(count.item()) > 0
+    ]
+    primary = torch.cat(routes, dim=0)
+    if primary.numel() != workload.num_tokens:
+        raise RuntimeError("Primary route generation produced the wrong token count")
+    return primary
+
+
+def build_routes(workload: MoECudaPtxWorkload, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    primary = _build_primary_routes(workload, device)
+    secondary = (torch.arange(workload.num_tokens, device=device, dtype=torch.long) * 3 + 1) % workload.num_experts
+    collision = secondary == primary
+    secondary[collision] = (secondary[collision] + 1) % workload.num_experts
+
+    expert_indices = torch.stack([primary, secondary], dim=1)
+
+    token_positions = torch.arange(workload.num_tokens, device=device, dtype=torch.float32)
+    logits = torch.stack(
+        [
+            1.25 + 0.05 * torch.sin(token_positions * 0.013),
+            0.90 + 0.05 * torch.cos(token_positions * 0.017),
+        ],
+        dim=1,
+    )
+    expert_weights = torch.softmax(logits, dim=1).to(dtype=workload.dtype)
+
+    counts = torch.bincount(expert_indices.reshape(-1), minlength=workload.num_experts)
+    if int(counts.max().item()) > workload.capacity_tokens_per_expert:
+        raise RuntimeError(
+            "Deterministic routing exceeded the configured capacity factor; "
+            f"max_count={int(counts.max().item())}, capacity={workload.capacity_tokens_per_expert}"
+        )
+    return expert_indices, expert_weights
+
+
+def build_state(workload: MoECudaPtxWorkload, device: torch.device) -> MoELabState:
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(314159)
+
+    x = torch.randn(workload.num_tokens, workload.hidden_dim, generator=generator, dtype=torch.float32)
+    x += torch.linspace(0.0, 1e-3, steps=workload.hidden_dim, dtype=torch.float32).view(1, -1)
+    x = x.to(device=device, dtype=workload.dtype).contiguous()
+
+    expert_indices, expert_weights = build_routes(workload, device)
+
+    gate_proj = (
+        torch.randn(
+            workload.num_experts,
+            workload.hidden_dim,
+            workload.expert_ffn_dim,
+            generator=generator,
+            dtype=torch.float32,
+        )
+        * 0.02
+    ).to(device=device, dtype=workload.dtype)
+    up_proj = (
+        torch.randn(
+            workload.num_experts,
+            workload.hidden_dim,
+            workload.expert_ffn_dim,
+            generator=generator,
+            dtype=torch.float32,
+        )
+        * 0.02
+    ).to(device=device, dtype=workload.dtype)
+    down_proj = (
+        torch.randn(
+            workload.num_experts,
+            workload.expert_ffn_dim,
+            workload.hidden_dim,
+            generator=generator,
+            dtype=torch.float32,
+        )
+        * 0.02
+    ).to(device=device, dtype=workload.dtype)
+
+    loss_grad = torch.randn(
+        workload.num_tokens,
+        workload.hidden_dim,
+        generator=generator,
+        dtype=torch.float32,
+    ).to(device=device, dtype=workload.dtype)
+
+    return MoELabState(
+        x=x,
+        expert_indices=expert_indices.contiguous(),
+        expert_weights=expert_weights.contiguous(),
+        gate_proj=gate_proj.contiguous(),
+        up_proj=up_proj.contiguous(),
+        down_proj=down_proj.contiguous(),
+        loss_grad=loss_grad.contiguous(),
+    )
+
+
+def pack_topk_routes(
+    x: torch.Tensor,
+    expert_indices: torch.Tensor,
+    expert_weights: torch.Tensor,
+    *,
+    num_experts: int,
+) -> PackedRoutes:
+    top_k = expert_indices.shape[1]
+    flat_experts = expert_indices.reshape(-1)
+    flat_weights = expert_weights.reshape(-1)
+    flat_token_ids = torch.arange(x.shape[0], device=x.device, dtype=torch.long).repeat_interleave(top_k)
+    sort_order = torch.argsort(flat_experts, stable=True)
+
+    sorted_token_ids = flat_token_ids.index_select(0, sort_order)
+    sorted_expert_ids = flat_experts.index_select(0, sort_order)
+    sorted_weights = flat_weights.index_select(0, sort_order)
+    packed_tokens = x.index_select(0, sorted_token_ids).contiguous()
+
+    counts = torch.bincount(sorted_expert_ids, minlength=num_experts)
+    counts_cpu = tuple(int(count) for count in counts.detach().cpu().tolist())
+    starts = torch.cat(
+        [
+            torch.zeros(1, device=x.device, dtype=torch.long),
+            counts.cumsum(dim=0)[:-1],
+        ],
+        dim=0,
+    )
+    positions = torch.arange(sorted_expert_ids.numel(), device=x.device, dtype=torch.long) - starts.index_select(
+        0, sorted_expert_ids
+    )
+    max_count = max(counts_cpu, default=0)
+    uniform_count = counts_cpu[0] if counts_cpu and all(count == counts_cpu[0] for count in counts_cpu) else 0
+    padded_indices = sorted_expert_ids * max_count + positions
+
+    return PackedRoutes(
+        packed_tokens=packed_tokens,
+        packed_weights=sorted_weights.contiguous(),
+        token_indices=sorted_token_ids.contiguous(),
+        expert_indices=sorted_expert_ids.contiguous(),
+        counts=counts.contiguous(),
+        starts=starts.contiguous(),
+        padded_indices=padded_indices.contiguous(),
+        counts_cpu=counts_cpu,
+        max_count=max_count,
+        uniform_count=uniform_count,
+    )
+
+
+def grouped_ffn_reference(
+    packed_tokens: torch.Tensor,
+    counts_cpu: Sequence[int],
+    gate_proj: torch.Tensor,
+    up_proj: torch.Tensor,
+    down_proj: torch.Tensor,
+    *,
+    output_buffer: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    output = output_buffer
+    if output is None:
+        output = torch.empty(packed_tokens.shape[0], down_proj.shape[-1], device=packed_tokens.device, dtype=packed_tokens.dtype)
+    offset = 0
+    for expert_idx, count in enumerate(counts_cpu):
+        if count == 0:
+            continue
+        tokens_e = packed_tokens[offset : offset + count]
+        gate = F.silu(tokens_e @ gate_proj[expert_idx])
+        up = tokens_e @ up_proj[expert_idx]
+        output[offset : offset + count] = (gate * up) @ down_proj[expert_idx]
+        offset += count
+    return output
+
+
+def grouped_ffn_cuda(
+    packed_tokens: torch.Tensor,
+    packed: PackedRoutes,
+    gate_proj: torch.Tensor,
+    up_proj: torch.Tensor,
+    down_proj: torch.Tensor,
+    *,
+    padded_tokens_buffer: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if packed.max_count == 0:
+        return torch.empty_like(packed_tokens)
+
+    device = packed_tokens.device
+    num_experts = gate_proj.shape[0]
+    hidden_dim = packed_tokens.shape[1]
+    output_dim = down_proj.shape[-1]
+
+    if packed.uniform_count == packed.max_count and packed.max_count > 0:
+        grouped_tokens = packed_tokens.view(num_experts, packed.max_count, hidden_dim)
+        gate = torch.bmm(grouped_tokens, gate_proj)
+        up = torch.bmm(grouped_tokens, up_proj)
+        hidden = F.silu(gate) * up
+        return torch.bmm(hidden, down_proj).reshape(-1, output_dim)
+
+    flat_slots = num_experts * packed.max_count
+
+    padded_tokens = padded_tokens_buffer
+    if padded_tokens is None or tuple(padded_tokens.shape) != (flat_slots, hidden_dim):
+        padded_tokens = torch.zeros(flat_slots, hidden_dim, device=device, dtype=packed_tokens.dtype)
+    else:
+        padded_tokens.zero_()
+    padded_tokens.index_copy_(0, packed.padded_indices, packed_tokens)
+    padded_tokens = padded_tokens.view(num_experts, packed.max_count, hidden_dim)
+
+    gate = torch.bmm(padded_tokens, gate_proj)
+    up = torch.bmm(padded_tokens, up_proj)
+    hidden = F.silu(gate) * up
+    out = torch.bmm(hidden, down_proj)
+    flat_out = out.reshape(flat_slots, output_dim)
+    return flat_out.index_select(0, packed.padded_indices).contiguous()
+
+
+def combine_weighted_outputs(
+    sorted_outputs: torch.Tensor,
+    packed: PackedRoutes,
+    num_tokens: int,
+    *,
+    output_buffer: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    combined = output_buffer
+    if combined is None or tuple(combined.shape) != (num_tokens, sorted_outputs.shape[1]):
+        combined = torch.zeros(num_tokens, sorted_outputs.shape[1], device=sorted_outputs.device, dtype=sorted_outputs.dtype)
+    else:
+        combined.zero_()
+    combined.index_add_(0, packed.token_indices, sorted_outputs * packed.packed_weights.unsqueeze(-1))
+    return combined
+
+
+def run_layer_baseline(
+    state: MoELabState,
+    workload: MoECudaPtxWorkload,
+    *,
+    output_buffer: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    output = output_buffer if output_buffer is not None else torch.zeros_like(state.x)
+    output.zero_()
+    for expert_idx in range(workload.num_experts):
+        for slot_idx in range(workload.top_k):
+            mask = state.expert_indices[:, slot_idx] == expert_idx
+            if not torch.any(mask):
+                continue
+            tokens_e = state.x[mask]
+            gate = F.silu(tokens_e @ state.gate_proj[expert_idx])
+            up = tokens_e @ state.up_proj[expert_idx]
+            expert_out = (gate * up) @ state.down_proj[expert_idx]
+            output[mask] += expert_out * state.expert_weights[mask, slot_idx].unsqueeze(-1)
+    return output
+
+
+def run_layer_cuda(
+    state: MoELabState,
+    workload: MoECudaPtxWorkload,
+    *,
+    packed: Optional[PackedRoutes] = None,
+    combined_buffer: Optional[torch.Tensor] = None,
+    padded_tokens_buffer: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    packed = packed or pack_topk_routes(
+        state.x,
+        state.expert_indices,
+        state.expert_weights,
+        num_experts=workload.num_experts,
+    )
+    grouped_tokens = packed.packed_tokens
+    if workload.mode == "forward":
+        quantized = quantize_mxfp8_optimized(packed.packed_tokens, include_transpose=False)
+        grouped_tokens = dequantize_mxfp8(quantized.forward, dtype=packed.packed_tokens.dtype)
+    sorted_outputs = grouped_ffn_cuda(
+        grouped_tokens,
+        packed,
+        state.gate_proj,
+        state.up_proj,
+        state.down_proj,
+        padded_tokens_buffer=padded_tokens_buffer,
+    )
+    return combine_weighted_outputs(sorted_outputs, packed, workload.num_tokens, output_buffer=combined_buffer)
+
+
+def _compute_scale_blocks(matrix: torch.Tensor) -> tuple[torch.Tensor, int]:
+    pad = (-matrix.shape[1]) % _MXFP8_BLOCK_SIZE
+    if pad:
+        matrix = F.pad(matrix, (0, pad))
+    return matrix, pad
+
+
+def _pow2_scales(blocks: torch.Tensor) -> torch.Tensor:
+    amax = blocks.abs().amax(dim=-1)
+    unclamped = (amax / _MXFP8_E4M3_MAX).clamp_min(_MXFP8_E8M0_MIN)
+    scales = torch.pow(2.0, torch.ceil(torch.log2(unclamped)))
+    scales = torch.where(amax > 0, scales, torch.full_like(scales, _MXFP8_E8M0_MIN))
+    return scales
+
+
+def _quantize_matrix(matrix: torch.Tensor) -> QuantizedMatrix:
+    padded, _ = _compute_scale_blocks(matrix)
+    rows, padded_cols = padded.shape
+    blocks = padded.to(torch.float32).reshape(rows, padded_cols // _MXFP8_BLOCK_SIZE, _MXFP8_BLOCK_SIZE)
+    scales_fp32 = _pow2_scales(blocks)
+    normalized = (blocks / scales_fp32.unsqueeze(-1)).clamp(-_MXFP8_E4M3_MAX, _MXFP8_E4M3_MAX)
+    quantized = normalized.to(torch.float8_e4m3fn).reshape(rows, padded_cols).contiguous()
+    scales = scales_fp32.to(torch.float8_e8m0fnu).contiguous()
+    return QuantizedMatrix(quantized=quantized, scales=scales, original_shape=tuple(matrix.shape))
+
+
+def quantize_mxfp8_reference(matrix: torch.Tensor, *, include_transpose: bool) -> QuantizedBundle:
+    forward = _quantize_matrix(matrix)
+    # Reference path pays the reshape tax explicitly to reflect the cost of
+    # materializing a tcgen05-style scale layout from a generic quantizer.
+    _ = forward.scales.to(torch.float32).repeat_interleave(_MXFP8_BLOCK_SIZE, dim=1).reshape(forward.quantized.shape)
+    transpose = None
+    if include_transpose:
+        transpose = _quantize_matrix(matrix.t().contiguous())
+        _ = transpose.scales.to(torch.float32).repeat_interleave(_MXFP8_BLOCK_SIZE, dim=1).reshape(
+            transpose.quantized.shape
+        )
+    return QuantizedBundle(forward=forward, transpose=transpose)
+
+
+def quantize_mxfp8_optimized(matrix: torch.Tensor, *, include_transpose: bool) -> QuantizedBundle:
+    forward = _quantize_matrix(matrix)
+    transpose = _quantize_matrix(matrix.t().contiguous()) if include_transpose else None
+    return QuantizedBundle(forward=forward, transpose=transpose)
+
+
+def dequantize_mxfp8(qmat: QuantizedMatrix, *, dtype: torch.dtype) -> torch.Tensor:
+    scales = qmat.scales.to(torch.float32).repeat_interleave(_MXFP8_BLOCK_SIZE, dim=1)
+    values = qmat.quantized.to(torch.float32) * scales[:, : qmat.quantized.shape[1]]
+    rows, cols = qmat.original_shape
+    return values[:rows, :cols].to(dtype=dtype)
+
+
+def build_quant_verification_tensor(bundle: QuantizedBundle) -> torch.Tensor:
+    pieces = [
+        bundle.forward.quantized[:4, :32].to(torch.float32).reshape(-1),
+        bundle.forward.scales[:4, :8].to(torch.float32).reshape(-1),
+    ]
+    if bundle.transpose is not None:
+        pieces.append(bundle.transpose.quantized[:4, :32].to(torch.float32).reshape(-1))
+        pieces.append(bundle.transpose.scales[:4, :8].to(torch.float32).reshape(-1))
+    return torch.cat(pieces, dim=0)
+
+
+def build_tensor_slice_verification(output: torch.Tensor) -> torch.Tensor:
+    return output[: min(32, output.shape[0]), : min(32, output.shape[1])].reshape(-1).float().clone()
+
+
+def build_backward_verification(
+    output: torch.Tensor,
+    x_grad: torch.Tensor,
+    gate_grad: torch.Tensor,
+    down_grad: torch.Tensor,
+) -> torch.Tensor:
+    pieces = [
+        output[: min(8, output.shape[0]), : min(16, output.shape[1])].reshape(-1).float(),
+        x_grad[: min(8, x_grad.shape[0]), : min(16, x_grad.shape[1])].reshape(-1).float(),
+        gate_grad[0, : min(8, gate_grad.shape[1]), : min(8, gate_grad.shape[2])].reshape(-1).float(),
+        down_grad[0, : min(8, down_grad.shape[1]), : min(8, down_grad.shape[2])].reshape(-1).float(),
+    ]
+    return torch.cat(pieces, dim=0)
+
+
+def grouped_work_unit_count(
+    counts_cpu: Sequence[int],
+    *,
+    output_dim: int,
+    reduction_dim: int,
+    tile_m: int = 128,
+    tile_n: int = 128,
+    tile_k: int = 128,
+) -> int:
+    total = 0
+    col_blocks = math.ceil(output_dim / tile_n)
+    red_blocks = math.ceil(reduction_dim / tile_k)
+    for count in counts_cpu:
+        row_blocks = math.ceil(count / tile_m) if count > 0 else 0
+        total += row_blocks * col_blocks * red_blocks
+    return int(total)
+
+
+class MoECudaPtxBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Benchmark a routed top-2 SwiGLU MoE FFN across multiple surfaces."""
+
+    preferred_ncu_replay_mode = "application"
+
+    def __init__(self, *, target: str, backend: str, label: str) -> None:
+        super().__init__()
+        if target not in {"moe_quant", "moe_grouped_gemm_fwd", "moe_grouped_gemm_bwd", "moe_layer"}:
+            raise ValueError(f"Unsupported target: {target}")
+        if backend not in {"baseline", "cuda", "ptx"}:
+            raise ValueError(f"Unsupported backend: {backend}")
+        self.target = target
+        self.backend = backend
+        self.label = label
+        self.workload = MoECudaPtxWorkload()
+        self.state: Optional[MoELabState] = None
+        self.packed: Optional[PackedRoutes] = None
+        self.outputs: Optional[torch.Tensor] = None
+        self.quantized: Optional[QuantizedBundle] = None
+        self.x_grad: Optional[torch.Tensor] = None
+        self.gate_grad: Optional[torch.Tensor] = None
+        self.down_grad: Optional[torch.Tensor] = None
+        self._combined_buffer: Optional[torch.Tensor] = None
+        self._grouped_output_buffer: Optional[torch.Tensor] = None
+        self._padded_tokens_buffer: Optional[torch.Tensor] = None
+        self._benchmark_impl: Optional[Callable[[], None]] = None
+        self._custom_metrics: dict[str, float] = {}
+        self._refresh_workload_metadata()
+
+    def _refresh_workload_metadata(self) -> None:
+        if self.target == "moe_quant":
+            self._workload = WorkloadMetadata(
+                requests_per_iteration=float(self.workload.num_tokens),
+                tokens_per_iteration=float(self.workload.routed_tokens),
+                bytes_per_iteration=float(self.workload.routed_tokens * self.workload.hidden_dim * 2),
+            )
+        elif self.target == "moe_layer":
+            self._workload = WorkloadMetadata(
+                requests_per_iteration=float(self.workload.num_tokens),
+                tokens_per_iteration=float(self.workload.num_tokens),
+                custom_units_per_iteration=float(
+                    3 * self.workload.routed_tokens * self.workload.hidden_dim * self.workload.expert_ffn_dim * 2
+                ),
+                custom_unit_name="FLOPs",
+            )
+        else:
+            self._workload = WorkloadMetadata(
+                requests_per_iteration=float(self.workload.routed_tokens),
+                tokens_per_iteration=float(self.workload.routed_tokens),
+                custom_units_per_iteration=float(
+                    3 * self.workload.routed_tokens * self.workload.hidden_dim * self.workload.expert_ffn_dim * 2
+                ),
+                custom_unit_name="FLOPs",
+            )
+
+    def _force_target_mode(self) -> None:
+        if self.target == "moe_grouped_gemm_fwd":
+            self.workload.mode = "forward"
+        elif self.target == "moe_grouped_gemm_bwd":
+            self.workload.mode = "fwd_bwd"
+
+    def apply_target_overrides(self, argv: list[str]) -> None:
+        self.workload = apply_workload_overrides(self.workload, argv)
+        self._force_target_mode()
+        self._refresh_workload_metadata()
+
+    def _populate_metrics(self, counts_cpu: Sequence[int]) -> None:
+        gate_units = grouped_work_unit_count(
+            counts_cpu,
+            output_dim=self.workload.expert_ffn_dim,
+            reduction_dim=self.workload.hidden_dim,
+        )
+        down_units = grouped_work_unit_count(
+            counts_cpu,
+            output_dim=self.workload.hidden_dim,
+            reduction_dim=self.workload.expert_ffn_dim,
+        )
+        max_count = float(max(counts_cpu, default=0))
+        min_count = float(min(counts_cpu, default=0))
+        mean_count = float(sum(counts_cpu) / len(counts_cpu)) if counts_cpu else 0.0
+        self._custom_metrics = {
+            "moe.backend.baseline": 1.0 if self.backend == "baseline" else 0.0,
+            "moe.backend.cuda": 1.0 if self.backend == "cuda" else 0.0,
+            "moe.backend.ptx": 1.0 if self.backend == "ptx" else 0.0,
+            "moe.histogram.balanced": 1.0 if self.workload.histogram == "balanced" else 0.0,
+            "moe.histogram.skewed": 1.0 if self.workload.histogram == "skewed" else 0.0,
+            "moe.mode.forward_only": 1.0 if self.workload.mode == "forward" else 0.0,
+            "moe.mode.fwd_bwd": 1.0 if self.workload.mode == "fwd_bwd" else 0.0,
+            "moe.route.max_tokens_per_expert": max_count,
+            "moe.route.min_tokens_per_expert": min_count,
+            "moe.route.mean_tokens_per_expert": mean_count,
+            "moe.route.capacity_limit": float(self.workload.capacity_tokens_per_expert),
+            "moe.grouped_work_units.gate": float(gate_units),
+            "moe.grouped_work_units.down": float(down_units),
+        }
+
+    def setup(self) -> None:
+        self.workload.validate()
+        self._force_target_mode()
+        self.state = build_state(self.workload, self.device)
+        route_counts = torch.bincount(self.state.expert_indices.reshape(-1), minlength=self.workload.num_experts)
+        route_counts_cpu = tuple(int(count) for count in route_counts.detach().cpu().tolist())
+        self._populate_metrics(route_counts_cpu)
+
+        if self.target != "moe_layer":
+            self.packed = pack_topk_routes(
+                self.state.x,
+                self.state.expert_indices,
+                self.state.expert_weights,
+                num_experts=self.workload.num_experts,
+            )
+
+        self.outputs = None
+        self.quantized = None
+        self.x_grad = None
+        self.gate_grad = None
+        self.down_grad = None
+        self._combined_buffer = torch.empty_like(self.state.x)
+        self._grouped_output_buffer = None
+        self._padded_tokens_buffer = None
+
+        if self.packed is not None:
+            self._grouped_output_buffer = torch.empty(
+                self.packed.packed_tokens.shape[0],
+                self.workload.hidden_dim,
+                device=self.device,
+                dtype=self.workload.dtype,
+            )
+            if self.packed.max_count > 0:
+                flat_slots = self.workload.num_experts * self.packed.max_count
+                self._padded_tokens_buffer = torch.empty(
+                    flat_slots,
+                    self.workload.hidden_dim,
+                    device=self.device,
+                    dtype=self.workload.dtype,
+                )
+
+        if self.backend == "ptx":
+            ensure_moe_ptx_supported()
+            load_moe_ptx_extension()
+
+        # Warm the selected execution path outside the measured region.
+        if self.target == "moe_quant" and self.packed is not None:
+            if self.backend == "baseline":
+                _ = quantize_mxfp8_reference(self.packed.packed_tokens, include_transpose=self.workload.mode == "fwd_bwd")
+            elif self.backend == "cuda":
+                _ = quantize_mxfp8_optimized(self.packed.packed_tokens, include_transpose=self.workload.mode == "fwd_bwd")
+            else:
+                raise RuntimeError("SKIPPED: PTX quant backend scaffold exists, but kernels are not implemented yet.")
+        elif self.target == "moe_grouped_gemm_fwd" and self.packed is not None and self.state is not None:
+            if self.backend == "baseline":
+                _ = grouped_ffn_reference(
+                    self.packed.packed_tokens,
+                    self.packed.counts_cpu,
+                    self.state.gate_proj,
+                    self.state.up_proj,
+                    self.state.down_proj,
+                    output_buffer=self._grouped_output_buffer,
+                )
+            elif self.backend == "cuda":
+                _ = grouped_ffn_cuda(
+                    self.packed.packed_tokens,
+                    self.packed,
+                    self.state.gate_proj,
+                    self.state.up_proj,
+                    self.state.down_proj,
+                    padded_tokens_buffer=self._padded_tokens_buffer,
+                )
+            else:
+                raise RuntimeError("SKIPPED: PTX grouped GEMM backend scaffold exists, but kernels are not implemented yet.")
+        elif self.target == "moe_grouped_gemm_bwd" and self.packed is not None and self.state is not None:
+            tokens = self.packed.packed_tokens.detach().clone().requires_grad_(True)
+            gate_proj = self.state.gate_proj.detach().clone().requires_grad_(True)
+            up_proj = self.state.up_proj.detach().clone().requires_grad_(True)
+            down_proj = self.state.down_proj.detach().clone().requires_grad_(True)
+            if self.backend == "baseline":
+                out = grouped_ffn_reference(tokens, self.packed.counts_cpu, gate_proj, up_proj, down_proj)
+            elif self.backend == "cuda":
+                out = grouped_ffn_cuda(
+                    tokens,
+                    self.packed,
+                    gate_proj,
+                    up_proj,
+                    down_proj,
+                    padded_tokens_buffer=self._padded_tokens_buffer,
+                )
+            else:
+                raise RuntimeError("SKIPPED: PTX grouped GEMM backend scaffold exists, but kernels are not implemented yet.")
+            grad_target = self.state.loss_grad.index_select(0, self.packed.token_indices)
+            (out * grad_target).sum().backward()
+        elif self.target == "moe_layer" and self.state is not None:
+            if self.backend == "baseline":
+                _ = run_layer_baseline(self.state, self.workload, output_buffer=self._combined_buffer)
+            elif self.backend == "cuda":
+                _ = run_layer_cuda(self.state, self.workload, combined_buffer=self._combined_buffer)
+            else:
+                raise RuntimeError("SKIPPED: PTX layer backend scaffold exists, but kernels are not implemented yet.")
+        self._synchronize()
+        self._benchmark_impl = self._select_benchmark_impl()
+
+    def _select_benchmark_impl(self) -> Callable[[], None]:
+        if self.target == "moe_quant":
+            return self._benchmark_quant
+        if self.target == "moe_grouped_gemm_fwd":
+            return self._benchmark_grouped_gemm_fwd
+        if self.target == "moe_grouped_gemm_bwd":
+            return self._benchmark_grouped_gemm_bwd
+        if self.workload.mode == "forward":
+            return self._benchmark_layer_forward
+        return self._benchmark_layer_fwd_bwd
+
+    def _reset_outputs(self) -> None:
+        self.outputs = None
+        self.quantized = None
+        self.x_grad = None
+        self.gate_grad = None
+        self.down_grad = None
+
+    def _benchmark_quant(self) -> None:
+        if self.packed is None:
+            raise RuntimeError("Packed routes not initialized for quant target")
+        if self.backend == "baseline":
+            self.quantized = quantize_mxfp8_reference(
+                self.packed.packed_tokens,
+                include_transpose=self.workload.mode == "fwd_bwd",
+            )
+        elif self.backend == "cuda":
+            self.quantized = quantize_mxfp8_optimized(
+                self.packed.packed_tokens,
+                include_transpose=self.workload.mode == "fwd_bwd",
+            )
+        else:
+            raise RuntimeError("SKIPPED: PTX quant backend scaffold exists, but kernels are not implemented yet.")
+
+    def _benchmark_grouped_gemm_fwd(self) -> None:
+        if self.packed is None or self.state is None:
+            raise RuntimeError("Grouped forward benchmark state is not initialized")
+        if self.backend == "baseline":
+            self.outputs = grouped_ffn_reference(
+                self.packed.packed_tokens,
+                self.packed.counts_cpu,
+                self.state.gate_proj,
+                self.state.up_proj,
+                self.state.down_proj,
+                output_buffer=self._grouped_output_buffer,
+            )
+        elif self.backend == "cuda":
+            self.outputs = grouped_ffn_cuda(
+                self.packed.packed_tokens,
+                self.packed,
+                self.state.gate_proj,
+                self.state.up_proj,
+                self.state.down_proj,
+                padded_tokens_buffer=self._padded_tokens_buffer,
+            )
+        else:
+            raise RuntimeError("SKIPPED: PTX grouped GEMM backend scaffold exists, but kernels are not implemented yet.")
+
+    def _benchmark_grouped_gemm_bwd(self) -> None:
+        if self.packed is None or self.state is None:
+            raise RuntimeError("Grouped backward benchmark state is not initialized")
+        tokens = self.packed.packed_tokens.detach().clone().requires_grad_(True)
+        gate_proj = self.state.gate_proj.detach().clone().requires_grad_(True)
+        up_proj = self.state.up_proj.detach().clone().requires_grad_(True)
+        down_proj = self.state.down_proj.detach().clone().requires_grad_(True)
+        if self.backend == "baseline":
+            sorted_out = grouped_ffn_reference(tokens, self.packed.counts_cpu, gate_proj, up_proj, down_proj)
+        elif self.backend == "cuda":
+            sorted_out = grouped_ffn_cuda(
+                tokens,
+                self.packed,
+                gate_proj,
+                up_proj,
+                down_proj,
+                padded_tokens_buffer=self._padded_tokens_buffer,
+            )
+        else:
+            raise RuntimeError("SKIPPED: PTX grouped GEMM backend scaffold exists, but kernels are not implemented yet.")
+        grad_target = self.state.loss_grad.index_select(0, self.packed.token_indices)
+        (sorted_out * grad_target).sum().backward()
+        self.outputs = sorted_out.detach()
+        self.x_grad = tokens.grad.detach()
+        self.gate_grad = gate_proj.grad.detach()
+        self.down_grad = down_proj.grad.detach()
+
+    def _benchmark_layer_forward(self) -> None:
+        if self.state is None:
+            raise RuntimeError("Layer benchmark state is not initialized")
+        if self.backend == "baseline":
+            self.outputs = run_layer_baseline(self.state, self.workload, output_buffer=self._combined_buffer)
+        elif self.backend == "cuda":
+            self.outputs = run_layer_cuda(
+                self.state,
+                self.workload,
+                combined_buffer=self._combined_buffer,
+            )
+        else:
+            raise RuntimeError("SKIPPED: PTX layer backend scaffold exists, but kernels are not implemented yet.")
+
+    def _benchmark_layer_fwd_bwd(self) -> None:
+        if self.state is None:
+            raise RuntimeError("Layer benchmark state is not initialized")
+        x = self.state.x.detach().clone().requires_grad_(True)
+        gate_proj = self.state.gate_proj.detach().clone().requires_grad_(True)
+        up_proj = self.state.up_proj.detach().clone().requires_grad_(True)
+        down_proj = self.state.down_proj.detach().clone().requires_grad_(True)
+        state = MoELabState(
+            x=x,
+            expert_indices=self.state.expert_indices,
+            expert_weights=self.state.expert_weights,
+            gate_proj=gate_proj,
+            up_proj=up_proj,
+            down_proj=down_proj,
+            loss_grad=self.state.loss_grad,
+        )
+        if self.backend == "baseline":
+            output = run_layer_baseline(state, self.workload)
+        elif self.backend == "cuda":
+            output = run_layer_cuda(state, self.workload)
+        else:
+            raise RuntimeError("SKIPPED: PTX layer backend scaffold exists, but kernels are not implemented yet.")
+        (output * self.state.loss_grad).sum().backward()
+        self.outputs = output.detach()
+        self.x_grad = x.grad.detach()
+        self.gate_grad = gate_proj.grad.detach()
+        self.down_grad = down_proj.grad.detach()
+
+    def benchmark_fn(self) -> None:
+        if self._benchmark_impl is None:
+            raise RuntimeError("Benchmark implementation was not initialized")
+        self._reset_outputs()
+
+        with self._nvtx_range(self.label):
+            self._benchmark_impl()
+
+    def capture_verification_payload(self) -> None:
+        if self.state is None:
+            raise RuntimeError("setup() must run before verification capture")
+
+        mode = self.workload.mode
+        if self.target == "moe_quant":
+            if self.quantized is None:
+                raise RuntimeError("benchmark_fn() did not produce quantized outputs")
+            self._set_verification_payload(
+                inputs={
+                    "shape": torch.tensor(
+                        [
+                            self.workload.num_tokens,
+                            self.workload.hidden_dim,
+                            self.workload.top_k,
+                            self.workload.num_experts,
+                        ],
+                        dtype=torch.int64,
+                        device="cpu",
+                    )
+                },
+                output=build_quant_verification_tensor(self.quantized),
+                batch_size=self.workload.num_tokens,
+                parameter_count=0,
+                precision_flags={"bf16": self.workload.dtype == torch.bfloat16, "fp16": self.workload.dtype == torch.float16},
+                output_tolerance=(0.0, 0.0),
+                signature_overrides={"quantization_mode": "mxfp8_block32"},
+            )
+            return
+
+        if self.outputs is None:
+            raise RuntimeError("benchmark_fn() did not produce outputs")
+
+        inputs = {
+            "shape": torch.tensor(
+                [
+                    self.workload.num_tokens,
+                    self.workload.hidden_dim,
+                    self.workload.expert_ffn_dim,
+                    self.workload.num_experts,
+                    self.workload.top_k,
+                ],
+                dtype=torch.int64,
+                device="cpu",
+            ),
+            "routing": self.state.expert_indices[: min(32, self.state.expert_indices.shape[0])].detach().cpu(),
+        }
+
+        if self.target == "moe_grouped_gemm_bwd" or mode == "fwd_bwd":
+            if self.x_grad is None or self.gate_grad is None or self.down_grad is None:
+                raise RuntimeError("Backward mode did not capture gradients")
+            verification = build_backward_verification(
+                self.outputs,
+                self.x_grad,
+                self.gate_grad,
+                self.down_grad,
+            )
+        else:
+            verification = build_tensor_slice_verification(self.outputs)
+
+        self._set_verification_payload(
+            inputs=inputs,
+            output=verification,
+            batch_size=self.workload.num_tokens,
+            parameter_count=int(
+                self.state.gate_proj.numel() + self.state.up_proj.numel() + self.state.down_proj.numel()
+            ),
+            precision_flags={
+                "bf16": self.workload.dtype == torch.bfloat16,
+                "fp16": self.workload.dtype == torch.float16,
+                "tf32": torch.backends.cuda.matmul.allow_tf32,
+            },
+            output_tolerance=(2e-2, 2e-2),
+        )
+
+    def teardown(self) -> None:
+        self.state = None
+        self.packed = None
+        self.outputs = None
+        self.quantized = None
+        self.x_grad = None
+        self.gate_grad = None
+        self.down_grad = None
+        self._combined_buffer = None
+        self._grouped_output_buffer = None
+        self._padded_tokens_buffer = None
+        self._benchmark_impl = None
+        torch.cuda.empty_cache()
+
+    def get_config(self) -> BenchmarkConfig:
+        if self.target == "moe_quant":
+            iterations = 10 if self.workload.mode == "forward" else 6
+            warmup = 5
+        elif self.target == "moe_grouped_gemm_fwd":
+            iterations = 8
+            warmup = 5
+        elif self.target == "moe_grouped_gemm_bwd":
+            iterations = 4
+            warmup = 5
+        else:
+            iterations = 4 if self.workload.mode == "forward" else 2
+            warmup = 5
+        return BenchmarkConfig(
+            iterations=iterations,
+            warmup=warmup,
+            use_subprocess=self.target == "moe_grouped_gemm_bwd" or self.workload.mode == "fwd_bwd",
+            setup_timeout_seconds=900,
+            measurement_timeout_seconds=600,
+            ncu_replay_mode="application",
+        )
+
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        return dict(self._custom_metrics)
+
+    def validate_result(self) -> Optional[str]:
+        if self.target == "moe_quant":
+            if self.quantized is None:
+                return "Quantization target did not produce outputs"
+            if self.quantized.forward.quantized.dtype != torch.float8_e4m3fn:
+                return "Forward quantized tensor is not float8_e4m3fn"
+            if self.quantized.forward.scales.dtype != torch.float8_e8m0fnu:
+                return "Forward scale tensor is not float8_e8m0fnu"
+            return None
+
+        if self.outputs is None:
+            return "benchmark_fn() did not produce output"
+        if not torch.isfinite(self.outputs).all():
+            return "Outputs contain non-finite values"
+        if self.target == "moe_grouped_gemm_bwd" or self.workload.mode == "fwd_bwd":
+            if self.x_grad is None or self.gate_grad is None or self.down_grad is None:
+                return "Backward path did not produce gradients"
+            if not torch.isfinite(self.x_grad).all():
+                return "Input gradients contain non-finite values"
+            if not torch.isfinite(self.gate_grad).all():
+                return "Gate gradients contain non-finite values"
+            if not torch.isfinite(self.down_grad).all():
+                return "Down projection gradients contain non-finite values"
+        return None

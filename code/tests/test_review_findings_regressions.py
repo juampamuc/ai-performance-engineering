@@ -249,6 +249,27 @@ def test_ch18_and_fullstack_pairs_keep_semantics_fixed() -> None:
     assert 'route_mode="topology_aware" if optimized else "uniform"' not in moe_common
 
 
+def test_ozaki_lab_documents_slide_narrative_and_pins_emulation_strategy() -> None:
+    dynamic_text = _read("labs/ozaki_scheme/optimized_ozaki_scheme_dynamic.py")
+    fixed_text = _read("labs/ozaki_scheme/optimized_ozaki_scheme_fixed.py")
+    readme_text = _read("labs/ozaki_scheme/README.md")
+
+    for source in (dynamic_text, fixed_text):
+        assert '"--emulation-strategy", "eager"' in source
+        assert '"emulation_strategy": "eager"' in source
+
+    assert "Coverage Against The Ozaki Narrative" in readme_text
+    assert "Ozaki-II Context" in readme_text
+    assert "Controllable Accuracy" in readme_text
+    assert "Adaptive Behavior" in readme_text
+    assert "Reproducibility" in readme_text
+    assert "Disadvantages" in readme_text
+    assert "Papers and Code" in readme_text
+    assert "python labs/ozaki_scheme/narrative_checks.py --section all" in readme_text
+    assert "CUBLAS_EMULATE_DOUBLE_PRECISION=1" in readme_text
+    assert "CUBLAS_EMULATION_STRATEGY=performant" in readme_text
+
+
 def test_ch17_memory_pair_keeps_discrete_input_distribution() -> None:
     baseline_memory = _read("ch17/baseline_memory.py")
     optimized_memory = _read("ch17/optimized_memory.py")

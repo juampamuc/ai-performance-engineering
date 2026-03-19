@@ -63,6 +63,7 @@ from core.harness.benchmark_harness import (
     BenchmarkMode,
     BenchmarkConfig,
     TorchrunLaunchSpec,
+    _lookup_target_extra_args,
 )
 from core.harness.validity_profile import (
     VALIDITY_PROFILE_CHOICES,
@@ -2315,7 +2316,10 @@ def _build_torchrun_profile_command(
         extra_args: List[str] = []
         target_label = getattr(config, "target_label", None)
         if target_label:
-            target_overrides = (getattr(config, "target_extra_args", {}) or {}).get(target_label)
+            target_overrides = _lookup_target_extra_args(
+                (getattr(config, "target_extra_args", {}) or {}),
+                target_label,
+            )
             if target_overrides:
                 if isinstance(target_overrides, str):
                     extra_args.extend(shlex.split(target_overrides))
@@ -2409,6 +2413,12 @@ def _harden_profile_env(
             stub_path.write_text(contents)
 
     env = dict(base_env or os.environ.copy())
+    owner_run_id = str(os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+    owner_pid = str(os.environ.get("AISP_BENCHMARK_OWNER_PID", "")).strip()
+    if owner_run_id:
+        env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", owner_run_id)
+    if owner_pid:
+        env.setdefault("AISP_BENCHMARK_OWNER_PID", owner_pid)
     force_no_user_site = str(env.get("AISP_PROFILE_NO_USER_SITE", "")).strip().lower() in {
         "1",
         "true",

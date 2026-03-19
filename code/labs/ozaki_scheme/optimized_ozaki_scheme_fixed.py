@@ -33,6 +33,7 @@ class OptimizedOzakiSchemeFixedBenchmark(CudaBinaryBenchmark):
             "--iters", "10",
             "--seed", "2026",
             "--input-scale", "0.001",
+            "--emulation-strategy", "eager",
             "--fixed-bits", "12",
         ]
         super().__init__(
@@ -49,6 +50,7 @@ class OptimizedOzakiSchemeFixedBenchmark(CudaBinaryBenchmark):
                 "K": self._shape[2],
                 "dtype": "float64",
                 "input_scale": 0.001,
+                "emulation_strategy": "eager",
                 "fixed_bits": 12,
                 "matmul_iters": 10,
             },
@@ -69,6 +71,8 @@ class OptimizedOzakiSchemeFixedBenchmark(CudaBinaryBenchmark):
             "variant": "fixed",
             "source_library": "cuBLAS",
             "retained_bits_mode": "fixed mantissa budget",
+            "emulation_strategy": "eager",
+            "adaptive_behavior": False,
         }
 
     def benchmark_fn(self) -> None:

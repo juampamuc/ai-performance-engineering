@@ -78,6 +78,7 @@ python -m cli.aisp bench list-targets --chapter labs/moe_cuda
 | `labs/python_concurrency/` | Python concurrency control-plane playbook (`asyncio`, retries, idempotency, hybrid pipelines) | ch03, ch11, ch16 |
 | `labs/real_world_models/` | Real-world model optimization playbook | ch20 |
 | `labs/speculative_decode/` | Speculative decoding | ch15, ch18 |
+| `labs/top_k_kernel/` | Grouped-GQA Top-K selection benchmark pair (dense grouped baseline, Triton grouped path, CUDA CUTLASS grouped path) | ch10, ch18 |
 | `labs/training_hotpath/` | Training hot-path supporting examples for reduction fusion and padding-aware projections | ch12, ch14 |
 | `labs/trtllm_phi_3_5_moe/` | TensorRT-LLM Phi-3.5-MoE comparison | ch16, ch18 |
 | `labs/train_distributed/` | Distributed training workflows | ch03, ch04 |
