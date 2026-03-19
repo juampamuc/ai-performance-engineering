@@ -172,6 +172,7 @@ def test_selected_public_lab_families_are_free_of_local_sys_path_bootstrap() -> 
     offenders = []
     for lab in (
         "block_scaling",
+        "blackwell_gemm_optimizations",
         "blackwell_matmul",
         "cudnn_sdpa_bench",
         "custom_vs_cublas",

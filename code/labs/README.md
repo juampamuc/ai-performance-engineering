@@ -27,7 +27,7 @@ If a lab cannot answer those questions yet, the doc should say so directly inste
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `labs/block_scaling`, `labs/blackwell_matmul`, `labs/flashattention4`, `labs/persistent_decode`, `labs/training_hotpath` | Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas. |
+| `labs/block_scaling`, `labs/blackwell_matmul`, `labs/blackwell_gemm_optimizations`, `labs/flashattention4`, `labs/persistent_decode`, `labs/training_hotpath` | Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas. |
 | `labs/decode_optimization`, `labs/kv_optimization`, `labs/moe_cuda`, `labs/moe_optimization_journey` | Serving-path and MoE labs where the benchmark pair is part of a broader optimization story. |
 | `labs/nanochat_fullstack`, `labs/python_concurrency`, `labs/vllm-deepseek-tuning` | Larger workflow-oriented labs that need a richer doc model than a simple pair benchmark. |
 | `labs/nvfp4_*` | Low-precision kernel labs where verification discipline matters as much as the timing win. |
@@ -54,6 +54,7 @@ python -m cli.aisp bench list-targets --chapter labs/moe_cuda
 | `labs/nvfp4_gemm/` | GPUMODE `nvfp4_gemm` challenge workspace | ch06, ch09, ch10 |
 | `labs/async_input_pipeline/` | Async CPU->GPU input overlap | ch02, ch05, ch11 |
 | `labs/block_scaling/` | Blackwell hardware-supported block scaling with direct CUTLASS vs PyTorch microbenchmarks | ch06, ch09 |
+| `labs/blackwell_gemm_optimizations/` | Blackwell grouped/MoE GEMM optimization journey | ch10, ch15 |
 | `labs/blackwell_matmul/` | Matmul suite focused on Blackwell | ch06, ch09, ch10 |
 | `labs/cudnn_sdpa_bench/` | cuDNN SDPA benchmarking | ch10, ch18 |
 | `labs/custom_vs_cublas/` | Custom kernel vs cuBLAS parity | ch06, ch09 |
@@ -73,12 +74,10 @@ python -m cli.aisp bench list-targets --chapter labs/moe_cuda
 | `labs/moe_parallelism/` | MoE parallelism planning | ch04, ch15 |
 | `labs/nanochat_fullstack/` | End-to-end inference stack (NanoChat) | ch16 |
 | `labs/occupancy_tuning/` | Triton occupancy/schedule sweeps | ch08, ch14 |
-| `labs/ozaki_scheme/` | cuBLAS FP64 emulation / Ozaki-style dynamic-vs-fixed retained-bit study on B200 | ch09 |
 | `labs/persistent_decode/` | Persistent decode + TMA prefill | ch10, ch11 |
 | `labs/python_concurrency/` | Python concurrency control-plane playbook (`asyncio`, retries, idempotency, hybrid pipelines) | ch03, ch11, ch16 |
 | `labs/real_world_models/` | Real-world model optimization playbook | ch20 |
 | `labs/speculative_decode/` | Speculative decoding | ch15, ch18 |
-| `labs/top_k_kernel/` | Grouped-GQA Top-K selection benchmark pair (dense grouped baseline, Triton grouped path, CUDA CUTLASS grouped path) | ch10, ch18 |
 | `labs/training_hotpath/` | Training hot-path supporting examples for reduction fusion and padding-aware projections | ch12, ch14 |
 | `labs/trtllm_phi_3_5_moe/` | TensorRT-LLM Phi-3.5-MoE comparison | ch16, ch18 |
 | `labs/train_distributed/` | Distributed training workflows | ch03, ch04 |

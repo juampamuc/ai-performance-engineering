@@ -240,13 +240,19 @@ def test_profile_python_benchmark_retries_direct_wrapper_once(tmp_path: Path) ->
     class _Automation:
         def __init__(self, _output_dir):
             self.calls = 0
+            self.last_error = None
 
         def profile_nsys(self, **_kwargs):
             self.calls += 1
             if self.calls == 1:
+                self.last_error = (
+                    "Nsight Systems exited successfully but no report artifact was produced "
+                    f"at {report_path}"
+                )
                 return None
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text("rep", encoding="utf-8")
+            self.last_error = None
             return report_path
 
     automation = _Automation(output_dir)
@@ -270,6 +276,51 @@ def test_profile_python_benchmark_retries_direct_wrapper_once(tmp_path: Path) ->
     assert automation.calls == 2
 
 
+def test_profile_python_benchmark_retries_direct_python_wrapper_once(tmp_path: Path) -> None:
+    bench_path = tmp_path / "demo.py"
+    bench_path.write_text("print('ok')\n", encoding="utf-8")
+    output_dir = tmp_path / "profiles"
+    report_path = output_dir / "demo__baseline.nsys-rep"
+
+    class _Automation:
+        def __init__(self, _output_dir):
+            self.calls = 0
+            self.last_error = None
+
+        def profile_nsys(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                self.last_error = (
+                    "Nsight Systems exited successfully but no report artifact was produced "
+                    f"at {report_path}"
+                )
+                return None
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("rep", encoding="utf-8")
+            self.last_error = None
+            return report_path
+
+    automation = _Automation(output_dir)
+
+    with (
+        patch.object(run_benchmarks, "check_nsys_available", return_value=True),
+        patch("core.profiling.nsight_automation.NsightAutomation", return_value=automation),
+        patch.object(run_benchmarks.time, "sleep", return_value=None),
+    ):
+        report = profile_python_benchmark(
+            SimpleNamespace(),
+            bench_path,
+            bench_path.parent,
+            output_dir,
+            config=BenchmarkConfig(),
+            variant="baseline",
+            output_stem="demo",
+        )
+
+    assert report == report_path
+    assert automation.calls == 2
+
+
 def test_profile_python_benchmark_falls_back_to_clean_helper_retry(tmp_path: Path) -> None:
     bench_path = tmp_path / "demo.py"
     bench_path.write_text("print('ok')\n", encoding="utf-8")
@@ -285,9 +336,14 @@ def test_profile_python_benchmark_falls_back_to_clean_helper_retry(tmp_path: Pat
     class _Automation:
         def __init__(self, _output_dir):
             self.calls = 0
+            self.last_error = None
 
         def profile_nsys(self, **_kwargs):
             self.calls += 1
+            self.last_error = (
+                "Nsight Systems exited successfully but no report artifact was produced "
+                f"at {report_path}"
+            )
             return None
 
     def _fake_helper_run(args, **kwargs):

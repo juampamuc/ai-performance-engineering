@@ -2165,6 +2165,30 @@ def _command_is_direct_torchrun_wrapper(command: Sequence[str]) -> bool:
     )
 
 
+def _resolve_target_override_argv(config: Optional[BenchmarkConfig]) -> Optional[List[str]]:
+    if config is None:
+        return None
+    target_label = getattr(config, "target_label", None)
+    if not target_label:
+        return None
+    target_overrides = _lookup_target_extra_args(
+        (getattr(config, "target_extra_args", {}) or {}),
+        target_label,
+    )
+    if not target_overrides:
+        return None
+    if isinstance(target_overrides, str):
+        return shlex.split(target_overrides)
+    return list(target_overrides)
+
+
+def _is_missing_nsys_artifact_error(last_error: Optional[str]) -> bool:
+    if not last_error:
+        return False
+    normalized = str(last_error).lower()
+    return "no report artifact was produced" in normalized
+
+
 def _retry_nsys_in_clean_helper(
     *,
     output_dir: Path,
@@ -2603,6 +2627,8 @@ def profile_python_benchmark(
         lock_gpu_clocks_flag = False
     gpu_sm_clock_mhz = validity_view.gpu_sm_clock_mhz if validity_view else None
     gpu_mem_clock_mhz = validity_view.gpu_mem_clock_mhz if validity_view else None
+    target_label = getattr(bench_config, "target_label", None) if bench_config else None
+    target_override_argv = _resolve_target_override_argv(bench_config)
     # chapter_dir points to e.g. <repo>/ch10 or <repo>/labs/<lab>; use global
     # repository root for package imports like `labs.*` and `core.*`.
     repo_root = Path(__file__).resolve().parents[2]
@@ -2613,44 +2639,52 @@ def profile_python_benchmark(
         target_command: List[str]
         env: Dict[str, str]
         use_torchrun = bool(_is_torchrun_launch(bench_config))
-        if use_torchrun:
-            torchrun_profile_spec = _resolve_profile_torchrun_spec(
-                benchmark,
-                profiler="nsys",
-                config=bench_config,
-            )
-        if torchrun_profile_spec is not None and bench_config is not None:
-            target_command, base_env = _build_torchrun_profile_command(
-                bench_config,
-                spec=torchrun_profile_spec,
-            )
-            env = _apply_profile_env_overrides(
-                _harden_profile_env(base_env, repo_root=repo_root, chapter_dir=chapter_dir),
-                config=bench_config,
-                benchmark=benchmark,
-            )
-        else:
-            wrapper_source = render_nsys_python_profile_wrapper(
-                benchmark_path=benchmark_path,
-                nvtx_includes=nvtx_includes,
-                validity_profile=validity_profile,
-                lock_gpu_clocks_flag=lock_gpu_clocks_flag,
-                gpu_sm_clock_mhz=gpu_sm_clock_mhz,
-                gpu_mem_clock_mhz=gpu_mem_clock_mhz,
-            )
-            with _temporary_python_profile_launch(
-                wrapper_source,
-                chapter_dir=chapter_dir,
-                repo_root=repo_root,
-                config=bench_config,
-                benchmark=benchmark,
-            ) as (_wrapper_path, target_command, env, use_torchrun):
-                trace_forks = _command_uses_external_torchrun(target_command)
-                profile_preset, full_timeline = _resolve_nsys_profile_mode(bench_config)
-                timeout = timing_view.timeout_for("nsys") if timing_view else None
-                timeout = timeout or 120
-                automation = NsightAutomation(output_dir)
-                nsys_report = automation.profile_nsys(
+        with ExitStack() as stack:
+            if use_torchrun:
+                torchrun_profile_spec = _resolve_profile_torchrun_spec(
+                    benchmark,
+                    profiler="nsys",
+                    config=bench_config,
+                )
+            if torchrun_profile_spec is not None and bench_config is not None:
+                target_command, base_env = _build_torchrun_profile_command(
+                    bench_config,
+                    spec=torchrun_profile_spec,
+                )
+                env = _apply_profile_env_overrides(
+                    _harden_profile_env(base_env, repo_root=repo_root, chapter_dir=chapter_dir),
+                    config=bench_config,
+                    benchmark=benchmark,
+                )
+            else:
+                wrapper_source = render_nsys_python_profile_wrapper(
+                    benchmark_path=benchmark_path,
+                    nvtx_includes=nvtx_includes,
+                    target_label=target_label,
+                    target_override_argv=target_override_argv,
+                    validity_profile=validity_profile,
+                    lock_gpu_clocks_flag=lock_gpu_clocks_flag,
+                    gpu_sm_clock_mhz=gpu_sm_clock_mhz,
+                    gpu_mem_clock_mhz=gpu_mem_clock_mhz,
+                )
+                _wrapper_path, target_command, env, use_torchrun = stack.enter_context(
+                    _temporary_python_profile_launch(
+                        wrapper_source,
+                        chapter_dir=chapter_dir,
+                        repo_root=repo_root,
+                        config=bench_config,
+                        benchmark=benchmark,
+                    )
+                )
+            profile_preset, full_timeline = _resolve_nsys_profile_mode(bench_config)
+            trace_forks = _command_uses_external_torchrun(target_command)
+            wait_mode = "all" if trace_forks else "primary"
+            timeout = timing_view.timeout_for("nsys") if timing_view else None
+            timeout = timeout or 120
+            automation = NsightAutomation(output_dir)
+
+            def _run_nsys_capture() -> Optional[Path]:
+                report = automation.profile_nsys(
                     command=target_command,
                     output_name=f"{benchmark_name}__{variant}",
                     trace_cuda=True,
@@ -2660,78 +2694,52 @@ def profile_python_benchmark(
                     trace_forks=trace_forks,
                     preset=profile_preset,
                     timeout_seconds=float(timeout) if timeout and timeout > 0 else None,
-                    wait_mode="primary",
+                    wait_mode=wait_mode,
                     finalize_grace_seconds=20.0,
                     force_lineinfo=True,
                     extra_env=env,
                     sanitize_python_startup=True,
                 )
-                if nsys_report and Path(nsys_report).exists():
-                    return Path(nsys_report)
+                if report and Path(report).exists():
+                    return Path(report)
                 return None
 
-        profile_preset, full_timeline = _resolve_nsys_profile_mode(bench_config)
-        trace_forks = _command_uses_external_torchrun(target_command)
-        wait_mode = "all" if trace_forks else "primary"
-        timeout = timing_view.timeout_for("nsys") if timing_view else None
-        timeout = timeout or 120
-        automation = NsightAutomation(output_dir)
-        def _run_nsys_capture() -> Optional[Path]:
-            report = automation.profile_nsys(
-                command=target_command,
-                output_name=f"{benchmark_name}__{variant}",
-                trace_cuda=True,
-                trace_nvtx=True,
-                trace_osrt=True,
-                full_timeline=full_timeline,
-                trace_forks=trace_forks,
-                preset=profile_preset,
-                timeout_seconds=float(timeout) if timeout and timeout > 0 else None,
-                wait_mode=wait_mode,
-                finalize_grace_seconds=20.0,
-                force_lineinfo=True,
-                extra_env=env,
-                sanitize_python_startup=True,
-            )
-            if report and Path(report).exists():
-                return Path(report)
-            return None
-
-        nsys_report = _run_nsys_capture()
-        if (
-            nsys_report is None
-            and not trace_forks
-            and _command_is_direct_torchrun_wrapper(target_command)
-        ):
-            if LOGGER_AVAILABLE:
-                logger.warning(
-                    "  Retrying Nsight Systems capture once for %s (%s) after a missing report artifact on the direct single-process torchrun wrapper path.",
-                    benchmark_name,
-                    variant,
-                )
-            time.sleep(1.0)
             nsys_report = _run_nsys_capture()
-            if nsys_report is None:
+            missing_artifact = _is_missing_nsys_artifact_error(getattr(automation, "last_error", None))
+            if (
+                nsys_report is None
+                and not trace_forks
+                and missing_artifact
+            ):
                 if LOGGER_AVAILABLE:
                     logger.warning(
-                        "  Retrying Nsight Systems capture from a clean helper process for %s (%s) after repeated missing artifacts on the direct single-process torchrun wrapper path.",
+                        "  Retrying Nsight Systems capture once for %s (%s) after Nsight exited successfully but did not materialize a report artifact on the single-process capture path.",
                         benchmark_name,
                         variant,
                     )
-                nsys_report = _retry_nsys_in_clean_helper(
-                    output_dir=output_dir,
-                    output_name=f"{benchmark_name}__{variant}",
-                    target_command=target_command,
-                    trace_forks=trace_forks,
-                    profile_preset=profile_preset,
-                    full_timeline=full_timeline,
-                    timeout=float(timeout) if timeout and timeout > 0 else None,
-                    wait_mode=wait_mode,
-                    env=env,
-                )
-        if nsys_report and Path(nsys_report).exists():
-            return Path(nsys_report)
-        return None
+                time.sleep(1.0)
+                nsys_report = _run_nsys_capture()
+                if nsys_report is None:
+                    if LOGGER_AVAILABLE:
+                        logger.warning(
+                            "  Retrying Nsight Systems capture from a clean helper process for %s (%s) after repeated missing artifacts on the single-process capture path.",
+                            benchmark_name,
+                            variant,
+                        )
+                    nsys_report = _retry_nsys_in_clean_helper(
+                        output_dir=output_dir,
+                        output_name=f"{benchmark_name}__{variant}",
+                        target_command=target_command,
+                        trace_forks=trace_forks,
+                        profile_preset=profile_preset,
+                        full_timeline=full_timeline,
+                        timeout=float(timeout) if timeout and timeout > 0 else None,
+                        wait_mode=wait_mode,
+                        env=env,
+                    )
+            if nsys_report and Path(nsys_report).exists():
+                return Path(nsys_report)
+            return None
     except Exception as exc:
         if LOGGER_AVAILABLE:
             logger.warning(
@@ -3371,6 +3379,8 @@ def profile_python_benchmark_ncu(
         lock_gpu_clocks_flag = False
     gpu_sm_clock_mhz = validity_view.gpu_sm_clock_mhz
     gpu_mem_clock_mhz = validity_view.gpu_mem_clock_mhz
+    target_label = getattr(config, "target_label", None)
+    target_override_argv = _resolve_target_override_argv(config)
 
     try:
         use_torchrun = bool(_is_torchrun_launch(config))
@@ -3400,6 +3410,8 @@ def profile_python_benchmark_ncu(
                 wrapper_source = render_ncu_python_profile_wrapper(
                     benchmark_path=benchmark_path,
                     configured_nvtx_includes=configured_nvtx_includes,
+                    target_label=target_label,
+                    target_override_argv=target_override_argv,
                     profile_type=profiling_view.profile_type,
                     ncu_metric_set=profiling_view.ncu_metric_set,
                     pm_sampling_interval=profiling_view.pm_sampling_interval,
@@ -3700,6 +3712,8 @@ def profile_python_benchmark_torch(
     maybe_timeout = timing_view.timeout_for("torch") if timing_view else None
     if maybe_timeout:
         profile_timeout_seconds = int(maybe_timeout)
+    target_label = getattr(existing_cfg, "target_label", None) if existing_cfg else None
+    target_override_argv = _resolve_target_override_argv(existing_cfg)
 
     # Run torch profiling in an isolated subprocess so a profiler-side hang
     # cannot wedge the parent benchmark sweep.
@@ -3724,6 +3738,8 @@ def profile_python_benchmark_torch(
             wrapper_source = render_torch_python_profile_wrapper(
                 benchmark_path=benchmark_path,
                 torch_output=torch_output,
+                target_label=target_label,
+                target_override_argv=target_override_argv,
                 validity_profile=validity_profile,
                 lock_gpu_clocks_flag=lock_gpu_clocks_flag,
                 gpu_sm_clock_mhz=validity_view.gpu_sm_clock_mhz if validity_view else None,

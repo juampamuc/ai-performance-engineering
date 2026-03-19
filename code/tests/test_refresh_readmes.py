@@ -35,6 +35,7 @@ PRIORITY_EVIDENCE_DOCS = (
     "ch19",
     "ch20",
     "labs/block_scaling",
+    "labs/blackwell_gemm_optimizations",
     "labs/blackwell_matmul",
     "labs/async_input_pipeline",
     "labs/custom_vs_cublas",
@@ -117,6 +118,7 @@ def test_ch10_and_priority_labs_render_custom_evidence_sections() -> None:
     ch18_markdown = _format_markdown(ENTRIES["ch18"])
     ch19_markdown = _format_markdown(ENTRIES["ch19"])
     ch20_markdown = _format_markdown(ENTRIES["ch20"])
+    blackwell_grouped_gemm_markdown = _format_markdown(ENTRIES["labs/blackwell_gemm_optimizations"])
     blackwell_matmul_markdown = _format_markdown(ENTRIES["labs/blackwell_matmul"])
     async_input_pipeline_markdown = _format_markdown(ENTRIES["labs/async_input_pipeline"])
     block_scaling_markdown = _format_markdown(ENTRIES["labs/block_scaling"])
@@ -173,6 +175,7 @@ def test_ch10_and_priority_labs_render_custom_evidence_sections() -> None:
 
     for markdown in (
         async_input_pipeline_markdown,
+        blackwell_grouped_gemm_markdown,
         blackwell_matmul_markdown,
         custom_vs_cublas_markdown,
         flexattention_markdown,

@@ -53,6 +53,8 @@ def render_nsys_python_profile_wrapper(
     *,
     benchmark_path: Path,
     nvtx_includes: Optional[list[str]],
+    target_label: Optional[str],
+    target_override_argv: Optional[list[str]],
     validity_profile: str,
     lock_gpu_clocks_flag: bool,
     gpu_sm_clock_mhz: Optional[int],
@@ -81,10 +83,18 @@ from core.profiling.nvtx_helper import nvtx_range
 def _run_profile() -> None:
     import sys
     benchmark = get_benchmark()
+    _target_label = {target_label!r}
+    _target_override_argv = {target_override_argv!r}
+    if _target_override_argv:
+        _apply_overrides = getattr(benchmark, "apply_target_overrides", None)
+        if callable(_apply_overrides):
+            _apply_overrides(list(_target_override_argv))
     _profiling_config = BenchmarkConfig(
         enable_profiling=True,
         enable_nvtx=True,
         nsys_nvtx_include={nvtx_includes!r},
+        target_label=_target_label,
+        target_extra_args={{_target_label: list(_target_override_argv)}} if _target_label and _target_override_argv else {{}},
         validity_profile={validity_profile!r},
         lock_gpu_clocks={lock_gpu_clocks_flag!r},
         gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
@@ -143,6 +153,8 @@ def render_ncu_python_profile_wrapper(
     *,
     benchmark_path: Path,
     configured_nvtx_includes: Optional[list[str]],
+    target_label: Optional[str],
+    target_override_argv: Optional[list[str]],
     profile_type: Optional[str],
     ncu_metric_set: Optional[str],
     pm_sampling_interval: Optional[int],
@@ -176,12 +188,20 @@ from core.profiling.nvtx_helper import nvtx_range
 def _run_profile() -> None:
     import sys
     benchmark = get_benchmark()
+    _target_label = {target_label!r}
+    _target_override_argv = {target_override_argv!r}
+    if _target_override_argv:
+        _apply_overrides = getattr(benchmark, "apply_target_overrides", None)
+        if callable(_apply_overrides):
+            _apply_overrides(list(_target_override_argv))
     _profiling_config = BenchmarkConfig(
         enable_profiling=True,
         enable_nsys=True,
         enable_ncu=True,
         enable_nvtx=True,
         nsys_nvtx_include={configured_nvtx_includes!r},
+        target_label=_target_label,
+        target_extra_args={{_target_label: list(_target_override_argv)}} if _target_label and _target_override_argv else {{}},
         profile_type={profile_type!r},
         ncu_metric_set={ncu_metric_set!r},
         pm_sampling_interval={pm_sampling_interval!r},
@@ -243,6 +263,8 @@ def render_torch_python_profile_wrapper(
     *,
     benchmark_path: Path,
     torch_output: Path,
+    target_label: Optional[str],
+    target_override_argv: Optional[list[str]],
     validity_profile: str,
     lock_gpu_clocks_flag: bool,
     gpu_sm_clock_mhz: Optional[int],
@@ -271,9 +293,17 @@ import torch.profiler
 
 def _run_profile() -> None:
     benchmark = get_benchmark()
+    _target_label = {target_label!r}
+    _target_override_argv = {target_override_argv!r}
+    if _target_override_argv:
+        _apply_overrides = getattr(benchmark, "apply_target_overrides", None)
+        if callable(_apply_overrides):
+            _apply_overrides(list(_target_override_argv))
     profiling_config = BenchmarkConfig(
         enable_profiling=True,
         enable_nvtx=True,
+        target_label=_target_label,
+        target_extra_args={{_target_label: list(_target_override_argv)}} if _target_label and _target_override_argv else {{}},
         validity_profile={validity_profile!r},
         lock_gpu_clocks={lock_gpu_clocks_flag!r},
         gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
