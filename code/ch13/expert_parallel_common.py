@@ -87,7 +87,7 @@ def run_expert_parallel(
 ) -> None:
     rank, world_size, local_rank = init_distributed()
     if world_size < 2:
-        raise RuntimeError("Expert-parallel benchmark requires >=2 GPUs.")
+        raise RuntimeError("SKIPPED: Requires >= 2 GPUs (found 1 GPU)")
 
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)

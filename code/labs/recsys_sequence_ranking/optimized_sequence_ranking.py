@@ -11,10 +11,12 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 from labs.recsys_sequence_ranking.recsys_sequence_ranking_common import (
     RankingInputs,
     RankingModelState,
+    RankingWorkspace,
     TRITON_AVAILABLE,
     apply_cli_overrides,
     build_inputs,
     build_model_state,
+    build_workspace,
     default_workload,
     optimized_forward,
     ranking_metrics,
@@ -35,6 +37,7 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.workload = default_workload()
         self.inputs: Optional[RankingInputs] = None
         self.state: Optional[RankingModelState] = None
+        self.workspace: Optional[RankingWorkspace] = None
         self.compiled_tower: Optional[torch.nn.Module] = None
         self.output: Optional[torch.Tensor] = None
         self.score_backend = resolve_score_backend(self.workload.score_backend)
@@ -61,6 +64,7 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
             raise RuntimeError("labs.recsys_sequence_ranking requires CUDA for fair comparison")
         self.inputs = build_inputs(self.workload, self.device)
         self.state = build_model_state(self.workload, self.device)
+        self.workspace = build_workspace(self.workload, self.device)
         self.output = None
 
         self.score_backend = resolve_score_backend(self.workload.score_backend)
@@ -80,6 +84,7 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
                 self.state,
                 compiled_tower=self.compiled_tower,
                 score_backend=self.score_backend,
+                workspace=self.workspace,
             )
 
         self._custom_metrics = ranking_metrics(
@@ -100,6 +105,7 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
                 self.state,
                 compiled_tower=self.compiled_tower,
                 score_backend=self.score_backend,
+                workspace=self.workspace,
             )
         if self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
@@ -125,6 +131,7 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def teardown(self) -> None:
         self.inputs = None
         self.state = None
+        self.workspace = None
         self.compiled_tower = None
         self.output = None
         torch.cuda.empty_cache()
@@ -164,5 +171,4 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedSequenceRankingBenchmark()
-
 

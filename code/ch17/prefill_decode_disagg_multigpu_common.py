@@ -91,10 +91,10 @@ class TinyPrefillDecode(nn.Module):
 
 def _resolve_world_size() -> int:
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for disaggregated prefill/decode")
+        raise RuntimeError("SKIPPED: CUDA required for disaggregated prefill/decode")
     world_size = torch.cuda.device_count()
     if world_size < 2:
-        raise RuntimeError("disaggregated prefill/decode requires >=2 GPUs")
+        raise RuntimeError(f"SKIPPED: Requires >= 2 GPUs (found {world_size} GPU)")
     return world_size
 
 
@@ -207,7 +207,7 @@ def _run_torchrun_worker(
 ) -> None:
     rank, world_size, device = _init_distributed()
     if world_size < 2:
-        raise RuntimeError("disaggregated prefill/decode requires >=2 GPUs")
+        raise RuntimeError(f"SKIPPED: Requires >= 2 GPUs (found {world_size} GPU)")
     if torch.cuda.device_count() < world_size:
         raise RuntimeError(
             f"torchrun world_size={world_size} exceeds visible GPUs ({torch.cuda.device_count()})."

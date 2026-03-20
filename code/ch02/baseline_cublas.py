@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Optional
 
 import torch
@@ -56,20 +55,8 @@ class BaselineCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Plain cuBLAS FP32 matmul."""
         assert self.A is not None and self.B is not None
-        if self.device.type == "cuda":
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-        else:
-            start_time = time.perf_counter()
         with self._nvtx_range("baseline_cublas_fp32"):
             self.C = torch.matmul(self.A, self.B)
-        if self.device.type == "cuda":
-            end_event.record()
-            end_event.synchronize()
-            self._last_elapsed_ms = float(start_event.elapsed_time(end_event))
-        else:
-            self._last_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
         if self.C is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")

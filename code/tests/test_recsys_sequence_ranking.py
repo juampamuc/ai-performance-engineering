@@ -11,6 +11,7 @@ from labs.recsys_sequence_ranking.recsys_sequence_ranking_common import (
     baseline_forward,
     build_inputs,
     build_model_state,
+    build_workspace,
     optimized_forward,
     resolve_score_backend,
 )
@@ -57,9 +58,17 @@ def test_baseline_and_optimized_torch_paths_match_on_cpu() -> None:
     workload = _small_workload()
     inputs = build_inputs(workload, torch.device("cpu"))
     state = build_model_state(workload, torch.device("cpu"))
+    baseline_workspace = build_workspace(workload, torch.device("cpu"))
+    optimized_workspace = build_workspace(workload, torch.device("cpu"))
 
-    baseline_scores = baseline_forward(inputs, state)
-    optimized_scores = optimized_forward(inputs, state, compiled_tower=None, score_backend="torch")
+    baseline_scores = baseline_forward(inputs, state, baseline_workspace)
+    optimized_scores = optimized_forward(
+        inputs,
+        state,
+        compiled_tower=None,
+        score_backend="torch",
+        workspace=optimized_workspace,
+    )
 
     torch.testing.assert_close(baseline_scores, optimized_scores, rtol=1e-6, atol=1e-6)
 

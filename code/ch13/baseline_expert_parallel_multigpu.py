@@ -50,8 +50,7 @@ class BaselineExpertParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBenc
         super().__init__()
         self._ep_config = ExpertParallelConfig()
         self._world_size = torch.cuda.device_count()
-        if self._world_size < 2:
-            raise RuntimeError("baseline_expert_parallel_multigpu requires >=2 GPUs.")
+        require_min_gpus(2, script_name="baseline_expert_parallel_multigpu.py")
         tokens = self._ep_config.batch_size * self._ep_config.seq_len * self._world_size
         self.register_workload_metadata(
             requests_per_iteration=float(self._ep_config.batch_size),
@@ -145,5 +144,4 @@ class BaselineExpertParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBenc
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineExpertParallelMultigpuBenchmark()
-
 

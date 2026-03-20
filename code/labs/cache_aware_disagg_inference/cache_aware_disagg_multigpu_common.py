@@ -104,12 +104,10 @@ def _world_size_hint() -> int:
 
 def _resolve_runtime_world_size() -> int:
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for cache-aware disaggregated inference multi-GPU lab")
+        raise RuntimeError("SKIPPED: CUDA required for cache-aware disaggregated inference multi-GPU lab")
     world_size = int(torch.cuda.device_count())
     if world_size < 2:
-        raise RuntimeError(
-            "cache-aware disaggregated inference multi-GPU lab requires >=2 visible GPUs"
-        )
+        raise RuntimeError(f"SKIPPED: Requires >= 2 GPUs (found {world_size} GPU)")
     return world_size
 
 
@@ -620,6 +618,7 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
     """Benchmark object for the torchrun-backed cache-aware multi-GPU lab."""
 
     multi_gpu_required = True
+    allowed_benchmark_fn_antipatterns = ("sync",)
     story_metadata = {
         "pair_role": "exemplar",
         "chapter_alignment": "supplementary",
@@ -650,6 +649,7 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self._resolved_decode_ranks: Optional[int] = None
         self._verify_prompt: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
+        self._output_parts: List[torch.Tensor] = []
         self.parameter_count: int = 0
         self._custom_metrics: Dict[str, float] = {}
         self._request_plans: List[DistributedRequestPlan] = []
@@ -658,6 +658,7 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self._prompts: Dict[int, torch.Tensor] = {}
         self._warm_cache_store: Dict[int, Dict[int, torch.Tensor]] = {}
         self._prefill_seed_store: Dict[int, torch.Tensor] = {}
+        self._empty_kv_by_device: Dict[str, torch.Tensor] = {}
         self._verify_output = torch.zeros(1, dtype=torch.float32)
         self._register_workload_metadata(
             world_size=_world_size_hint(),
@@ -691,6 +692,12 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def _decode_device_for_rank(self, rank: int) -> torch.device:
         return next(self._decode_models[rank].parameters()).device
 
+    def _empty_kv_for_device(self, device: torch.device) -> torch.Tensor:
+        cached = self._empty_kv_by_device.get(str(device))
+        if cached is None:
+            raise RuntimeError(f"Empty KV template missing for {device}")
+        return cached
+
     def _ensure_local_cache(
         self,
         *,
@@ -713,7 +720,7 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
                 metrics["cache_misses"] += 1.0
                 metrics["shared_reload_bytes"] += _tensor_nbytes(warm_cache)
                 return warm_cache
-            cache = _empty_kv(self.cfg, target_device)
+            cache = self._empty_kv_for_device(target_device)
             target_active[request_id] = cache
             metrics["cache_misses"] += 1.0
             return cache
@@ -738,7 +745,7 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
             metrics["cache_misses"] += 1.0
             metrics["shared_reload_bytes"] += _tensor_nbytes(warm_cache)
             return warm_cache
-        cache = _empty_kv(self.cfg, target_device)
+        cache = self._empty_kv_for_device(target_device)
         target_active[request_id] = cache
         metrics["cache_misses"] += 1.0
         return cache
@@ -763,7 +770,9 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
         }
         self._prefill_seed_store = {}
         self.output = None
+        self._output_parts = []
         self._custom_metrics = {}
+        self._empty_kv_by_device = {}
         total_params = 0
 
         for rank in range(prefill_ranks, world_size):
@@ -776,6 +785,13 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
             ).eval()
             model.load_state_dict(reference_state)
             self._decode_models[rank] = model
+            self._empty_kv_by_device[str(device)] = torch.empty(
+                self.cfg.batch_size,
+                0,
+                self.cfg.hidden_size,
+                device=device,
+                dtype=self.cfg.dtype,
+            )
             total_params += sum(p.numel() for p in model.parameters())
 
         for rank in range(prefill_ranks):
@@ -912,9 +928,10 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
             ttft_ms = (prefill_end - request_start) * 1000.0
             ttft_history.append(ttft_ms)
             tpot_history.append(max(total_ms - ttft_ms, 0.0) / max(self.cfg.decode_tokens, 1))
-            outputs.append(output.detach().cpu())
+            outputs.append(output.detach())
 
-        self.output = torch.stack(outputs, dim=0)
+        self.output = None
+        self._output_parts = outputs
         total_requests = max(
             float(self.cfg.requests_per_rank * self._resolved_prefill_ranks),
             1.0,
@@ -946,8 +963,9 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
         }
 
     def capture_verification_payload(self) -> None:
-        if self.output is None or self._verify_prompt is None:
+        if not self._output_parts or self._verify_prompt is None:
             raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
+        self.output = torch.stack([part.detach().cpu() for part in self._output_parts], dim=0)
         world_size = self._resolved_world_size or _world_size_hint()
         prefill_ranks = self._resolved_prefill_ranks or _hint_prefill_ranks(world_size, self.cfg.prefill_ranks)
         decode_ranks = max(world_size - prefill_ranks, 1)
@@ -994,6 +1012,8 @@ class CacheAwareDisaggMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self._prefill_seed_store = {}
         self._request_plans = []
         self.output = None
+        self._output_parts = []
+        self._empty_kv_by_device = {}
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 

@@ -102,10 +102,10 @@ def _apply_profile_overrides(cfg: DisaggConfig) -> DisaggConfig:
 
 def _resolve_world_size() -> int:
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required for multi-GPU disaggregation")
+        raise RuntimeError("SKIPPED: CUDA required for multi-GPU disaggregation")
     world_size = torch.cuda.device_count()
     if world_size < 2:
-        raise RuntimeError("disaggregated_inference_multigpu requires >=2 GPUs.")
+        raise RuntimeError(f"SKIPPED: Requires >= 2 GPUs (found {world_size} GPU)")
     return world_size
 
 
@@ -181,7 +181,7 @@ def _run_torchrun_worker(
     cfg = _apply_profile_overrides(cfg)
     rank, world_size, device = _init_distributed()
     if world_size < 2:
-        raise RuntimeError("disaggregated_inference_multigpu requires >=2 GPUs.")
+        raise RuntimeError(f"SKIPPED: Requires >= 2 GPUs (found {world_size} GPU)")
     if torch.cuda.device_count() < world_size:
         raise RuntimeError(
             f"torchrun world_size={world_size} exceeds visible GPUs ({torch.cuda.device_count()})."
@@ -610,5 +610,4 @@ def main() -> None:
         iters=int(args.iters),
         warmup=int(args.warmup),
     )
-
 

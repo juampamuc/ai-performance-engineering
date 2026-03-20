@@ -660,6 +660,19 @@ class EnvironmentProbe:
     cpu_affinity: Optional[Set[int]] = None
     probe_errors: List[str] = field(default_factory=list)
 
+    def effective_env(self) -> Dict[str, str]:
+        """Return probe env with dynamic ownership/runtime markers refreshed from the live process."""
+        merged = dict(self.env)
+        for key in (
+            "AISP_BENCHMARK_OWNER_RUN_ID",
+            "AISP_BENCHMARK_OWNER_PID",
+            "AISP_FOREIGN_GPU_PROCESS_MIN_MB",
+        ):
+            current = os.environ.get(key)
+            if current is not None and key not in merged:
+                merged[key] = current
+        return merged
+
     def resolve(self, path: str | Path) -> Path:
         rel = str(path)
         rel = rel.lstrip("/")
@@ -1056,6 +1069,7 @@ def validate_environment(
 ) -> EnvironmentValidationResult:
     """Validate benchmark environment is suitable (fail-fast on known invalid states)."""
     probe = probe or EnvironmentProbe()
+    probe_env = probe.effective_env()
     errors: List[str] = []
     warnings_list: List[str] = []
     notices_list: List[str] = []
@@ -1101,7 +1115,7 @@ def validate_environment(
                 # Strict mode should reject moderate concurrent workloads too:
                 # a few hundred MiB of active compute can still distort timings.
                 min_foreign_mb = 512.0
-                raw_min_foreign_mb = str(probe.env.get("AISP_FOREIGN_GPU_PROCESS_MIN_MB", "")).strip()
+                raw_min_foreign_mb = str(probe_env.get("AISP_FOREIGN_GPU_PROCESS_MIN_MB", "")).strip()
                 if raw_min_foreign_mb:
                     try:
                         min_foreign_mb = float(raw_min_foreign_mb)
@@ -1119,7 +1133,7 @@ def validate_environment(
                     foreign_procs, owner_details = _filter_foreign_cuda_compute_processes(
                         foreign_procs=foreign_procs,
                         current_pid=os.getpid(),
-                        probe_env=probe.env,
+                        probe_env=probe_env,
                     )
                     details.update(owner_details)
                     details["foreign_cuda_compute_process_min_mb"] = min_foreign_mb
@@ -1145,7 +1159,7 @@ def validate_environment(
                             confirm_procs, _ = _filter_foreign_cuda_compute_processes(
                                 foreign_procs=confirm_procs,
                                 current_pid=os.getpid(),
-                                probe_env=probe.env,
+                                probe_env=probe_env,
                             )
                             foreign_procs = confirm_procs
                             details["foreign_cuda_compute_processes_reconfirmed"] = True

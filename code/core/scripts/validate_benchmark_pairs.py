@@ -23,8 +23,11 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import signal
+import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -39,6 +42,8 @@ from core.benchmark.verification import (
     signature_workload_dict,
 )
 from core.discovery import discover_all_chapters, discover_benchmarks
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # =============================================================================
@@ -76,6 +81,55 @@ class PairValidationResult:
     baseline_only_keys: Set[str] = field(default_factory=set)
     optimized_only_keys: Set[str] = field(default_factory=set)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "chapter": self.chapter,
+            "example_name": self.example_name,
+            "baseline_path": self.baseline_path,
+            "optimized_path": self.optimized_path,
+            "valid": self.valid,
+            "error": self.error,
+            "skipped": self.skipped,
+            "baseline_has_signature": self.baseline_has_signature,
+            "optimized_has_signature": self.optimized_has_signature,
+            "signatures_match": self.signatures_match,
+            "mismatches": [
+                {
+                    "key": mismatch.key,
+                    "baseline_value": mismatch.baseline_value,
+                    "optimized_value": mismatch.optimized_value,
+                }
+                for mismatch in self.mismatches
+            ],
+            "baseline_only_keys": sorted(self.baseline_only_keys),
+            "optimized_only_keys": sorted(self.optimized_only_keys),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "PairValidationResult":
+        return cls(
+            chapter=payload["chapter"],
+            example_name=payload["example_name"],
+            baseline_path=payload["baseline_path"],
+            optimized_path=payload["optimized_path"],
+            valid=bool(payload.get("valid", False)),
+            error=payload.get("error"),
+            skipped=bool(payload.get("skipped", False)),
+            baseline_has_signature=bool(payload.get("baseline_has_signature", False)),
+            optimized_has_signature=bool(payload.get("optimized_has_signature", False)),
+            signatures_match=bool(payload.get("signatures_match", False)),
+            mismatches=[
+                SignatureMismatch(
+                    key=item["key"],
+                    baseline_value=item.get("baseline_value"),
+                    optimized_value=item.get("optimized_value"),
+                )
+                for item in payload.get("mismatches", [])
+            ],
+            baseline_only_keys=set(payload.get("baseline_only_keys", [])),
+            optimized_only_keys=set(payload.get("optimized_only_keys", [])),
+        )
+
 
 @dataclass
 class ValidationReport:
@@ -104,22 +158,11 @@ class ValidationReport:
             },
             "results": [
                 {
-                    "chapter": r.chapter,
-                    "example_name": r.example_name,
-                    "baseline_path": r.baseline_path,
-                    "optimized_path": r.optimized_path,
-                    "valid": r.valid,
-                    "error": r.error,
-                    "skipped": r.skipped,
-                    "baseline_has_signature": r.baseline_has_signature,
-                    "optimized_has_signature": r.optimized_has_signature,
-                    "signatures_match": r.signatures_match,
+                    **r.to_dict(),
                     "mismatches": [
                         {"key": m.key, "baseline": m.baseline_value, "optimized": m.optimized_value}
                         for m in r.mismatches
                     ],
-                    "baseline_only_keys": list(r.baseline_only_keys),
-                    "optimized_only_keys": list(r.optimized_only_keys),
                 }
                 for r in self.results
             ],
@@ -227,27 +270,137 @@ def _is_skip_message(message: Optional[str]) -> bool:
     return bool(message and "SKIPPED" in message.upper())
 
 
-class _PairTimeout:
-    """Best-effort timeout guard for pair validation on Unix-like systems."""
+def _validator_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    repo_root = str(REPO_ROOT)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = repo_root if not existing else f"{repo_root}{os.pathsep}{existing}"
+    return env
 
-    def __init__(self, seconds: Optional[int]) -> None:
-        self.seconds = int(seconds) if seconds else 0
-        self._active = False
 
-    def _handle_timeout(self, signum: int, frame: Any) -> None:
-        raise TimeoutError(f"Validation timeout after {self.seconds} seconds")
+def _terminate_process_group(process: subprocess.Popen[str]) -> None:
+    """Best-effort kill of a process group started with start_new_session=True."""
+    try:
+        pgid = os.getpgid(process.pid)
+        os.killpg(pgid, signal.SIGTERM)
+        try:
+            process.wait(timeout=2)
+            return
+        except subprocess.TimeoutExpired:
+            os.killpg(pgid, signal.SIGKILL)
+            process.wait(timeout=2)
+            return
+    except (OSError, ProcessLookupError, AttributeError):
+        pass
 
-    def __enter__(self) -> "_PairTimeout":
-        if self.seconds <= 0 or not hasattr(signal, "SIGALRM"):
-            return self
-        signal.signal(signal.SIGALRM, self._handle_timeout)
-        signal.alarm(self.seconds)
-        self._active = True
-        return self
+    try:
+        process.terminate()
+        process.wait(timeout=2)
+    except Exception:
+        try:
+            process.kill()
+            process.wait(timeout=2)
+        except Exception:
+            pass
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if self._active:
-            signal.alarm(0)
+
+def _validate_pair_in_subprocess(
+    chapter: str,
+    example_name: str,
+    baseline_path: Path,
+    optimized_path: Path,
+    *,
+    timeout_seconds: Optional[int],
+    root_dir: Path,
+) -> PairValidationResult:
+    """Validate a pair inside an isolated subprocess so timeouts can kill descendants."""
+    timeout_limit = float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else None
+    fd, output_path_str = tempfile.mkstemp(prefix="pair_validation_", suffix=".json")
+    os.close(fd)
+    output_path = Path(output_path_str)
+    command = [
+        sys.executable,
+        "-m",
+        "core.scripts.validate_benchmark_pairs",
+        "--_single-pair-output",
+        str(output_path),
+        "--_single-pair-chapter",
+        chapter,
+        "--_single-pair-example",
+        example_name,
+        "--_single-pair-baseline",
+        str(baseline_path),
+        "--_single-pair-optimized",
+        str(optimized_path),
+    ]
+    process = subprocess.Popen(
+        command,
+        cwd=str(root_dir if (root_dir / "core").exists() else REPO_ROOT),
+        env=_validator_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    stdout = ""
+    stderr = ""
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_limit)
+    except subprocess.TimeoutExpired:
+        _terminate_process_group(process)
+        try:
+            stdout, stderr = process.communicate(timeout=2)
+        except (subprocess.TimeoutExpired, ValueError):
+            stdout = stdout or ""
+            stderr = stderr or ""
+        return PairValidationResult(
+            chapter=chapter,
+            example_name=example_name,
+            baseline_path=str(baseline_path),
+            optimized_path=str(optimized_path),
+            error=f"Validation timeout after {int(timeout_limit)} seconds",
+        )
+    finally:
+        if process.poll() is None:
+            _terminate_process_group(process)
+
+    try:
+        if process.returncode != 0:
+            detail = stderr.strip() or stdout.strip() or f"pair validator exited with code {process.returncode}"
+            return PairValidationResult(
+                chapter=chapter,
+                example_name=example_name,
+                baseline_path=str(baseline_path),
+                optimized_path=str(optimized_path),
+                error=f"Isolated pair validation failed: {detail}",
+            )
+        if not output_path.exists():
+            detail = stderr.strip() or stdout.strip() or "missing result payload"
+            return PairValidationResult(
+                chapter=chapter,
+                example_name=example_name,
+                baseline_path=str(baseline_path),
+                optimized_path=str(optimized_path),
+                error=f"Isolated pair validation failed: {detail}",
+            )
+        return PairValidationResult.from_dict(json.loads(output_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        detail = stderr.strip() or stdout.strip()
+        suffix = f" ({detail})" if detail else ""
+        return PairValidationResult(
+            chapter=chapter,
+            example_name=example_name,
+            baseline_path=str(baseline_path),
+            optimized_path=str(optimized_path),
+            error=f"Failed to decode isolated pair validation result: {type(exc).__name__}: {exc}{suffix}",
+        )
+    finally:
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 # =============================================================================
@@ -506,22 +659,14 @@ def validate_all_pairs(
             continue
         
         # Validate the pair
-        try:
-            with _PairTimeout(pair_timeout_seconds):
-                result = validate_pair(
-                    chapter_name,
-                    example_name,
-                    paths["baseline"],
-                    paths["optimized"],
-                )
-        except TimeoutError as exc:
-            result = PairValidationResult(
-                chapter=chapter_name,
-                example_name=example_name,
-                baseline_path=str(paths["baseline"]),
-                optimized_path=str(paths["optimized"]),
-                error=str(exc),
-            )
+        result = _validate_pair_in_subprocess(
+            chapter_name,
+            example_name,
+            paths["baseline"],
+            paths["optimized"],
+            timeout_seconds=pair_timeout_seconds,
+            root_dir=root_dir,
+        )
         report.results.append(result)
         
         if result.valid:
@@ -624,8 +769,32 @@ def main() -> int:
         default=120,
         help="Maximum time per pair validation before failing that pair (default: 120)",
     )
+    parser.add_argument("--_single-pair-output", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--_single-pair-chapter", help=argparse.SUPPRESS)
+    parser.add_argument("--_single-pair-example", help=argparse.SUPPRESS)
+    parser.add_argument("--_single-pair-baseline", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--_single-pair-optimized", type=Path, help=argparse.SUPPRESS)
     
     args = parser.parse_args()
+
+    if args._single_pair_output:
+        if not (
+            args._single_pair_chapter
+            and args._single_pair_example
+            and args._single_pair_baseline
+            and args._single_pair_optimized
+        ):
+            raise SystemExit("single-pair validator invocation is missing required arguments")
+        result = validate_pair(
+            args._single_pair_chapter,
+            args._single_pair_example,
+            args._single_pair_baseline.resolve(),
+            args._single_pair_optimized.resolve(),
+        )
+        args._single_pair_output.parent.mkdir(parents=True, exist_ok=True)
+        args._single_pair_output.write_text(json.dumps(result.to_dict()), encoding="utf-8")
+        return 0
+
     root_dir = args.root.resolve()
     
     # Run validation

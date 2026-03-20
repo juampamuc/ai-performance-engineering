@@ -68,8 +68,7 @@ class BaselineContextParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBen
         super().__init__()
         self._cp_config = ContextParallelConfig()
         self._world_size = torch.cuda.device_count()
-        if self._world_size < 2:
-            raise RuntimeError("baseline_context_parallel_multigpu requires >=2 GPUs.")
+        require_min_gpus(2, script_name="baseline_context_parallel_multigpu.py")
         self._seq_len = align_seq_len(self._cp_config.seq_len, self._world_size)
         tokens = self._cp_config.batch_size * self._seq_len
         self.register_workload_metadata(
@@ -175,5 +174,4 @@ class BaselineContextParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBen
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineContextParallelMultigpuBenchmark()
-
 

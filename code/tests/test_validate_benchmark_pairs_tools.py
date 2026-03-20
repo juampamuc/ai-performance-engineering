@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import signal
+import time
 
 import torch
 
@@ -8,7 +11,12 @@ from core.benchmark.verification import InputSignature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark
 from core.scripts.ci.check_verification_compliance import check_file_compliance
-from core.scripts.validate_benchmark_pairs import discover_benchmark_pairs, get_input_signature_safe, validate_pair
+from core.scripts.validate_benchmark_pairs import (
+    discover_benchmark_pairs,
+    get_input_signature_safe,
+    validate_all_pairs,
+    validate_pair,
+)
 
 
 class _DummyPayloadBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -151,3 +159,67 @@ def test_ch04_no_overlap_pair_validates_on_single_gpu_hosts() -> None:
     else:
         assert result.skipped is True
         assert result.error is not None and "SKIPPED" in result.error
+
+
+def test_validate_all_pairs_timeout_kills_isolated_pair_descendants(tmp_path: Path) -> None:
+    ch_dir = tmp_path / "ch01"
+    ch_dir.mkdir(parents=True)
+    pid_file = tmp_path / "spawned_child.pid"
+    benchmark_source = f"""
+from __future__ import annotations
+
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from core.harness.benchmark_harness import BaseBenchmark
+
+
+class HangingPairBenchmark(BaseBenchmark):
+    allow_cpu = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._ready = False
+
+    def setup(self) -> None:
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        Path(r"{pid_file}").write_text(str(child.pid), encoding="utf-8")
+
+    def benchmark_fn(self) -> None:
+        time.sleep(60)
+        self._ready = True
+
+    def capture_verification_payload(self) -> None:
+        if not self._ready:
+            raise RuntimeError("payload not ready")
+
+    def get_input_signature(self):
+        raise RuntimeError("force execution path")
+"""
+    (ch_dir / "baseline_hanging.py").write_text(benchmark_source, encoding="utf-8")
+    (ch_dir / "optimized_hanging.py").write_text(benchmark_source, encoding="utf-8")
+
+    report = validate_all_pairs(tmp_path, chapter="ch01", pair_timeout_seconds=3)
+    assert report.total_pairs == 1
+    assert len(report.results) == 1
+    result = report.results[0]
+    assert result.valid is False
+    assert result.error == "Validation timeout after 3 seconds"
+
+    deadline = time.time() + 2.0
+    while not pid_file.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert pid_file.exists()
+    child_pid = int(pid_file.read_text(encoding="utf-8").strip())
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(child_pid, signal.SIGKILL)
+        raise AssertionError(f"isolated pair child {child_pid} survived timeout cleanup")

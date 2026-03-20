@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Optional
 
 import torch
@@ -58,24 +57,9 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def benchmark_fn(self) -> None:
         """cuBLAS TF32 GEMM."""
-        from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
-
-        config = self.get_config()
-        enable_nvtx = get_nvtx_enabled(config) if config else False
-        if self.device.type == "cuda":
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-        else:
-            start_time = time.perf_counter()
-        with nvtx_range("cublas", enable=enable_nvtx):
+        assert self.A is not None and self.B is not None
+        with self._nvtx_range("optimized_cublas_tf32"):
             self.C = torch.matmul(self.A, self.B)
-        if self.device.type == "cuda":
-            end_event.record()
-            end_event.synchronize()
-            self._last_elapsed_ms = float(start_event.elapsed_time(end_event))
-        else:
-            self._last_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
         if self.C is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")

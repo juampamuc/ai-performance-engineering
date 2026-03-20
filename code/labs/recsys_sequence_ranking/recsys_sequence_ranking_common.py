@@ -67,6 +67,15 @@ class RankingModelState:
     parameter_count: int
 
 
+@dataclass
+class RankingWorkspace:
+    """Reusable scratch buffers to keep allocator noise out of benchmark_fn()."""
+
+    sequence_accum: torch.Tensor
+    context_accum: torch.Tensor
+    score_output: torch.Tensor
+
+
 class SequenceRankingTower(nn.Module):
     """Small MLP tower that turns sparse features into a user vector."""
 
@@ -264,44 +273,73 @@ def build_model_state(workload: SequenceRankingWorkload, device: torch.device) -
     )
 
 
-def sequence_mean_baseline(inputs: RankingInputs, state: RankingModelState) -> torch.Tensor:
+def build_workspace(workload: SequenceRankingWorkload, device: torch.device) -> RankingWorkspace:
+    """Allocate reusable scratch buffers in setup()."""
+
+    return RankingWorkspace(
+        sequence_accum=torch.empty(
+            workload.batch_size,
+            workload.embedding_dim,
+            device=device,
+            dtype=workload.dtype,
+        ),
+        context_accum=torch.empty(
+            workload.batch_size,
+            workload.embedding_dim,
+            device=device,
+            dtype=workload.dtype,
+        ),
+        score_output=torch.empty(
+            workload.batch_size,
+            workload.num_candidates,
+            device=device,
+            dtype=torch.float32,
+        ),
+    )
+
+
+def sequence_mean_baseline(
+    inputs: RankingInputs,
+    state: RankingModelState,
+    out: torch.Tensor,
+) -> torch.Tensor:
     """Conservative sequence pooling using one embedding lookup per time step."""
 
-    batch_size = inputs.sequence_ids.shape[0]
-    dim = state.item_embeddings.shape[1]
-    seq_sum = torch.zeros(batch_size, dim, device=inputs.sequence_ids.device, dtype=state.item_embeddings.dtype)
+    out.zero_()
     mask = inputs.sequence_mask.to(dtype=state.item_embeddings.dtype)
     for t in range(inputs.sequence_ids.shape[1]):
         token_vec = state.item_embeddings[inputs.sequence_ids[:, t]]
-        seq_sum += token_vec * mask[:, t : t + 1]
-    lengths = inputs.sequence_lengths.to(dtype=state.item_embeddings.dtype).clamp_min_(1)
-    return seq_sum / lengths.unsqueeze(1)
+        out.add_(token_vec * mask[:, t : t + 1])
+    lengths = inputs.sequence_lengths.to(dtype=state.item_embeddings.dtype).clamp_min(1)
+    out.div_(lengths.unsqueeze(1))
+    return out
 
 
-def context_sum_baseline(inputs: RankingInputs, state: RankingModelState) -> torch.Tensor:
+def context_sum_baseline(
+    inputs: RankingInputs,
+    state: RankingModelState,
+    out: torch.Tensor,
+) -> torch.Tensor:
     """Conservative context lookup using one table at a time."""
 
-    batch_size = inputs.context_ids.shape[0]
-    dim = state.context_embeddings.shape[-1]
-    out = torch.zeros(batch_size, dim, device=inputs.context_ids.device, dtype=state.context_embeddings.dtype)
+    out.zero_()
     for table_idx in range(inputs.context_ids.shape[1]):
         out += state.context_embeddings[table_idx, inputs.context_ids[:, table_idx]]
     return out
 
 
-def candidate_scores_baseline(user_vec: torch.Tensor, inputs: RankingInputs, state: RankingModelState) -> torch.Tensor:
+def candidate_scores_baseline(
+    user_vec: torch.Tensor,
+    inputs: RankingInputs,
+    state: RankingModelState,
+    out: torch.Tensor,
+) -> torch.Tensor:
     """Score each candidate in a Python loop to expose launch overhead."""
 
     candidate_emb = F.embedding(inputs.candidate_ids, state.item_embeddings)
-    scores = torch.empty(
-        inputs.candidate_ids.shape[0],
-        inputs.candidate_ids.shape[1],
-        device=user_vec.device,
-        dtype=torch.float32,
-    )
     for idx in range(inputs.candidate_ids.shape[1]):
-        scores[:, idx] = (candidate_emb[:, idx, :] * user_vec).sum(dim=-1, dtype=torch.float32)
-    return scores
+        out[:, idx] = (candidate_emb[:, idx, :] * user_vec).sum(dim=-1, dtype=torch.float32)
+    return out
 
 
 def sequence_mean_vectorized(inputs: RankingInputs, state: RankingModelState) -> torch.Tensor:
@@ -375,7 +413,12 @@ if TRITON_AVAILABLE:
         )
 
 
-def candidate_scores_triton(user_vec: torch.Tensor, inputs: RankingInputs, state: RankingModelState) -> torch.Tensor:
+def candidate_scores_triton(
+    user_vec: torch.Tensor,
+    inputs: RankingInputs,
+    state: RankingModelState,
+    out: torch.Tensor,
+) -> torch.Tensor:
     """Score candidates with a Triton kernel."""
 
     if not TRITON_AVAILABLE:
@@ -386,12 +429,6 @@ def candidate_scores_triton(user_vec: torch.Tensor, inputs: RankingInputs, state
     ensure_triton_compat()
     candidate_emb = F.embedding(inputs.candidate_ids, state.item_embeddings).contiguous()
     user_vec = user_vec.contiguous()
-    out = torch.empty(
-        inputs.candidate_ids.shape[0],
-        inputs.candidate_ids.shape[1],
-        device=user_vec.device,
-        dtype=torch.float32,
-    )
     grid = (inputs.candidate_ids.shape[0], triton.cdiv(inputs.candidate_ids.shape[1], 64))
     _candidate_dot_kernel[grid](
         user_vec,
@@ -421,13 +458,17 @@ def resolve_score_backend(requested: str) -> str:
     return requested
 
 
-def baseline_forward(inputs: RankingInputs, state: RankingModelState) -> torch.Tensor:
+def baseline_forward(
+    inputs: RankingInputs,
+    state: RankingModelState,
+    workspace: RankingWorkspace,
+) -> torch.Tensor:
     """Execute the conservative sparse-ranking path."""
 
-    seq_vec = sequence_mean_baseline(inputs, state)
-    context_vec = context_sum_baseline(inputs, state)
+    seq_vec = sequence_mean_baseline(inputs, state, workspace.sequence_accum)
+    context_vec = context_sum_baseline(inputs, state, workspace.context_accum)
     user_vec = state.tower(seq_vec + context_vec)
-    return candidate_scores_baseline(user_vec, inputs, state)
+    return candidate_scores_baseline(user_vec, inputs, state, workspace.score_output)
 
 
 def optimized_forward(
@@ -436,6 +477,7 @@ def optimized_forward(
     *,
     compiled_tower: Optional[nn.Module] = None,
     score_backend: str,
+    workspace: Optional[RankingWorkspace] = None,
 ) -> torch.Tensor:
     """Execute the vectorized sparse-ranking path."""
 
@@ -444,7 +486,9 @@ def optimized_forward(
     tower = compiled_tower if compiled_tower is not None else state.tower
     user_vec = tower(seq_vec + context_vec)
     if score_backend == "triton":
-        return candidate_scores_triton(user_vec, inputs, state)
+        if workspace is None:
+            raise RuntimeError("Triton scoring requires a RankingWorkspace")
+        return candidate_scores_triton(user_vec, inputs, state, workspace.score_output)
     return candidate_scores_torch(user_vec, inputs, state)
 
 
@@ -469,6 +513,7 @@ def warm_optimized_path(
     *,
     compiled_tower: Optional[nn.Module],
     score_backend: str,
+    workspace: Optional[RankingWorkspace] = None,
 ) -> None:
     """Pay one-time compile/autotune costs before the measured loop."""
 
@@ -479,7 +524,9 @@ def warm_optimized_path(
         tower = compiled_tower if compiled_tower is not None else state.tower
         user_vec = tower(user_input)
         if score_backend == "triton":
-            _ = candidate_scores_triton(user_vec, inputs, state)
+            if workspace is None:
+                raise RuntimeError("Triton scoring requires a RankingWorkspace")
+            _ = candidate_scores_triton(user_vec, inputs, state, workspace.score_output)
         else:
             _ = candidate_scores_torch(user_vec, inputs, state)
     if torch.cuda.is_available():
@@ -493,6 +540,7 @@ __all__ = [
     "SequenceRankingWorkload",
     "TRITON_AVAILABLE",
     "apply_cli_overrides",
+    "build_workspace",
     "build_inputs",
     "build_model_state",
     "baseline_forward",
@@ -504,6 +552,7 @@ __all__ = [
     "default_workload",
     "optimized_forward",
     "ranking_metrics",
+    "RankingWorkspace",
     "requests_per_iteration",
     "resolve_score_backend",
     "sequence_mean_baseline",

@@ -129,6 +129,9 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.reload_materialization_passes = 2
         self._timing_history: Dict[str, List[float]] = {"ttft": [], "tpot": []}
         self._custom_metrics: Dict[str, float] = {}
+        self._empty_kv_template: Optional[torch.Tensor] = None
+        self._request_event_triplets: List[tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]] = []
+        self._pending_metrics: Dict[str, float] = {}
 
     def _build_request_plans(self) -> List[RequestPlan]:
         warm_requests = int(round(self.cfg.requests_per_iteration * self.cfg.warm_request_ratio))
@@ -190,13 +193,20 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         self.shared_prefix_store = {}
         self.shared_seed_store = {}
+        self._empty_kv_template = torch.empty(
+            self.cfg.batch_size,
+            0,
+            self.cfg.hidden_size,
+            device=self.device,
+            dtype=self.cfg.dtype,
+        )
         with torch.no_grad():
             assert self.prompts is not None
             for plan in self.request_plans:
                 prompt = self.prompts[plan.request_idx]
                 chunks = _split_prompt(prompt, self.cfg.chunk_size)
                 if plan.warm_chunks <= 0:
-                    self.shared_prefix_store[plan.request_idx] = _empty_kv(self.cfg, self.device)
+                    self.shared_prefix_store[plan.request_idx] = self._empty_kv()
                     continue
                 prefix_parts: List[torch.Tensor] = []
                 seed: Optional[torch.Tensor] = None
@@ -210,7 +220,14 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.output = None
         self._timing_history = {"ttft": [], "tpot": []}
         self._custom_metrics = {}
+        self._request_event_triplets = []
+        self._pending_metrics = {}
         torch.cuda.synchronize(self.device)
+
+    def _empty_kv(self) -> torch.Tensor:
+        if self._empty_kv_template is None:
+            raise RuntimeError("Empty KV template not initialized")
+        return self._empty_kv_template
 
     def _choose_worker(
         self,
@@ -251,7 +268,7 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 metrics["worker_switches"] += 1.0
 
         if source is None:
-            source = _empty_kv(self.cfg, self.device)
+            source = self._empty_kv()
 
         if source.numel() > 0:
             cache = source.clone()
@@ -289,8 +306,7 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
             "warm_requests": float(sum(1 for plan in self.request_plans if plan.is_warm)),
             "warm_requests_served_local": 0.0,
         }
-        request_ttft: List[float] = []
-        request_tpot: List[float] = []
+        request_events: List[tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]] = []
 
         with torch.no_grad():
             for plan in self.request_plans:
@@ -350,25 +366,34 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 output = self.decode_model.decode(seed, accumulated_kv, self.cfg.decode_tokens)
                 decode_end.record()
                 outputs.append(output)
-                request_ttft.append(elapsed_ms((request_start, prefill_end)))
-                total_ms = elapsed_ms((request_start, decode_end))
-                request_tpot.append(max(total_ms - request_ttft[-1], 0.0) / max(self.cfg.decode_tokens, 1))
+                request_events.append((request_start, prefill_end, decode_end))
 
         self.output = torch.stack(outputs, dim=0)
-        self._timing_history["ttft"].extend(request_ttft)
-        self._timing_history["tpot"].extend(request_tpot)
+        self._request_event_triplets = request_events
+        self._pending_metrics = metrics
 
-        cache_decisions = metrics["cache_hits"] + metrics["cache_misses"]
-        cache_hit_rate = metrics["cache_hits"] / cache_decisions if cache_decisions else 0.0
+    def capture_verification_payload(self) -> None:
+        if self.prompts is None or self.output is None:
+            raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
+        request_ttft = [elapsed_ms((start, prefill_end)) for start, prefill_end, _ in self._request_event_triplets]
+        request_tpot: List[float] = []
+        for start, prefill_end, decode_end in self._request_event_triplets:
+            ttft_ms = elapsed_ms((start, prefill_end))
+            total_ms = elapsed_ms((start, decode_end))
+            request_tpot.append(max(total_ms - ttft_ms, 0.0) / max(self.cfg.decode_tokens, 1))
+        self._timing_history = {"ttft": request_ttft, "tpot": request_tpot}
+
+        metrics = dict(self._pending_metrics)
+        cache_decisions = metrics.get("cache_hits", 0.0) + metrics.get("cache_misses", 0.0)
+        cache_hit_rate = metrics.get("cache_hits", 0.0) / cache_decisions if cache_decisions else 0.0
+        warm_requests = metrics.get("warm_requests", 0.0)
         warm_local_rate = (
-            metrics["warm_requests_served_local"] / metrics["warm_requests"]
-            if metrics["warm_requests"]
+            metrics.get("warm_requests_served_local", 0.0) / warm_requests
+            if warm_requests
             else 0.0
         )
-        max_transitions = float(
-            max(1, self.cfg.requests_per_iteration * (self.cfg.num_chunks))
-        )
-        temporal_locality = 1.0 - min(metrics["worker_switches"] / max_transitions, 1.0)
+        max_transitions = float(max(1, self.cfg.requests_per_iteration * self.cfg.num_chunks))
+        temporal_locality = 1.0 - min(metrics.get("worker_switches", 0.0) / max_transitions, 1.0)
         self._custom_metrics = {
             **compute_inference_metrics(
                 ttft_ms=_mean(request_ttft),
@@ -381,22 +406,18 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
             "cache_aware.cache_hit_rate": cache_hit_rate,
             "cache_aware.cache_miss_rate": 1.0 - cache_hit_rate,
             "cache_aware.warm_request_local_rate": warm_local_rate,
-            "cache_aware.worker_switches_per_request": metrics["worker_switches"] / max(
+            "cache_aware.worker_switches_per_request": metrics.get("worker_switches", 0.0) / max(
                 float(self.cfg.requests_per_iteration),
                 1.0,
             ),
             "cache_aware.temporal_locality_score": temporal_locality,
-            "cache_aware.shared_reloads": metrics["shared_reloads"],
-            "cache_aware.peer_reloads": metrics["peer_reloads"],
-            "cache_aware.kv_transfer_mb": metrics["kv_transfer_bytes"] / 1e6,
+            "cache_aware.shared_reloads": metrics.get("shared_reloads", 0.0),
+            "cache_aware.peer_reloads": metrics.get("peer_reloads", 0.0),
+            "cache_aware.kv_transfer_mb": metrics.get("kv_transfer_bytes", 0.0) / 1e6,
             "cache_aware.logical_decode_workers": float(self.cfg.logical_decode_workers),
             "cache_aware.prefill_chunks_per_request": float(self.cfg.num_chunks),
             "cache_aware.warm_request_ratio": float(self.cfg.warm_request_ratio),
         }
-
-    def capture_verification_payload(self) -> None:
-        if self.prompts is None or self.output is None:
-            raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
         self._set_verification_payload(
             inputs={"prompt": self.prompts[0]},
             output=self.output,
@@ -421,6 +442,9 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.shared_prefix_store = {}
         self.shared_seed_store = {}
         self.output = None
+        self._empty_kv_template = None
+        self._request_event_triplets = []
+        self._pending_metrics = {}
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:

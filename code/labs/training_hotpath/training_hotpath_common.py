@@ -184,14 +184,29 @@ def build_gradient_inputs(
     return values.to(device=device), offsets.to(device=device)
 
 
-def baseline_segment_abs_mean(flat: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-    results = []
-    offsets_cpu = offsets.cpu()
-    for index in range(offsets_cpu.numel() - 1):
-        start = int(offsets_cpu[index].item())
-        stop = int(offsets_cpu[index + 1].item())
-        results.append(flat[start:stop].abs().mean())
-    return torch.stack(results, dim=0)
+def build_segment_metadata(offsets: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Precompute segment ids and lengths in setup() so benchmark_fn() stays on-device."""
+
+    lengths = offsets[1:] - offsets[:-1]
+    segment_ids = torch.repeat_interleave(
+        torch.arange(lengths.numel(), device=offsets.device, dtype=torch.int64),
+        lengths,
+    )
+    return segment_ids, lengths.to(dtype=torch.float32)
+
+
+def baseline_segment_abs_mean(
+    flat: torch.Tensor,
+    segment_ids: torch.Tensor,
+    segment_lengths: torch.Tensor,
+    out: torch.Tensor,
+) -> torch.Tensor:
+    """Baseline torch segmented reduction without host round-trips."""
+
+    out.zero_()
+    out.scatter_add_(0, segment_ids, flat.abs())
+    out.div_(segment_lengths.clamp_min(1.0))
+    return out
 
 
 def active_mask_and_rows(
@@ -445,6 +460,9 @@ class MetricReductionCudaBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.workload = GradientReductionWorkload()
         self.flat: Optional[torch.Tensor] = None
         self.offsets: Optional[torch.Tensor] = None
+        self.segment_ids: Optional[torch.Tensor] = None
+        self.segment_lengths: Optional[torch.Tensor] = None
+        self._baseline_out: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self._extension = None
         self._custom_metrics: dict[str, float] = {}
@@ -459,6 +477,8 @@ class MetricReductionCudaBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if not torch.cuda.is_available():
             raise RuntimeError("labs.training_hotpath metric-reduction benchmarks require CUDA")
         self.flat, self.offsets = build_gradient_inputs(self.workload, self.device)
+        self.segment_ids, self.segment_lengths = build_segment_metadata(self.offsets)
+        self._baseline_out = torch.empty(self.workload.num_segments, device=self.device, dtype=torch.float32)
         self.output = None
         if self.optimized:
             self._extension = load_training_hotpath_extension()
@@ -482,7 +502,14 @@ class MetricReductionCudaBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 raise RuntimeError("CUDA extension not loaded")
             self.output = self._extension.segment_abs_mean(self.flat, self.offsets)
         else:
-            self.output = baseline_segment_abs_mean(self.flat, self.offsets)
+            if self.segment_ids is None or self.segment_lengths is None or self._baseline_out is None:
+                raise RuntimeError("Baseline segment metadata not initialized")
+            self.output = baseline_segment_abs_mean(
+                self.flat,
+                self.segment_ids,
+                self.segment_lengths,
+                self._baseline_out,
+            )
 
     def capture_verification_payload(self) -> None:
         if self.output is None or self.flat is None or self.offsets is None:
@@ -499,6 +526,9 @@ class MetricReductionCudaBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         self.flat = None
         self.offsets = None
+        self.segment_ids = None
+        self.segment_lengths = None
+        self._baseline_out = None
         self.output = None
         self._extension = None
         torch.cuda.empty_cache()

@@ -38,6 +38,17 @@ def test_ch02_cublas_setup_keeps_warmup_symmetric() -> None:
     assert "warmed-up heuristics" in optimized_setup
 
 
+def test_ch02_cublas_benchmark_fn_uses_shared_nvtx_helper_symmetrically() -> None:
+    baseline_bench = _benchmark_section("ch02/baseline_cublas.py")
+    optimized_bench = _benchmark_section("ch02/optimized_cublas.py")
+
+    assert 'with self._nvtx_range("baseline_cublas_fp32"):' in baseline_bench
+    assert 'with self._nvtx_range("optimized_cublas_tf32"):' in optimized_bench
+    assert "core.profiling.nvtx_helper" not in optimized_bench
+    assert "get_config()" not in optimized_bench
+    assert "get_nvtx_enabled" not in optimized_bench
+
+
 def test_ch06_attention_ilp_pair_keeps_math_fixed_and_only_changes_ilp_schedule() -> None:
     baseline_text = _read("ch06/baseline_attention_ilp.py")
     optimized_text = _read("ch06/optimized_attention_ilp.py")

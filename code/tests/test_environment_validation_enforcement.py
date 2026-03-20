@@ -663,6 +663,68 @@ def test_environment_enforcement_foreign_gpu_processes_ignore_same_owner_pid_pro
     assert result.details.get("foreign_cuda_compute_processes") == [], result.details
 
 
+def test_environment_enforcement_foreign_gpu_processes_ignore_same_owner_pid_from_live_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.harness.validity_checks as validity_checks
+
+    monkeypatch.setattr(validity_checks.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(validity_checks.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(validity_checks.torch.cuda, "current_device", lambda: 0)
+
+    current_pid = int(os.getpid())
+
+    def _fake_collect_process_tree_pids(pid: int, proc_root: Path = Path("/proc")) -> set[int]:
+        if int(pid) == current_pid:
+            return {current_pid}
+        if int(pid) == 4242:
+            return {4242, 7777}
+        return {int(pid)}
+
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_tree_pids",
+        _fake_collect_process_tree_pids,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_collect_process_lineage_pids",
+        lambda pid, proc_root=Path("/proc"): {int(pid)},
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_list_foreign_cuda_compute_processes",
+        lambda **kwargs: (
+            [{"pid": 7777, "process_name": "python", "used_memory_mb": 2048.0}],
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_read_process_environ_value",
+        lambda pid, key, proc_root=Path("/proc"): None,
+    )
+    monkeypatch.setattr(
+        validity_checks,
+        "_pid_is_live_process",
+        lambda pid, proc_root=Path("/proc"): True,
+    )
+    monkeypatch.setenv("AISP_BENCHMARK_OWNER_PID", "4242")
+
+    result = validate_environment(
+        device=torch.device("cuda"),
+        probe=EnvironmentProbe(
+            root=Path("/"),
+            env={
+                "AISP_FOREIGN_GPU_PROCESS_MIN_MB": "0",
+            },
+        ),
+    )
+    assert not any("Foreign CUDA compute process(es) detected on benchmark GPU" in err for err in result.errors), result.errors
+    assert result.details.get("foreign_cuda_compute_processes") == [], result.details
+    assert result.details.get("owned_benchmark_owner_pid") == "4242", result.details
+
+
 def test_environment_enforcement_foreign_gpu_processes_ignore_same_owner_pid_cmdline_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

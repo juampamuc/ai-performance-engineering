@@ -11,10 +11,12 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 from labs.recsys_sequence_ranking.recsys_sequence_ranking_common import (
     RankingInputs,
     RankingModelState,
+    RankingWorkspace,
     apply_cli_overrides,
     baseline_forward,
     build_inputs,
     build_model_state,
+    build_workspace,
     default_workload,
     ranking_metrics,
     requests_per_iteration,
@@ -32,6 +34,7 @@ class BaselineSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.workload = default_workload()
         self.inputs: Optional[RankingInputs] = None
         self.state: Optional[RankingModelState] = None
+        self.workspace: Optional[RankingWorkspace] = None
         self.output: Optional[torch.Tensor] = None
         self._custom_metrics: dict[str, float] = {}
         self._refresh_workload_metadata()
@@ -47,6 +50,7 @@ class BaselineSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark):
             raise RuntimeError("labs.recsys_sequence_ranking requires CUDA for fair comparison")
         self.inputs = build_inputs(self.workload, self.device)
         self.state = build_model_state(self.workload, self.device)
+        self.workspace = build_workspace(self.workload, self.device)
         self.output = None
         self._custom_metrics = ranking_metrics(
             self.workload,
@@ -57,10 +61,10 @@ class BaselineSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.synchronize()
 
     def benchmark_fn(self) -> None:
-        if self.inputs is None or self.state is None:
+        if self.inputs is None or self.state is None or self.workspace is None:
             raise RuntimeError("Benchmark state is not initialized")
         with torch.no_grad():
-            self.output = baseline_forward(self.inputs, self.state)
+            self.output = baseline_forward(self.inputs, self.state, self.workspace)
         if self.output is None:
             raise RuntimeError("benchmark_fn() did not produce output")
 
@@ -85,6 +89,7 @@ class BaselineSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         self.inputs = None
         self.state = None
+        self.workspace = None
         self.output = None
         torch.cuda.empty_cache()
 
@@ -122,5 +127,4 @@ class BaselineSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineSequenceRankingBenchmark()
-
 

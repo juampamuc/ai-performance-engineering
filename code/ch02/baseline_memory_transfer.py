@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Optional
 
 import torch
@@ -46,20 +45,8 @@ class BaselineMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: Traditional H2D transfer over PCIe."""
         assert self.host_data is not None and self.device_data is not None
-        if self.device.type == "cuda":
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-        else:
-            start_time = time.perf_counter()
         with self._nvtx_range("memory_transfer_baseline"):
             self.device_data.copy_(self.host_data, non_blocking=False)
-        if self.device.type == "cuda":
-            end_event.record()
-            end_event.synchronize()
-            self._last_elapsed_ms = float(start_event.elapsed_time(end_event))
-        else:
-            self._last_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
     def capture_verification_payload(self) -> None:
         if self.device_data is None:

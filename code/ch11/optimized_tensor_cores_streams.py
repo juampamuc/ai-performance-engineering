@@ -109,7 +109,6 @@ class OptimizedTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchma
                 current = torch.cuda.current_stream(self.device)
                 for stream in self.streams:
                     current.wait_stream(stream)
-                torch.cuda.synchronize(self.device)
 
         if self.host_A is None or self.host_B is None or self.host_output is None:
             raise RuntimeError("benchmark_fn() must run after setup() initializes buffers")
@@ -188,5 +187,4 @@ class OptimizedTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchma
 
 def get_benchmark() -> OptimizedTensorCoresStreamsBenchmark:
     return OptimizedTensorCoresStreamsBenchmark()
-
 
