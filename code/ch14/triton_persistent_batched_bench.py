@@ -14,13 +14,23 @@ from typing import Optional
 
 import torch
 
-from ch14.triton_persistent_batched import matmul_persistent_batched
+from ch14.triton_persistent_batched import (
+    compute_persistent_batched_metrics,
+    matmul_persistent_batched,
+)
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
     WorkloadMetadata,
 )
+
+BLOCK_M = 32
+BLOCK_N = 32
+BLOCK_K = 32
+GROUP_M = 8
+NUM_WARPS = 4
+NUM_STAGES = 2
 
 
 class TritonPersistentBatchedBenchBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -65,10 +75,32 @@ class TritonPersistentBatchedBenchBenchmark(VerificationPayloadMixin, BaseBenchm
         )
 
         for _ in range(3):
-            _ = matmul_persistent_batched(self.a, self.b, self.num_sms, out=self._output_buffer)
+            _ = matmul_persistent_batched(
+                self.a,
+                self.b,
+                self.num_sms,
+                out=self._output_buffer,
+                block_m=BLOCK_M,
+                block_n=BLOCK_N,
+                block_k=BLOCK_K,
+                group_m=GROUP_M,
+                num_warps=NUM_WARPS,
+                num_stages=NUM_STAGES,
+            )
 
     def benchmark_fn(self) -> None:
-        self.output = matmul_persistent_batched(self.a, self.b, self.num_sms, out=self._output_buffer)
+        self.output = matmul_persistent_batched(
+            self.a,
+            self.b,
+            self.num_sms,
+            out=self._output_buffer,
+            block_m=BLOCK_M,
+            block_n=BLOCK_N,
+            block_k=BLOCK_K,
+            group_m=GROUP_M,
+            num_warps=NUM_WARPS,
+            num_stages=NUM_STAGES,
+        )
         self._last = float(self.output.sum())
         if self.output is None or self.a is None or self.b is None:
             raise RuntimeError("benchmark_fn() must produce output")
@@ -104,13 +136,18 @@ class TritonPersistentBatchedBenchBenchmark(VerificationPayloadMixin, BaseBenchm
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        from core.benchmark.metrics import compute_triton_metrics
-
-        return compute_triton_metrics(
-            num_elements=getattr(self, "N", getattr(self, "num_elements", 1024)),
+        return compute_persistent_batched_metrics(
+            batch_size=self.batch_size,
+            m=self.M,
+            n=self.N,
+            k=self.K,
+            block_m=BLOCK_M,
+            block_n=BLOCK_N,
+            block_k=BLOCK_K,
+            num_warps=NUM_WARPS,
+            num_stages=NUM_STAGES,
             elapsed_ms=getattr(self, "_last_elapsed_ms", None),
-            block_size=getattr(self, "BLOCK_SIZE", 1024),
-            num_warps=getattr(self, "num_warps", 4),
+            persistent_kernel=True,
         )
 
     def validate_result(self) -> Optional[str]:
@@ -121,4 +158,3 @@ class TritonPersistentBatchedBenchBenchmark(VerificationPayloadMixin, BaseBenchm
 
 def get_benchmark() -> BaseBenchmark:
     return TritonPersistentBatchedBenchBenchmark()
-

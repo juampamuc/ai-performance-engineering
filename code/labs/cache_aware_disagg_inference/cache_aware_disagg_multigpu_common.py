@@ -438,7 +438,7 @@ def _run_torchrun_worker(
             if rank == plan.prefill_rank:
                 assert prompts is not None
                 chunks = _split_prompt(prompts[plan.local_request_idx], cfg.chunk_size)
-                _sync_and_barrier(device)
+                torch.cuda.synchronize(device)
                 request_start = time.perf_counter()
             else:
                 request_start = 0.0

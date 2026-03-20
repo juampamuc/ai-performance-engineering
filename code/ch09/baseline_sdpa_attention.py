@@ -28,6 +28,25 @@ from core.harness.benchmark_harness import (
 )
 
 
+def _attention_total_flops(batch_size: int, num_heads: int, seq_len: int, head_dim: int) -> float:
+    attention_elements = float(batch_size * num_heads * seq_len * seq_len)
+    matmul_flops = 4.0 * attention_elements * float(head_dim)
+    softmax_flops = 6.0 * attention_elements
+    return matmul_flops + softmax_flops
+
+
+def _naive_attention_total_bytes(
+    batch_size: int,
+    num_heads: int,
+    seq_len: int,
+    head_dim: int,
+    element_size: int,
+) -> float:
+    qkv_output_elements = float(batch_size * num_heads * seq_len * head_dim)
+    scores_elements = float(batch_size * num_heads * seq_len * seq_len)
+    return float(element_size) * ((4.0 * qkv_output_elements) + (6.0 * scores_elements))
+
+
 class BaselineSDPAAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline: Naive multi-kernel attention without fusion.
     
@@ -95,9 +114,6 @@ class BaselineSDPAAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 # Shape: [B, H, S, S] @ [B, H, S, D] -> [B, H, S, D]
                 self.output = torch.matmul(attn_weights, self.value)
                 
-                # Force materialization
-                _ = self.output.sum()
-        
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 
@@ -133,11 +149,24 @@ class BaselineSDPAAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_roofline_metrics
+
+        total_flops = _attention_total_flops(
+            self.batch_size,
+            self.num_heads,
+            self.seq_len,
+            self.head_dim,
+        )
+        total_bytes = _naive_attention_total_bytes(
+            self.batch_size,
+            self.num_heads,
+            self.seq_len,
+            self.head_dim,
+            element_size=2,
+        )
         return compute_roofline_metrics(
-            total_flops=float(getattr(self, 'total_flops', getattr(self, 'N', 1024) * 2)),
-            total_bytes=float(getattr(self, 'N', 1024) * 4 * 2),
+            total_flops=total_flops,
+            total_bytes=total_bytes,
             elapsed_ms=getattr(self, '_last_elapsed_ms', None),
             precision="fp16",
         )
@@ -151,5 +180,4 @@ class BaselineSDPAAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineSDPAAttentionBenchmark()
-
 

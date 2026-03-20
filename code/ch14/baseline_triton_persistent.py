@@ -11,12 +11,19 @@ import triton
 import triton.language as tl
 from typing import Optional
 
+from ch14.triton_persistent_batched import compute_persistent_batched_metrics
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
     WorkloadMetadata,
 )
+
+BLOCK_M = 32
+BLOCK_N = 32
+BLOCK_K = 32
+NUM_WARPS = 4
+NUM_STAGES = 2
 
 
 @triton.jit
@@ -77,8 +84,6 @@ def matmul_standard_batched(
         raise ValueError("matmul_standard_batched() requires a preallocated output buffer with matching shape")
     c_batch = out
     
-    BLOCK_M, BLOCK_N, BLOCK_K = 32, 32, 32
-    
     # Launch separate kernel for each batch element (inefficient)
     for i in range(batch_size):
         a = a_batch[i]
@@ -93,7 +98,11 @@ def matmul_standard_batched(
             a.stride(0), a.stride(1),
             b.stride(0), b.stride(1),
             c.stride(0), c.stride(1),
-            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
+            BLOCK_M=BLOCK_M,
+            BLOCK_N=BLOCK_N,
+            BLOCK_K=BLOCK_K,
+            num_warps=NUM_WARPS,
+            num_stages=NUM_STAGES,
         )
     
     return c_batch
@@ -186,13 +195,18 @@ class BaselineTritonPersistentBenchmark(VerificationPayloadMixin, BaseBenchmark)
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_triton_metrics
-        return compute_triton_metrics(
-            num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            block_size=getattr(self, 'BLOCK_SIZE', 1024),
-            num_warps=getattr(self, 'num_warps', 4),
+        return compute_persistent_batched_metrics(
+            batch_size=self.batch_size,
+            m=self.M,
+            n=self.N,
+            k=self.K,
+            block_m=BLOCK_M,
+            block_n=BLOCK_N,
+            block_k=BLOCK_K,
+            num_warps=NUM_WARPS,
+            num_stages=NUM_STAGES,
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
+            persistent_kernel=False,
         )
 
     def validate_result(self) -> Optional[str]:

@@ -97,6 +97,8 @@ class BaselineTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchmar
                         self.device_B_slot.copy_(self.host_B[idx], non_blocking=True)
                         torch.matmul(self.device_A_slot, self.device_B_slot, out=self.device_C_slot)
                         self.host_output[idx].copy_(self.device_C_slot[0], non_blocking=True)
+                current = torch.cuda.current_stream(self.device)
+                current.wait_stream(self.stream)
 
         if self.host_A is None or self.host_B is None or self.host_output is None:
             raise RuntimeError("benchmark_fn() must run after setup() initializes buffers")
@@ -163,16 +165,6 @@ class BaselineTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchmar
             return []
         return [self.stream]
 
-    def get_input_signature(self) -> dict:
-        return super().get_input_signature()
-
-    def get_verify_output(self) -> torch.Tensor:
-        return super().get_verify_output()
-
-    def get_output_tolerance(self) -> tuple:
-        return super().get_output_tolerance()
-
 
 def get_benchmark() -> BaselineTensorCoresStreamsBenchmark:
     return BaselineTensorCoresStreamsBenchmark()
-

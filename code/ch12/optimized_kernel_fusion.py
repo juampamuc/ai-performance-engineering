@@ -24,6 +24,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.data = None
+        self._verify_input = None
         self.N = 16_000_000  # Larger size to be memory-bound
         self.iterations = 10
         self._extension = None
@@ -41,6 +42,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
         torch.manual_seed(42)
         self.data = torch.arange(self.N, dtype=torch.float32, device=self.device)
+        self._verify_input = self.data.detach().clone()
         torch.cuda.synchronize(self.device)
         # Dry run so CUDA graph / kernel fusion setup cost is prepaid
         self._extension.fused_kernel(self.data, 1)
@@ -66,7 +68,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"data": self.data},
+            inputs={"data": self._verify_input},
             output=self.data.detach().clone(),
             batch_size=self.N,
             precision_flags={
@@ -82,6 +84,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.data = None
+        self._verify_input = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -123,4 +126,3 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedKernelFusionBenchmark()
-

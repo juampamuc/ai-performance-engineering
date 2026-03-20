@@ -71,11 +71,7 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.compile_enabled = self._should_enable_compile()
         self.compiled_tower = None
         if self.compile_enabled and self.state is not None:
-            try:
-                self.compiled_tower = torch.compile(self.state.tower, dynamic=False, fullgraph=False)
-            except Exception:
-                self.compile_enabled = False
-                self.compiled_tower = None
+            self.compiled_tower = torch.compile(self.state.tower, dynamic=False, fullgraph=False)
 
         if self.inputs is not None and self.state is not None:
             warm_optimized_path(
@@ -171,4 +167,3 @@ class OptimizedSequenceRankingBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedSequenceRankingBenchmark()
-

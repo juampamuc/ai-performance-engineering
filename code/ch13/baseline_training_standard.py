@@ -16,7 +16,6 @@ import torch.nn as nn
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch13.workload_config import WORKLOAD
 
 
 class TransformerModel(nn.Module):

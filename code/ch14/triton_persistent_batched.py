@@ -10,6 +10,8 @@ import torch
 import triton
 import triton.language as tl
 
+from core.benchmark.metrics import compute_roofline_metrics
+
 
 @triton.jit
 def gemm_persistent_batched_kernel(
@@ -152,3 +154,46 @@ def matmul_persistent_batched(
     )
 
     return c_batch
+
+
+def compute_persistent_batched_metrics(
+    *,
+    batch_size: int,
+    m: int,
+    n: int,
+    k: int,
+    block_m: int,
+    block_n: int,
+    block_k: int,
+    num_warps: int,
+    num_stages: int,
+    elapsed_ms: float | None,
+    persistent_kernel: bool,
+) -> dict[str, float]:
+    total_flops = 2.0 * float(batch_size) * float(m) * float(n) * float(k)
+    total_bytes = float(batch_size * ((m * k) + (k * n) + (m * n)) * 2)
+    metrics = {
+        "gemm.batch_size": float(batch_size),
+        "gemm.m": float(m),
+        "gemm.n": float(n),
+        "gemm.k": float(k),
+        "gemm.total_flops": total_flops,
+        "gemm.total_bytes": total_bytes,
+        "triton.block_m": float(block_m),
+        "triton.block_n": float(block_n),
+        "triton.block_k": float(block_k),
+        "triton.num_warps": float(num_warps),
+        "triton.num_stages": float(num_stages),
+        "triton.persistent_kernel": 1.0 if persistent_kernel else 0.0,
+    }
+    if elapsed_ms is None:
+        return metrics
+    return {
+        **metrics,
+        **compute_roofline_metrics(
+            total_flops=total_flops,
+            total_bytes=total_bytes,
+            elapsed_ms=elapsed_ms,
+            precision="fp16",
+        ),
+    }

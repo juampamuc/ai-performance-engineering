@@ -78,9 +78,10 @@ class BaselineCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def teardown(self) -> None:
-        """Restore TF32 settings and free tensors."""
+        """Free benchmark tensors."""
         self.A = None
         self.B = None
+        self.C = None
         self._last_elapsed_ms = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

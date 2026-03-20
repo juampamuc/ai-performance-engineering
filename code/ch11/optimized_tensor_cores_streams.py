@@ -25,6 +25,7 @@ class OptimizedTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchma
         super().__init__()
         self.device = resolve_device()
         self.label = "tensor_cores_streams"
+        self.nvtx_label = "optimized_tensor_cores_streams"
         self.num_segments = 24
         self.matrix_dim = 768
         self.num_elements = self.num_segments * self.matrix_dim * self.matrix_dim
@@ -84,7 +85,7 @@ class OptimizedTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchma
         config = getattr(self, "_config", None) or self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
-        with nvtx_range(self.label, enable=enable_nvtx):
+        with nvtx_range(self.nvtx_label, enable=enable_nvtx):
             assert self.streams is not None
             assert self.host_A is not None
             assert self.host_B is not None
@@ -141,7 +142,7 @@ class OptimizedTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchma
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        nvtx_tag = canonicalize_nvtx_name(self.label)
+        nvtx_tag = canonicalize_nvtx_name(self.nvtx_label)
         return BenchmarkConfig(
             iterations=16,
             warmup=5,
@@ -175,16 +176,6 @@ class OptimizedTensorCoresStreamsBenchmark(VerificationPayloadMixin, BaseBenchma
             return []
         return list(self.streams)
 
-    def get_input_signature(self) -> dict:
-        return super().get_input_signature()
-
-    def get_verify_output(self) -> torch.Tensor:
-        return super().get_verify_output()
-
-    def get_output_tolerance(self) -> tuple:
-        return super().get_output_tolerance()
-
 
 def get_benchmark() -> OptimizedTensorCoresStreamsBenchmark:
     return OptimizedTensorCoresStreamsBenchmark()
-

@@ -33,8 +33,8 @@ class SimpleModel(nn.Module):
         return x
 
 
-class OptimizedTrainingDistributedBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized training loop with TF32 + fused optimizer."""
+class OptimizedTrainingSingleBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Optimized single-GPU training loop with TF32-enabled matmul and fused optimizer."""
     
     def __init__(self):
         super().__init__()
@@ -43,8 +43,8 @@ class OptimizedTrainingDistributedBenchmark(VerificationPayloadMixin, BaseBenchm
         self.targets: Optional[torch.Tensor] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.criterion: Optional[nn.Module] = None
-        self.scaler: Optional[torch.cuda.amp.GradScaler] = None
         self.output: Optional[torch.Tensor] = None
+        self._tf32_state: Optional[tuple[bool, bool]] = None
         self.batch_size = 32
         self.hidden_dim = 8192
         self.train_steps = 6
@@ -57,6 +57,12 @@ class OptimizedTrainingDistributedBenchmark(VerificationPayloadMixin, BaseBenchm
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
+        self._tf32_state = (
+            bool(torch.backends.cuda.matmul.allow_tf32),
+            bool(torch.backends.cudnn.allow_tf32),
+        )
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
         self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).float().train()
         
@@ -67,7 +73,6 @@ class OptimizedTrainingDistributedBenchmark(VerificationPayloadMixin, BaseBenchm
         except TypeError:
             self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.01)
         self.criterion = nn.MSELoss()
-        self.scaler = None
         self._synchronize()
     
     def benchmark_fn(self) -> None:
@@ -99,7 +104,11 @@ class OptimizedTrainingDistributedBenchmark(VerificationPayloadMixin, BaseBenchm
         self.targets = None
         self.optimizer = None
         self.criterion = None
-        self.scaler = None
+        if self._tf32_state is not None:
+            matmul_tf32, cudnn_tf32 = self._tf32_state
+            torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+            torch.backends.cudnn.allow_tf32 = cudnn_tf32
+        self._tf32_state = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -128,12 +137,5 @@ class OptimizedTrainingDistributedBenchmark(VerificationPayloadMixin, BaseBenchm
             return "Model not initialized"
         return None
 
-    def get_verify_output(self) -> torch.Tensor:
-        return super().get_verify_output()
-
-    def get_input_signature(self) -> dict:
-        return super().get_input_signature()
-
-
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedTrainingDistributedBenchmark()
+    return OptimizedTrainingSingleBenchmark()

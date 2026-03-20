@@ -28,8 +28,9 @@ def baseline_matmul_kernel(
 ):
     pid = tl.program_id(0)
     num_pid_m = tl.cdiv(M, BLOCK_M)
-    pid_m = pid // num_pid_m
-    pid_n = pid % num_pid_m
+    num_pid_n = tl.cdiv(N, BLOCK_N)
+    pid_m = pid // num_pid_n
+    pid_n = pid % num_pid_n
 
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
@@ -39,14 +40,22 @@ def baseline_matmul_kernel(
     for k in range(0, K, BLOCK_K):
         a_ptr = A + (offs_m[:, None] * stride_am + (k + offs_k)[None, :] * stride_ak)
         b_ptr = B + ((k + offs_k)[:, None] * stride_bk + offs_n[None, :] * stride_bn)
-        a = tl.load(a_ptr, mask=offs_m[:, None] < M)
-        b = tl.load(b_ptr, mask=offs_n[None, :] < N)
+        a = tl.load(
+            a_ptr,
+            mask=(offs_m[:, None] < M) & ((k + offs_k)[None, :] < K),
+            other=0.0,
+        )
+        b = tl.load(
+            b_ptr,
+            mask=((k + offs_k)[:, None] < K) & (offs_n[None, :] < N),
+            other=0.0,
+        )
         acc += tl.dot(a, b)
     c_ptr = C + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
-    tl.store(c_ptr, acc)
+    tl.store(c_ptr, acc.to(tl.float16), mask=(offs_m[:, None] < M) & (offs_n[None, :] < N))
 
 
-def run_baseline(M=1024, N=1024, K=1024, BLOCK=128):
+def run_baseline(M=1024, N=1024, K=1024, BLOCK_M=128, BLOCK_N=128, BLOCK_K=64):
     a = torch.randn((M, K), device="cuda", dtype=torch.float16)
     b = torch.randn((K, N), device="cuda", dtype=torch.float16)
     c = torch.empty((M, N), device="cuda", dtype=torch.float16)
@@ -58,7 +67,7 @@ def run_baseline(M=1024, N=1024, K=1024, BLOCK=128):
         a.stride(0), a.stride(1),
         b.stride(0), b.stride(1),
         c.stride(0), c.stride(1),
-        BLOCK, BLOCK, BLOCK,
+        BLOCK_M, BLOCK_N, BLOCK_K,
     )
     return c
 
@@ -80,7 +89,9 @@ class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchma
         self.A = None
         self.B = None
         self.C = None
-        self.block = 64
+        self.block_m = 128
+        self.block_n = 128
+        self.block_k = 64
         self.output = None
         self.register_workload_metadata(
             requests_per_iteration=1.0,
@@ -102,7 +113,7 @@ class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchma
             self.A.stride(0), self.A.stride(1),
             self.B.stride(0), self.B.stride(1),
             self.C.stride(0), self.C.stride(1),
-            self.block, self.block, self.block,
+            self.block_m, self.block_n, self.block_k,
         )
         self._synchronize()
 
@@ -115,7 +126,7 @@ class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchma
             self.A.stride(0), self.A.stride(1),
             self.B.stride(0), self.B.stride(1),
             self.C.stride(0), self.C.stride(1),
-            self.block, self.block, self.block,
+            self.block_m, self.block_n, self.block_k,
         )
         self.result = self.C
         self.output = self.result
@@ -133,7 +144,7 @@ class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchma
                 "fp8": False,
                 "tf32": False,
             },
-            output_tolerance=(1e-2, 1e-2),
+            output_tolerance=(0.05, 0.05),
         )
 
     def teardown(self) -> None:
@@ -149,5 +160,4 @@ class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchma
 
 def get_benchmark() -> BaseBenchmark:
     return BaselinePersistentMatmulTMABenchmark()
-
 

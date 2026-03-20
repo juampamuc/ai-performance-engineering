@@ -105,16 +105,7 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def benchmark_fn(self) -> None:
         """Function to benchmark."""
-        # Use conditional NVTX ranges - only enabled when profiling
-
-        from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
-
-        config = self.get_config()
-
-        enable_nvtx = get_nvtx_enabled(config) if config else False
-
-
-        with nvtx_range("baseline_performance", enable=enable_nvtx):
+        with self._nvtx_range("baseline_performance"):
             total = len(self.microbatches)
             for start in range(0, total, self.fusion):
                 group_data = self.microbatches[start : start + self.fusion]

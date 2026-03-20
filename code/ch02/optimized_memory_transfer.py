@@ -84,6 +84,7 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Teardown: Clean up resources."""
         self.host_data = None
         self.device_data = None
+        self._last_elapsed_ms = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -101,7 +102,7 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_memory_transfer_metrics
         return compute_memory_transfer_metrics(
             bytes_transferred=self._bytes_transferred,
-            elapsed_ms=self._last_elapsed_ms or 1.0,
+            elapsed_ms=self._last_elapsed_ms,
             transfer_type="pcie",
         )
 

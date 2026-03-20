@@ -78,9 +78,9 @@ def apply_metric_reduction_overrides(
 ) -> MetricReductionWorkload:
     args, _ = _metric_workload_parser().parse_known_args(argv)
     return MetricReductionWorkload(
-        batch_size=args.batch_size or workload.batch_size,
-        max_num_tokens=args.max_num_tokens or workload.max_num_tokens,
-        responders=args.responders or workload.responders,
+        batch_size=args.batch_size if args.batch_size is not None else workload.batch_size,
+        max_num_tokens=args.max_num_tokens if args.max_num_tokens is not None else workload.max_num_tokens,
+        responders=args.responders if args.responders is not None else workload.responders,
     )
 
 
@@ -90,9 +90,13 @@ def apply_gradient_reduction_overrides(
 ) -> GradientReductionWorkload:
     args, _ = _gradient_workload_parser().parse_known_args(argv)
     return GradientReductionWorkload(
-        num_segments=args.num_segments or workload.num_segments,
-        min_segment_length=args.min_segment_length or workload.min_segment_length,
-        max_segment_length=args.max_segment_length or workload.max_segment_length,
+        num_segments=args.num_segments if args.num_segments is not None else workload.num_segments,
+        min_segment_length=(
+            args.min_segment_length if args.min_segment_length is not None else workload.min_segment_length
+        ),
+        max_segment_length=(
+            args.max_segment_length if args.max_segment_length is not None else workload.max_segment_length
+        ),
     )
 
 
@@ -102,15 +106,15 @@ def apply_padding_aware_overrides(
 ) -> PaddingAwareWorkload:
     args, _ = _padding_workload_parser().parse_known_args(argv)
     return PaddingAwareWorkload(
-        batch_size=args.batch_size or workload.batch_size,
-        max_num_tokens=args.max_num_tokens or workload.max_num_tokens,
-        min_num_tokens=args.min_num_tokens or workload.min_num_tokens,
-        input_size=args.input_size or workload.input_size,
-        hidden_size=args.hidden_size or workload.hidden_size,
-        projection_size=args.projection_size or workload.projection_size,
-        num_heads=args.num_heads or workload.num_heads,
-        num_blocks=args.num_blocks or workload.num_blocks,
-        output_size=args.output_size or workload.output_size,
+        batch_size=args.batch_size if args.batch_size is not None else workload.batch_size,
+        max_num_tokens=args.max_num_tokens if args.max_num_tokens is not None else workload.max_num_tokens,
+        min_num_tokens=args.min_num_tokens if args.min_num_tokens is not None else workload.min_num_tokens,
+        input_size=args.input_size if args.input_size is not None else workload.input_size,
+        hidden_size=args.hidden_size if args.hidden_size is not None else workload.hidden_size,
+        projection_size=args.projection_size if args.projection_size is not None else workload.projection_size,
+        num_heads=args.num_heads if args.num_heads is not None else workload.num_heads,
+        num_blocks=args.num_blocks if args.num_blocks is not None else workload.num_blocks,
+        output_size=args.output_size if args.output_size is not None else workload.output_size,
     )
 
 

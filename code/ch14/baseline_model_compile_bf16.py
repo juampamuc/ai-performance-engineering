@@ -18,6 +18,7 @@ from core.harness.benchmark_harness import (  # noqa: E402
 from ch14.model_eager_common import (  # noqa: E402
     MODEL_EAGER_WARMUP_ITERS,
     SimpleTransformer,
+    model_compile_custom_metrics,
     resolve_model_eager_dtype,
 )
 
@@ -115,13 +116,13 @@ class BaselineModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_triton_metrics
-        return compute_triton_metrics(
-            num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
-            elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            block_size=getattr(self, 'BLOCK_SIZE', 1024),
-            num_warps=getattr(self, 'num_warps', 4),
+        return model_compile_custom_metrics(
+            batch_size=self.batch_size,
+            seq_len=self.seq_len,
+            parameter_count=self.parameter_count,
+            dtype=self.dtype,
+            elapsed_ms=getattr(self, "_last_elapsed_ms", None),
+            compiled=False,
         )
 
     def validate_result(self) -> Optional[str]:

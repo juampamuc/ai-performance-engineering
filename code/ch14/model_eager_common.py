@@ -16,6 +16,33 @@ def resolve_model_eager_dtype() -> torch.dtype:
     return torch.float16
 
 
+def model_compile_custom_metrics(
+    *,
+    batch_size: int,
+    seq_len: int,
+    parameter_count: int,
+    dtype: torch.dtype,
+    elapsed_ms: float | None,
+    compiled: bool,
+) -> dict[str, float]:
+    tokens = float(batch_size * seq_len)
+    metrics = {
+        "model_compile.batch_size": float(batch_size),
+        "model_compile.seq_len": float(seq_len),
+        "model_compile.tokens_per_iteration": tokens,
+        "model_compile.parameter_count": float(parameter_count),
+        "model_compile.compiled": 1.0 if compiled else 0.0,
+        "model_compile.dtype_fp16": 1.0 if dtype == torch.float16 else 0.0,
+        "model_compile.dtype_bf16": 1.0 if dtype == torch.bfloat16 else 0.0,
+    }
+    if elapsed_ms is None:
+        return metrics
+    elapsed_s = max(float(elapsed_ms) / 1000.0, 1e-9)
+    metrics["model_compile.tokens_per_second"] = tokens / elapsed_s
+    metrics["model_compile.samples_per_second"] = float(batch_size) / elapsed_s
+    return metrics
+
+
 class SimpleTransformer(nn.Module):
     """Simple transformer used by both eager and compiled paths."""
 
