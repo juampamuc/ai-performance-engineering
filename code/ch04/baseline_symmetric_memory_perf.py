@@ -20,6 +20,14 @@ class BaselineSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchma
     """Baseline device copy benchmark with per-iteration allocation."""
 
     allowed_benchmark_fn_antipatterns = ("allocation",)
+    story_metadata = {
+        "pair_role": "canonical",
+        "chapter_alignment": "native",
+        "chapter_native_exemplar": True,
+        "comparison_axis": "allocation_blocking_copy_vs_preallocated_async_copy",
+        "optimization_mechanism": "per_iteration_allocation_plus_blocking_copy",
+        "compound_optimization": False,
+    }
 
     def __init__(self, size_mb: float = 0.0625):
         super().__init__()
@@ -124,4 +132,3 @@ class BaselineSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchma
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineSymmetricMemoryPerfBenchmark()
-

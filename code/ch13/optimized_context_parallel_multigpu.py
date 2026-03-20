@@ -63,6 +63,14 @@ class OptimizedContextParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBe
     """Harness entry that launches this module via torchrun."""
 
     multi_gpu_required = True
+    story_metadata = {
+        "pair_role": "canonical",
+        "chapter_alignment": "native",
+        "chapter_native_exemplar": True,
+        "timed_launch_mode": "torchrun_multi_gpu",
+        "verification_mode": "single_process_surrogate",
+        "optimization_mechanism": "ring_attention",
+    }
 
     def __init__(self) -> None:
         super().__init__()
@@ -174,4 +182,3 @@ class OptimizedContextParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBe
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedContextParallelMultigpuBenchmark()
-

@@ -586,6 +586,17 @@ class _DisaggregatedInferenceMultiGPUBenchmark(VerificationPayloadMixin, BaseBen
 class BaselineDisaggregatedInferenceMultiGPUBenchmark(_DisaggregatedInferenceMultiGPUBenchmark):
     """Serialized prefill then decode across multi-GPU ranks."""
 
+    story_metadata = {
+        "pair_role": "canonical",
+        "chapter_alignment": "native",
+        "chapter_native_exemplar": True,
+        "timed_launch_mode": "torchrun_multi_gpu",
+        "verification_mode": "local_multi_device_surrogate",
+        "shared_harness_layout": "baseline_owned_shared_base",
+        "shared_harness_owner": "ch15/baseline_disaggregated_inference_multigpu.py",
+        "execution_pattern": "serialized_prefill_then_decode",
+    }
+
     def __init__(self) -> None:
         super().__init__(overlap=False, label="baseline_disaggregated_inference_multigpu")
 
@@ -610,4 +621,3 @@ def main() -> None:
         iters=int(args.iters),
         warmup=int(args.warmup),
     )
-

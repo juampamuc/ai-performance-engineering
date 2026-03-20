@@ -20,8 +20,16 @@ from ch08.optimized_thresholdtma import OptimizedThresholdTMABenchmark
 from ch08.optimized_tiling import OptimizedTilingBenchmark
 from ch08.optimized_tiling_tcgen05 import OptimizedTilingBenchmarkTCGen05
 from ch08.optimized_tcgen05_custom_vs_cublas import OptimizedTcgen05CustomVsCublasBenchmark
+from ch04.baseline_symmetric_memory_perf import BaselineSymmetricMemoryPerfBenchmark
+from ch04.optimized_symmetric_memory_perf import OptimizedSymmetricMemoryPerfBenchmark
+from ch13.baseline_context_parallel_multigpu import BaselineContextParallelMultigpuBenchmark
+from ch13.baseline_expert_parallel_multigpu import BaselineExpertParallelMultigpuBenchmark
+from ch13.optimized_context_parallel_multigpu import OptimizedContextParallelMultigpuBenchmark
+from ch13.optimized_expert_parallel_multigpu import OptimizedExpertParallelMultigpuBenchmark
 from ch17.baseline_inference_full import BaselineInferenceFullBenchmark
 from ch17.optimized_inference_full import OptimizedInferenceFullBenchmark
+from ch15.baseline_disaggregated_inference_multigpu import BaselineDisaggregatedInferenceMultiGPUBenchmark
+from ch15.optimized_disaggregated_inference_multigpu import OptimizedDisaggregatedInferenceMultiGPUBenchmark
 from core.analysis.performance_analyzer import load_benchmark_data
 from core.analysis.reporting.generator import generate_report
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, BenchmarkHarness, BenchmarkMode
@@ -153,6 +161,57 @@ def test_ch08_bridge_controls_report_story_explicitly(
         assert metrics is not None
         assert metrics["story.control_pair"] == 1.0
         assert metrics["story.chapter_native_exemplar"] == 0.0
+
+
+def test_ch04_symmetric_memory_perf_story_metadata_marks_compound_optimized_path() -> None:
+    baseline_story = BaselineSymmetricMemoryPerfBenchmark.story_metadata
+    optimized_story = OptimizedSymmetricMemoryPerfBenchmark.story_metadata
+
+    assert baseline_story["comparison_axis"] == "allocation_blocking_copy_vs_preallocated_async_copy"
+    assert baseline_story["optimization_mechanism"] == "per_iteration_allocation_plus_blocking_copy"
+    assert baseline_story["compound_optimization"] is False
+    assert optimized_story["comparison_axis"] == "allocation_blocking_copy_vs_preallocated_async_copy"
+    assert optimized_story["optimization_mechanism"] == "preallocated_buffer_plus_nonblocking_copy"
+    assert optimized_story["compound_optimization"] is True
+
+
+def test_ch13_multigpu_wrappers_expose_verification_and_launch_modes_in_story_metadata() -> None:
+    benches = [
+        BaselineContextParallelMultigpuBenchmark,
+        OptimizedContextParallelMultigpuBenchmark,
+        BaselineExpertParallelMultigpuBenchmark,
+        OptimizedExpertParallelMultigpuBenchmark,
+    ]
+
+    for bench_cls in benches:
+        story = bench_cls.story_metadata
+        assert story["pair_role"] == "canonical"
+        assert story["chapter_alignment"] == "native"
+        assert story["chapter_native_exemplar"] is True
+        assert story["timed_launch_mode"] == "torchrun_multi_gpu"
+        assert story["verification_mode"] == "single_process_surrogate"
+
+    assert BaselineContextParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "all_gather_attention"
+    assert OptimizedContextParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "ring_attention"
+    assert BaselineExpertParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "per_iteration_list_all_to_all"
+    assert OptimizedExpertParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "preallocated_all_to_all_single"
+
+
+def test_ch15_disagg_multigpu_wrappers_expose_baseline_owned_shared_harness_metadata() -> None:
+    baseline_story = BaselineDisaggregatedInferenceMultiGPUBenchmark.story_metadata
+    optimized_story = OptimizedDisaggregatedInferenceMultiGPUBenchmark.story_metadata
+
+    for story in (baseline_story, optimized_story):
+        assert story["pair_role"] == "canonical"
+        assert story["chapter_alignment"] == "native"
+        assert story["chapter_native_exemplar"] is True
+        assert story["timed_launch_mode"] == "torchrun_multi_gpu"
+        assert story["verification_mode"] == "local_multi_device_surrogate"
+        assert story["shared_harness_layout"] == "baseline_owned_shared_base"
+        assert story["shared_harness_owner"] == "ch15/baseline_disaggregated_inference_multigpu.py"
+
+    assert baseline_story["execution_pattern"] == "serialized_prefill_then_decode"
+    assert optimized_story["execution_pattern"] == "overlapped_prefill_decode_pipeline"
 
 
 def test_harness_result_carries_story_metadata() -> None:

@@ -19,6 +19,15 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Optimized device copy benchmark with preallocated buffers."""
 
+    story_metadata = {
+        "pair_role": "canonical",
+        "chapter_alignment": "native",
+        "chapter_native_exemplar": True,
+        "comparison_axis": "allocation_blocking_copy_vs_preallocated_async_copy",
+        "optimization_mechanism": "preallocated_buffer_plus_nonblocking_copy",
+        "compound_optimization": True,
+    }
+
     def __init__(self, size_mb: float = 0.0625):
         super().__init__()
         self.size_mb = size_mb
@@ -121,5 +130,3 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedSymmetricMemoryPerfBenchmark()
-
-
