@@ -56,6 +56,7 @@ PRIORITY_EVIDENCE_DOCS = (
     "labs/nvfp4_gemv",
     "labs/nvfp4_group_gemm",
     "labs/occupancy_tuning",
+    "labs/parameterized_cuda_graphs",
     "labs/persistent_decode",
     "labs/real_world_models",
     "labs/speculative_decode",
@@ -66,6 +67,7 @@ PRIORITY_EVIDENCE_DOCS = (
 
 GENERATED_SPECIAL_DOCS = (
     "labs/README.md",
+    "labs/moe_decode_blackwell_matrix",
     "labs/nanochat_fullstack/rustbpe",
     "labs/python_concurrency",
     "labs/vllm-deepseek-tuning",
@@ -94,6 +96,8 @@ def test_root_readme_preserves_evidence_first_sections() -> None:
     assert "## Tier-1 Canonical Suite" in markdown
     assert "## Current Representative Deltas" in markdown
     assert "## Profiler Evidence" in markdown
+    assert "## Lab Navigation" in markdown
+    assert "`labs/parameterized_cuda_graphs`" in markdown
     assert markdown.index("## Tier-1 Canonical Suite") < markdown.index("## Learning Goals")
 
 
@@ -139,6 +143,7 @@ def test_ch10_and_priority_labs_render_custom_evidence_sections() -> None:
     nvfp4_gemv_markdown = _format_markdown(ENTRIES["labs/nvfp4_gemv"])
     nvfp4_group_gemm_markdown = _format_markdown(ENTRIES["labs/nvfp4_group_gemm"])
     occupancy_tuning_markdown = _format_markdown(ENTRIES["labs/occupancy_tuning"])
+    parameterized_cuda_graphs_markdown = _format_markdown(ENTRIES["labs/parameterized_cuda_graphs"])
     models_markdown = _format_markdown(ENTRIES["labs/real_world_models"])
     speculative_decode_markdown = _format_markdown(ENTRIES["labs/speculative_decode"])
     training_hotpath_markdown = _format_markdown(ENTRIES["labs/training_hotpath"])
@@ -194,6 +199,7 @@ def test_ch10_and_priority_labs_render_custom_evidence_sections() -> None:
         nvfp4_gemv_markdown,
         nvfp4_group_gemm_markdown,
         occupancy_tuning_markdown,
+        parameterized_cuda_graphs_markdown,
         models_markdown,
         speculative_decode_markdown,
         training_hotpath_markdown,
@@ -214,6 +220,7 @@ def test_priority_readmes_match_generated_content() -> None:
 
 def test_playbook_and_matrix_lab_docs_render_honest_nonpair_sections() -> None:
     labs_index_markdown = _format_markdown(ENTRIES["labs/README.md"])
+    moe_decode_blackwell_matrix_markdown = _format_markdown(ENTRIES["labs/moe_decode_blackwell_matrix"])
     rustbpe_markdown = _format_markdown(ENTRIES["labs/nanochat_fullstack/rustbpe"])
     python_concurrency_markdown = _format_markdown(ENTRIES["labs/python_concurrency"])
     vllm_tuning_markdown = _format_markdown(ENTRIES["labs/vllm-deepseek-tuning"])
@@ -221,6 +228,16 @@ def test_playbook_and_matrix_lab_docs_render_honest_nonpair_sections() -> None:
     assert "## Lab Index" in labs_index_markdown
     assert "Benchmark-pair labs" in labs_index_markdown
     assert "honest workflow/component docs" in labs_index_markdown
+    assert "matrix/playbook labs" in labs_index_markdown
+    assert "`labs/parameterized_cuda_graphs/`" in labs_index_markdown
+    assert "`labs/moe_decode_blackwell_matrix/`" in labs_index_markdown
+
+    assert "## Why This Exists" in moe_decode_blackwell_matrix_markdown
+    assert "## Why This Is Not A Benchmark Pair" in moe_decode_blackwell_matrix_markdown
+    assert "## Playbooks" in moe_decode_blackwell_matrix_markdown
+    assert "## Artifact Layout" in moe_decode_blackwell_matrix_markdown
+    assert "## Profiler-Backed Comparison" in moe_decode_blackwell_matrix_markdown
+    assert "shared-doc Blackwell MoE decode entry" in moe_decode_blackwell_matrix_markdown
 
     assert "## What This Component Is" in rustbpe_markdown
     assert "## Why This Is Not A Benchmark Pair" in rustbpe_markdown

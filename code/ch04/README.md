@@ -84,7 +84,7 @@ python -m cli.aisp bench run --targets ch04 --profile minimal
 
 ## Validation Checklist
 - `python compare.py --examples dataparallel_multigpu` shows the optimized pair overlapping compute and communication with lower latency.
-- `python bandwidth_benchmark_suite_multigpu.py --profile minimal` surfaces >=250 GB/s links on connected GPU pairs and highlights any slow hops.
+- `python -m cli.aisp bench run --targets ch04:bandwidth_benchmark_suite_multigpu --profile minimal` surfaces >=250 GB/s links on connected GPU pairs and highlights any slow hops on a host with >=2 visible GPUs.
 - NVSHMEM samples emit consistent outputs when `NVSHMEM_SYMMETRIC_SIZE` is sized to hold the workload; mismatched config raises clear errors.
 
 ## Notes

@@ -19,6 +19,7 @@ import json
 import shutil
 import argparse
 import shlex
+import re
 from typing import Dict, List, Any, Optional, Set, Tuple, Iterator, Sequence
 from datetime import datetime
 from collections import defaultdict
@@ -1456,6 +1457,16 @@ def is_distributed_benchmark(file_path: Path) -> bool:
     try:
         content = file_path.read_text()
         content_lower = content.lower()
+
+        # Some benchmarks use torchrun or distributed primitives as a 1-process
+        # control surface while explicitly declaring that multiple GPUs are not
+        # required. Respect that contract instead of skipping them up-front on
+        # 1-GPU hosts.
+        has_single_gpu_override = bool(
+            re.search(r"multi_gpu_required\s*=\s*False", content)
+        )
+        if has_single_gpu_override:
+            return False
         
         # Check for distributed imports
         has_dist_import = any(pattern in content for pattern in [

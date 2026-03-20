@@ -47,9 +47,3 @@ class BaselineLookupBenchmark(CudaBinaryBenchmark):
 def get_benchmark() -> BaselineLookupBenchmark:
     """Factory for discover_benchmarks()."""
     return BaselineLookupBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

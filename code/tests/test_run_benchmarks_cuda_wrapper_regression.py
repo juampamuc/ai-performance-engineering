@@ -89,6 +89,42 @@ def test_is_distributed_benchmark_ignores_local_gpu_reduction_named_distributed(
     assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
 
 
+def test_is_distributed_benchmark_respects_explicit_single_gpu_torchrun_override(tmp_path):
+    benchmark_path = tmp_path / "baseline_tensor_parallel.py"
+    benchmark_path.write_text(
+        "import torch.distributed as dist\n"
+        "from core.harness.benchmark_harness import BenchmarkConfig, LaunchVia, TorchrunLaunchSpec\n"
+        "\n"
+        "class DemoBenchmark:\n"
+        "    def get_config(self):\n"
+        "        return BenchmarkConfig(launch_via=LaunchVia.TORCHRUN, nproc_per_node=1, multi_gpu_required=False)\n"
+        "\n"
+        "    def get_torchrun_spec(self, config=None):\n"
+        "        return TorchrunLaunchSpec(script_path=__file__, script_args=[], multi_gpu_required=False, name='demo')\n"
+        "\n"
+        "def run():\n"
+        "    dist.init_process_group(backend='nccl')\n",
+        encoding="utf-8",
+    )
+
+    assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
+
+
+def test_ch04_single_gpu_torchrun_benchmarks_are_not_classified_as_distributed():
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
+        repo_root / "ch04" / "baseline_pipeline_parallel.py",
+        repo_root / "ch04" / "optimized_pipeline_parallel_1f1b.py",
+        repo_root / "ch04" / "baseline_tensor_parallel.py",
+        repo_root / "ch04" / "optimized_tensor_parallel_async.py",
+        repo_root / "ch04" / "baseline_torchcomms.py",
+        repo_root / "ch04" / "optimized_torchcomms.py",
+    ]
+
+    for benchmark_path in cases:
+        assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
+
+
 def test_append_profile_warning_persists_message_to_stderr_log(tmp_path, monkeypatch):
     log_path = tmp_path / "profile.stderr.log"
     logger_messages: list[str] = []

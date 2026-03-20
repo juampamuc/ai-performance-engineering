@@ -39,8 +39,8 @@ python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference --profi
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference --profile minimal` compares the cache-unaware and cache-aware paths through the standard harness.
-- `python -m labs.cache_aware_disagg_inference.baseline_cache_aware_disagg` prints JSON metrics for the round-robin control path.
-- `python -m labs.cache_aware_disagg_inference.optimized_cache_aware_disagg` prints JSON metrics for the cache-affine path with lower KV transfer and fewer worker switches.
+- `python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference:cache_aware_disagg --profile minimal` emits the round-robin baseline and cache-affine optimized metrics through one harness artifact set.
+- The cache-aware path should report lower KV transfer volume and fewer worker switches than the round-robin control on the same warm/cold request mix.
 
 ## Notes
 - This lab is intentionally a logical reproduction of the scheduler/caching story, not a full serving engine.

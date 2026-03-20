@@ -1,44 +1,228 @@
-## 2026-03-17T21:21:34+00:00
+## 2026-03-19T23:18:00Z
 
-- No implementation results yet.
-- Planned validation:
-  - targeted pytest coverage for the new lab
-  - `python -m compileall` or `python -m py_compile` on new files
-  - `python -m cli.aisp bench list-targets --chapter labs/cache_aware_disagg_inference`
-  - `python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference:<target> ...`
+- Completed:
+  - Removed direct-module `__main__` entrypoints from discoverable benchmark modules in `ch02` and `ch07`.
+  - Updated `core/scripts/refresh_readmes.py` so the cache-aware disaggregated inference lab README no longer instructs users to run discoverable benchmark modules directly.
+  - Updated the root README generator note to replace the unsupported shell-glob example `python -m cli.aisp bench run --targets ch*` with the CLI-supported repeatable `--targets` form plus the canonical `run-tier1` regression path.
+  - Regenerated affected README outputs and verified README sync.
+  - Audited `ch01`, `ch02`, and `ch03`; all are green.
+  - Adjusted `ch02` generated README wording to state that `grace_coherent_memory` is the real coherency story on GB200/GB300 and a transfer-strategy fallback on PCIe/discrete Blackwell hosts.
+  - Fixed `ch04` constructor-time multi-GPU gating for:
+    - `baseline_pipeline_parallel_multigpu.py`
+    - `optimized_pipeline_parallel_multigpu_1f1b.py`
+    - `baseline_tensor_parallel_allgather_multigpu.py`
+    - `optimized_tensor_parallel_allgather_multigpu.py`
+    - `baseline_tensor_parallel_multigpu.py`
+    - `optimized_tensor_parallel_multigpu.py`
+    - `baseline_torchcomms_multigpu.py`
+    - `optimized_torchcomms_multigpu.py`
+  - Fixed `ch04` single-process torchrun handling:
+    - `core/harness/run_benchmarks.py` now respects explicit `multi_gpu_required=False` instead of auto-classifying those benchmarks as distributed-only.
+    - `ch04/ddp_no_overlap.py` and `ch04/ddp_overlap.py` now require only one visible GPU for the single-process simulation path.
+  - Updated the `ch04` README generator validation checklist to use `python -m cli.aisp bench run --targets ch04:bandwidth_benchmark_suite_multigpu --profile minimal` with an explicit `>=2 GPU` caveat instead of direct module execution.
+  - Removed indirect `_maybe_run_cli()` benchmark-module shims from:
+    - `labs/cache_aware_disagg_inference/baseline_cache_aware_disagg.py`
+    - `labs/cache_aware_disagg_inference/optimized_cache_aware_disagg.py`
+    - `labs/cache_aware_disagg_inference/baseline_cache_aware_disagg_multigpu.py`
+    - `labs/cache_aware_disagg_inference/optimized_cache_aware_disagg_multigpu.py`
+    - `labs/fullstack_cluster/baseline_moe_hybrid_ep.py`
+    - `labs/fullstack_cluster/optimized_moe_hybrid_ep.py`
+    - `labs/fullstack_cluster/baseline_moe_hybrid_ep_multigpu.py`
+    - `labs/fullstack_cluster/optimized_moe_hybrid_ep_multigpu.py`
+  - Tightened the benchmark-surface AST checks so both literal `__main__` guards and indirect `_maybe_run_cli()`-style shims fail validation.
+  - Added regression coverage for:
+    - `tests/test_run_benchmarks_cuda_wrapper_regression.py`
+    - `tests/test_benchmark_linter.py`
+    - `tests/test_get_benchmark_presence.py`
+  - Added regression coverage for the `ch04` single-GPU skip behavior in `tests/test_validate_benchmark_pairs_tools.py`.
+- Verification completed so far:
+  - `python -m core.scripts.refresh_readmes --check --all`
+  - `python -m pytest tests/test_get_benchmark_presence.py tests/test_refresh_readmes.py tests/test_benchmark_pair_intent_docs.py -v --tb=short`
+  - `python -m core.scripts.run_benchmark_pair_audit --scope ch01 --include-gpu-rescan --output-dir artifacts/review/chapters/ch01`
+  - `python -m core.scripts.run_benchmark_pair_audit --scope ch02 --include-gpu-rescan --output-dir artifacts/review/chapters/ch02`
+  - `python -m core.scripts.refresh_readmes --check --target ch02`
+  - `python -m pytest tests/test_refresh_readmes.py tests/test_benchmark_pair_intent_docs.py -k 'priority_readmes_match_generated_content or ch02_optimized_memory_transfer_docstring_matches_async_pinned_copy' -v --tb=short`
+  - `python -m core.scripts.run_benchmark_pair_audit --scope ch03 --include-gpu-rescan --output-dir artifacts/review/chapters/ch03`
+  - `python -m core.scripts.validate_benchmark_pairs --chapter ch04 --report artifacts/review/chapters/ch04_postfix_pair_validation.json`
+  - `python -m pytest tests/test_validate_benchmark_pairs_tools.py tests/test_ch03_ch04_validity_regressions.py -v --tb=short`
+  - `python -m pytest tests/test_validate_benchmark_pairs_tools.py -v --tb=short`
+  - `python -m core.scripts.refresh_readmes --write --target README.md`
+  - `python -m core.scripts.refresh_readmes --check --target README.md`
+  - `python -m pytest tests/test_refresh_readmes.py -v --tb=short`
+  - `python -m core.scripts.validate_benchmark_pairs --chapter ch04 --report artifacts/review/chapters/ch04_postfix_pair_validation_v2.json`
+  - `python -m cli.aisp bench run --targets ch04:no_overlap --targets ch04:pipeline_parallel --targets ch04:tensor_parallel --targets ch04:torchcomms --profile none --format json --verify-phase gate --suite-timeout 0 --artifacts-dir artifacts/review/chapters/ch04_targeted_runtime`
+  - `python -m core.scripts.refresh_readmes --write --target ch04`
+  - `python -m core.scripts.refresh_readmes --check --target ch04`
+  - `python -m pytest tests/test_run_benchmarks_cuda_wrapper_regression.py tests/test_validate_benchmark_pairs_tools.py -v --tb=short`
+  - `python -m pytest tests/test_get_benchmark_presence.py tests/test_benchmark_linter.py -v --tb=short`
+  - `python - <<'PY' ... import labs.cache_aware_disagg_inference.* / labs.fullstack_cluster.* ... PY` to confirm the cleaned wrappers import without self-executing and still expose `get_benchmark()`.
+- Active work:
+  - `python -m core.scripts.run_benchmark_pair_audit --scope ch04 --include-gpu-rescan --output-dir artifacts/review/chapters/ch04`
+- Important runtime note:
+  - The first `ch04` full rescan failed because a parallel `validate_benchmark_pairs` process occupied the GPU and triggered the harness’s strict foreign-process guard. That competing process was terminated and `ch04` was rerun cleanly.
+  - The clean `ch04` rerun is using `artifacts/review/chapters/ch04/gpu_rescan/artifacts/20260319T233229Z__benchmark-pair-audit__ch04/`; it has already cleared the earlier failure points and is progressing through the chapter under strict mode with virtualization-only warnings.
 
-## 2026-03-17T21:33:45+00:00
+## 2026-03-20T03:53:27Z
 
-- Files changed:
-  - `labs/cache_aware_disagg_inference/__init__.py`
-  - `labs/cache_aware_disagg_inference/cache_aware_disagg_common.py`
-  - `labs/cache_aware_disagg_inference/baseline_cache_aware_disagg.py`
-  - `labs/cache_aware_disagg_inference/optimized_cache_aware_disagg.py`
-  - `labs/cache_aware_disagg_inference/README.md`
-  - `tests/test_cache_aware_disagg_lab.py`
-  - `core/scripts/refresh_readmes.py`
-  - `labs/README.md`
+- Completed:
+  - Reviewed `labs/fullstack_cluster`, `labs/train_distributed`, and `labs/dynamic_router` to match local lab README and runner patterns.
+  - Confirmed the repo auto-discovers new lab targets from local `baseline_*.py` and `optimized_*.py` files, so shared registry edits are avoidable.
+  - Probed local runtime availability:
+    - `torch.cuda.is_available() == True`
+    - `torch.cuda.device_count() == 1`
+    - GPU: `NVIDIA B200`
+    - `nixl` import missing
+    - `nvshmemrun` missing from `PATH`
+    - PyTorch symmetric memory backend reports available
+    - repo-local `tools/nccl-tests/build/all_reduce_perf` exists
+  - Extracted the GTC deck cover summary in a temp venv with `pypdf`; it confirms the intended split:
+    - NCCL: symmetric memory + copy-engine collectives / zero-SM communication
+    - NVSHMEM: GPU-initiated operations in the Python ecosystem
+    - NIXL: async, noncontiguous movement across HBM, DRAM, and storage tiers
+- Verification completed so far:
+  - `git status --short`
+  - `rg --files labs/fullstack_cluster labs/train_distributed labs/dynamic_router`
+  - `python - <<'PY' ... torch.cuda probe ... PY`
+  - `python - <<'PY' ... importlib.util.find_spec('nixl'/'nvshmem') ... PY`
+  - `python - <<'PY' ... symmetric_memory_available() ... PY`
+  - `find tools/nccl-tests -maxdepth 3 \\( -name 'all_reduce_perf' -o -name 'all_reduce_perf_mpi' \\) -print`
 
-- Validation commands and outcomes:
-  - `python -m py_compile labs/cache_aware_disagg_inference/cache_aware_disagg_common.py labs/cache_aware_disagg_inference/baseline_cache_aware_disagg.py labs/cache_aware_disagg_inference/optimized_cache_aware_disagg.py tests/test_cache_aware_disagg_lab.py core/scripts/refresh_readmes.py`
-    - passed
-  - `pytest -q tests/test_cache_aware_disagg_lab.py -q`
-    - passed (`...`)
-  - `python core/scripts/refresh_readmes.py --check --target labs/cache_aware_disagg_inference --target labs/README.md`
-    - passed (`All 2 README target(s) are in sync.`)
-  - `python -m cli.aisp bench list-targets --chapter labs/cache_aware_disagg_inference`
-    - passed (`labs/cache_aware_disagg_inference:cache_aware_disagg`)
-  - `python -m labs.cache_aware_disagg_inference.optimized_cache_aware_disagg --requests-per-iteration 4 --context-window 384 --chunk-size 96 --decode-tokens 24 --hidden-size 128 --num-layers 2 --batch-size 1 --logical-decode-workers 3`
-    - passed; emitted `cache_aware.cache_hit_rate=0.8889`, `cache_aware.kv_transfer_mb=0.098304`, `validation_error=null`
-  - `python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference:cache_aware_disagg --profile none --iterations 1 --warmup 1 --single-gpu --validity-profile portable --allow-foreign-gpu-processes --suite-timeout 300 --target-extra-arg 'labs/cache_aware_disagg_inference:cache_aware_disagg=--requests-per-iteration 4 --context-window 384 --chunk-size 96 --decode-tokens 24 --hidden-size 128 --num-layers 2 --batch-size 1 --logical-decode-workers 3'`
-    - passed on the local B200 host
-    - baseline: `164.09 ms`
-    - optimized: `149.91 ms`
-    - speedup: `1.09x`
-    - baseline locality: `cache_hit_rate=0.1667`, `kv_transfer_mb=368.050176`, `worker_switches_per_request=4.5`
-    - optimized locality: `cache_hit_rate=0.9167`, `kv_transfer_mb=28.311552`, `worker_switches_per_request=0.0`
-    - artifacts: `artifacts/runs/20260317_213255__bench__profile_none_targets_labs_cache_aware_disagg_inference_cache_aware_disagg/`
+## 2026-03-20T04:13:30Z
 
+- Completed:
+  - Created `labs/nccl_nixl_nvshmem/` with:
+    - `README.md`
+    - `__init__.py`
+    - `comm_stack_common.py`
+    - `baseline_tier_handoff.py`
+    - `optimized_tier_handoff.py`
+    - `run_lab_nccl_nixl_nvshmem.py`
+  - Implemented an honest benchmark-pair target, `labs/nccl_nixl_nvshmem:tier_handoff`, that measures host-staged per-block tier handoff versus packed async bulk handoff on the local `1x B200` host.
+  - Added explicit runtime probing for NCCL, NIXL, NVSHMEM, and PyTorch symmetric memory, including detection of versioned NVSHMEM launcher installs under `/usr/bin/nvshmem_*`.
+  - Installed local deck/tool/runtime dependencies needed for this task:
+    - `poppler-utils`
+    - `tesseract-ocr`
+    - `nixl` via `python -m pip install --user --break-system-packages nixl`
+    - upgraded local CUDA 13 NVSHMEM packages via `sudo apt-get install -y libnvshmem3-dev-cuda-13`
+  - Kept the lab honest after installation:
+    - `nixl` is now importable
+    - NVSHMEM launcher is present at `/usr/bin/nvshmem_13/nvshmrun`
+    - Python `nvshmem` import is still absent
+    - true NCCL / NVSHMEM data-path validation is still blocked locally by `gpu_count == 1`
+  - Refreshed the README to point at the final portable/shared-host harness run and current tool/runtime facts.
+- Verification completed:
+  - `python -m py_compile labs/nccl_nixl_nvshmem/*.py`
+  - `python -m cli.aisp bench list-targets --chapter labs/nccl_nixl_nvshmem`
+    - result: `labs/nccl_nixl_nvshmem:tier_handoff`
+  - `python labs/nccl_nixl_nvshmem/run_lab_nccl_nixl_nvshmem.py --mode probe --json`
+    - result:
+      - `nixl_import_available: true`
+      - `nvshmem_launcher: /usr/bin/nvshmem_13/nvshmrun`
+      - only blocker left: `>=2 GPUs required`
+  - `python - <<'PY' ... import nixl ... PY`
+    - result:
+      - `import nixl` succeeded from `/home/cfregly/.local/lib/python3.12/site-packages/nixl/__init__.py`
+  - `'/usr/bin/nvshmem_13/nvshmem-info' -h`
+    - result:
+      - NVSHMEM info utility is runnable and printed its help text
+  - `python labs/nccl_nixl_nvshmem/run_lab_nccl_nixl_nvshmem.py --mode compare --warmup 3 --iterations 8 --selected-blocks 96 --block-kib 64 --inner-iterations 4 --json`
+    - result:
+      - baseline `15.548099875450134 ms`
+      - optimized `1.054763987660408 ms`
+      - speedup `14.740833074835697x`
+      - `max_abs_diff: 0.0`
+  - `python -m cli.aisp bench run --targets labs/nccl_nixl_nvshmem:tier_handoff --profile none --validity-profile portable --allow-foreign-gpu-processes --target-extra-arg labs/nccl_nixl_nvshmem:tier_handoff='--selected-blocks 96 --block-kib 64 --inner-iterations 4' --artifacts-dir artifacts/review/labs/nccl_nixl_nvshmem_portable_shared_v3`
+    - result:
+      - baseline `17.071162541707356 ms`
+      - optimized `1.1172749938735043 ms`
+      - speedup `15.279284540794189x`
+      - verification passed
+      - app clocks recorded as `1965 / 3996 MHz`
+      - artifact root:
+        `artifacts/review/labs/nccl_nixl_nvshmem_portable_shared_v3/20260320_041146__bench__profile_none_targets_labs_nccl_nixl_nvshmem_tier_handoff/`
+- Remaining follow-up outside current scope:
+  - If a future pass wants true NVSHMEM or NCCL transport validation, it needs a `>=2 GPU` host.
+  - If the repo wants a Python-level NVSHMEM binding check beyond launcher/runtime detection, that requires deciding on the supported binding surface; no shared change was made for that here.
+
+
+## 2026-03-20T04:08:30Z
+
+- Files added under `labs/moe_decode_blackwell_matrix/`:
+  - `README.md`
+  - `__init__.py`
+  - `matrix_types.py`
+  - `matrix_catalog.py`
+  - `preflight.py`
+  - `artifact_io.py`
+  - `runner.py`
+  - `run_matrix.py`
+  - `playbooks/deck_matrix.yaml`
+  - `playbooks/smoke_b200.yaml`
+  - `profiler/__init__.py`
+  - `profiler/capture.py`
+  - `profiler/compare.py`
+  - `profiler/run_profile_compare.py`
+  - `tests/test_matrix_lab.py`
+  - `artifacts/.gitkeep`
+- Planner output incorporated from `/tmp/moe_decode_blackwell_planner_last.txt`.
+- Verification commands completed:
+  - `python -m compileall labs/moe_decode_blackwell_matrix`
+  - `python - <<'PY' ... import labs.moe_decode_blackwell_matrix ... PY`
+  - `python -m pytest labs/moe_decode_blackwell_matrix/tests -q`
+  - `python -m labs.moe_decode_blackwell_matrix.run_matrix --playbook smoke_b200 --run-id smoke_20260320`
+  - `python -m labs.moe_decode_blackwell_matrix.profiler.run_profile_compare --run-dir artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320`
+  - `mcp__aisp__profile_nsys(command=[python,-m,labs.moe_decode_blackwell_matrix.run_matrix,...])` targeting the persistent/eager probe
+  - `mcp__aisp__profile_ncu(command=[python,-m,labs.moe_decode_blackwell_matrix.run_matrix,...])` targeting the persistent/eager probe
+- Key measured outcomes:
+  - Smoke run directory: `artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320`
+  - Best steady-state smoke point: `e8_k2_b1_bal_pst_grf` at `0.074888 ms/step`, `13353.275 tok/s`, `capture_ms=5.427951`, `max_abs_diff=0.0`, `app_clocks=1500/3996 MHz`.
+  - Persistent-vs-dynamic speedups on the smoke matrix ranged from `2.89x` to `5.30x`.
+  - Graph-vs-eager speedups on the persistent schedule ranged from `1.83x` to `2.03x`.
+  - Lab-local profiler comparison directory: `artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320/profiles/auto_pair` comparing `e8_k2_b1_bal_pst_egr` vs `e8_k2_b1_bal_pst_grf`.
+  - Nsight Systems artifact: `artifacts/runs/20260320__profile-nsys__moe-decode-blackwell-matrix-probe/profiles/tools/nsys/moe_decode_blackwell_matrix_probe/moe_decode_blackwell_matrix_probe.nsys-rep` with `nsys_total_gpu_time_ms=2.098583`, `nsys_kernel_time_ms=0.47968`.
+  - Nsight Compute artifact: `artifacts/runs/20260320__profile-ncu__moe-decode-blackwell-matrix-probe/profiles/tools/ncu/moe_decode_blackwell_matrix_probe/moe_decode_blackwell_matrix_probe.ncu-rep` with `Achieved Occupancy=3.7`, `L2 Throughput=0.39`, `DRAM Throughput=0.01`.
 - Remaining risks:
-  - The lab is currently a single-GPU logical-worker reproduction, not a full multi-node serving implementation.
-  - Harness dogfood on this host required `--allow-foreign-gpu-processes` because other CUDA Python processes were already resident on the shared GPU.
+  - The source PDFs appear image-only to `pypdf`, so the README rationale is grounded in the duplicated-file fact plus the explicit requested scope, not extracted slide text.
+  - The lab-local profiler comparison uses `torch.profiler`; deeper pairwise Nsight diff automation could be added later if the repo wants first-class nsys/ncu comparison reports inside this directory.
+
+
+## 2026-03-20T04:10:05Z
+
+- Follow-up fix:
+  - `labs/moe_decode_blackwell_matrix/profiler/run_profile_compare.py` now reuses the matrix row's recorded application clocks when relocking for the profiler comparison run.
+- Reverification:
+  - `python -m compileall labs/moe_decode_blackwell_matrix/profiler/run_profile_compare.py && python -m pytest labs/moe_decode_blackwell_matrix/tests -q`
+  - `python -m labs.moe_decode_blackwell_matrix.profiler.run_profile_compare --run-dir artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320`
+- Updated artifact fact:
+  - `artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320/profiles/auto_pair/summary.json` now records `app_clock_sm_mhz=1500` and `app_clock_mem_mhz=3996` for the profiler rerun.
+
+## 2026-03-20T04:12:00Z
+
+- Completed:
+  - Studied `labs/moe_optimization_journey`, `labs/blackwell_gemm_optimizations`, and `labs/decode_optimization` before implementation, plus nearby MoE/decode helpers used by the harness.
+  - Installed user-local PDF tooling in `~/.local/share/aipe-codex-tools/pypdf-venv` after the system Python rejected direct package installation; reused host `pdftoppm` and `tesseract` for OCR because the source deck PDFs are image-based.
+  - Created `labs/moe_decode_blackwell/` as a compact benchmark-pair lab with:
+    - `baseline_moe_decode_blackwell.py`
+    - `optimized_moe_decode_blackwell.py`
+    - `moe_decode_blackwell_common.py`
+    - `test_moe_decode_blackwell.py`
+    - `README.md`
+  - Kept the lab scoped to one implementable story: baseline post-router MoE decode control flow versus grouped-by-expert packing with fused FC1 / gated-SiLU style compute and static buffer reuse.
+  - Explicitly documented deck features left out of scope here: `Programmatic Dependent Launch`, TMA `gather4`, dynamic TMA box sizing, native `tcgen05` kernels, and multi-GPU EP/TP claims.
+  - Fixed the benchmark setup so it satisfies the repo's strict setup-precomputation detector by keeping the output buffer private until `benchmark_fn()`.
+- Verification completed:
+  - `python -m compileall labs/moe_decode_blackwell`
+  - `python -m pytest labs/moe_decode_blackwell/test_moe_decode_blackwell.py -v --tb=short`
+  - `python -m cli.aisp bench list-targets --chapter labs/moe_decode_blackwell`
+  - `python -m core.scripts.linting.check_benchmarks labs/moe_decode_blackwell/baseline_moe_decode_blackwell.py labs/moe_decode_blackwell/optimized_moe_decode_blackwell.py labs/moe_decode_blackwell/moe_decode_blackwell_common.py`
+  - `python -m cli.aisp bench run --targets labs/moe_decode_blackwell:moe_decode_blackwell --profile none --single-gpu --gpu-sm-clock-mhz 1500 --iterations 2 --warmup 5 --target-extra-arg 'labs/moe_decode_blackwell:moe_decode_blackwell=--batch-size 32 --hidden-dim 1024 --expert-ffn-dim 1536 --num-experts 4 --top-k 2 --histogram skewed'`
+- Key measured outcomes:
+  - Run directory: `artifacts/runs/20260320_040816__bench__profile_none_targets_labs_moe_decode_blackwell_moe_decode_blackwell`
+  - Baseline time: `7.739443742311918 ms`
+  - Optimized time: `0.15860004940573474 ms`
+  - Speedup: `48.79849515376047x`
+  - Verification: `passed=true`, `max_diff=0.001953125`
+  - App clocks: `1500/3996 MHz`
+  - Provenance: `hardware_key=b200`, `execution_environment=virtualized`, `profile_name=none`
+- Shared follow-up intentionally not done:
+  - No shared README/index/discovery regeneration was touched; if the repo wants this lab surfaced in shared docs, do that in a separate change.

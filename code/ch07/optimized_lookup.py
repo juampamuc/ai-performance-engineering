@@ -47,9 +47,3 @@ class OptimizedLookupBenchmark(CudaBinaryBenchmark):
 def get_benchmark() -> OptimizedLookupBenchmark:
     """Factory for discover_benchmarks()."""
     return OptimizedLookupBenchmark()
-
-
-if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-
-    benchmark_main(get_benchmark)

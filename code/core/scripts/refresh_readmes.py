@@ -698,6 +698,23 @@ ENTRIES["README.md"] = Entry(
             ),
         ),
         MarkdownSection(
+            "Lab Navigation",
+            dedent(
+                """\
+                If you are navigating by performance problem instead of by chapter, start with these benchmark-pair labs:
+
+                | Lab | Best for | Distinct from |
+                | --- | --- | --- |
+                | `labs/parameterized_cuda_graphs` | fixed-shape PyTorch CUDA Graph replay where request bindings change but graph topology does not | broader decode-serving labs; dynamic-shape graph problems |
+                | `labs/persistent_decode` | persistent decode kernels plus graph/TMA variants on serving-style decode paths | the narrower executable-graph parameter-mutation story |
+                | `labs/decode_optimization` | decode microbenchmarks that separate pinned memory, streams, compile, graphs, and cache policy | a single graph-launch-overhead benchmark pair |
+                | `labs/block_scaling` | Blackwell block-scaled GEMM mechanics and measured tensor-core wins | serving/control-plane orchestration labs |
+                | `labs/training_hotpath` | training-path launch and fusion bottlenecks with clean benchmark pairs | inference/decode-oriented graph replay work |
+
+                This keeps `labs/parameterized_cuda_graphs` visible without pretending it replaces the broader persistent-decode or decode-optimization stories."""
+            ),
+        ),
+        MarkdownSection(
             "Benchmark Methodology",
             dedent(
                 """\
@@ -750,7 +767,7 @@ ENTRIES["README.md"] = Entry(
     ],
     contents=[
         ("`ch01` - `ch20`", "One directory per chapter with baseline/optimized benchmarks, workload configs, and chapter-level harness entrypoints such as `ch01/compare.py`."),
-        ("`labs/`", "Deep-dive labs for matmul, routing, FlexAttention, MoE, persistent decode, distributed training, and more."),
+        ("`labs/`", "Deep-dive labs for memory-bandwidth patterns, matmul, routing, FlexAttention, MoE, persistent decode, distributed training, and more."),
         ("`core/benchmark/`, `profiling/`, `core/`, `optimization/`, `analysis/`", "Shared harness, logging, workload metadata, profiling, and optimization utilities used by every chapter."),
         ("`python -m cli.aisp bench`", "Typer-based CLI for running and profiling targets with reproducible artifacts."),
         ("`docs/` + `core/scripts/`", "Operational guides, profiling workflows, and setup/reset helpers (`setup.sh`, `cleanup.py`, `reset-gpu.sh`)."),
@@ -768,7 +785,7 @@ ENTRIES["README.md"] = Entry(
             "`setup.sh` installs system prerequisites (drivers, CUDA, Nsight) and should be rerun after driver upgrades.",
             "Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited hosts.",
             "Use `python -m cli.aisp bench expectations --hardware b200 --min-speedup 1.05` to report expectation entries below a target threshold.",
-            "Use `python -m cli.aisp bench run --targets ch*` for automated regression suites.",
+            "Repeat `--targets` for multi-scope runs, for example `python -m cli.aisp bench run --targets ch01 --targets ch02 --profile minimal`; use `python -m cli.aisp bench run-tier1 --single-gpu --profile minimal` for the canonical regression suite.",
             "Portable runs do not update expectation files unless `--allow-portable-expectations-update` is supplied.",
             "`python core/analysis/analyze_expectations.py --artifacts-dir artifacts` compares new runs to stored thresholds.",
         ],
@@ -825,19 +842,23 @@ ENTRIES["labs/README.md"] = Entry(
         "Point contributors toward the repo's expected lab quality bar.",
     ],
     contents=[
-        ("`labs/block_scaling`, `labs/blackwell_matmul`, `labs/blackwell_gemm_optimizations`, `labs/flashattention4`, `labs/persistent_decode`, `labs/training_hotpath`", "Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas."),
+        ("`labs/block_scaling`, `labs/blackwell_matmul`, `labs/blackwell_gemm_optimizations`, `labs/flashattention4`, `labs/memory_bandwidth_patterns`, `labs/nccl_nixl_nvshmem`, `labs/persistent_decode`, `labs/parameterized_cuda_graphs`, `labs/training_hotpath`", "Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas, including narrow bandwidth-pattern, communication-stack tradeoff, and CUDA-graph replay labs."),
         ("`labs/decode_optimization`, `labs/kv_optimization`, `labs/moe_cuda`, `labs/moe_optimization_journey`", "Serving-path and MoE labs where the benchmark pair is part of a broader optimization story."),
-        ("`labs/nanochat_fullstack`, `labs/python_concurrency`, `labs/vllm-deepseek-tuning`", "Larger workflow-oriented labs that need a richer doc model than a simple pair benchmark."),
+        ("`labs/moe_decode_blackwell_matrix`, `labs/nanochat_fullstack`, `labs/python_concurrency`, `labs/vllm-deepseek-tuning`", "Larger workflow-oriented and matrix/playbook labs that need a richer doc model than a simple pair benchmark."),
         ("`labs/nvfp4_*`", "Low-precision kernel labs where verification discipline matters as much as the timing win."),
     ],
     run=RunSection(
         commands=[
             "python -m cli.aisp bench list-targets --chapter labs/block_scaling",
             "python -m cli.aisp bench list-targets --chapter labs/decode_optimization",
+            "python -m cli.aisp bench list-targets --chapter labs/memory_bandwidth_patterns",
+            "python -m cli.aisp bench list-targets --chapter labs/nccl_nixl_nvshmem",
             "python -m cli.aisp bench list-targets --chapter labs/moe_cuda",
         ],
         notes=[
             "Use `list-targets` first; the benchmark-pair labs expose clean harness targets, while the playbook/matrix labs often have their own scripts or Makefiles.",
+            "Use `labs/memory_bandwidth_patterns` when you want a narrow coalescing/vectorization/shared-memory bandwidth lab instead of a broader serving-path workflow.",
+            "Use `labs/nccl_nixl_nvshmem` when you want communication-stack tradeoffs and capability probing instead of a broader distributed-training or serving workflow.",
             "If a lab does not have a clean baseline/optimized target yet, do not invent one in documentation.",
         ],
     ),
@@ -871,11 +892,15 @@ ENTRIES["labs/README.md"] = Entry(
             | `labs/fullstack_cluster/` | Full-stack cluster + DSMEM workflows | ch10 |
             | `labs/kv_cache_compression/` | KV-cache compression/quantization | ch18, ch19 |
             | `labs/kv_optimization/` | KV-cache performance optimization | ch15, ch18, ch19 |
+            | `labs/memory_bandwidth_patterns/` | Measured bandwidth patterns: coalesced vs strided access, vectorized copy, shared-memory transpose, and cp.async checkpoints | ch02, ch10, ch11 |
             | `labs/moe_cuda/` | CUDA MoE decode toolkit | ch06, ch10, ch15 |
+            | `labs/moe_decode_blackwell_matrix/` | Blackwell MoE decode scenario matrix for routing locality, persistent scheduling, and graph-launch tradeoffs | ch10, ch15, ch18, ch19 |
             | `labs/moe_optimization_journey/` | MoE optimization narrative | ch15, ch19 |
             | `labs/moe_parallelism/` | MoE parallelism planning | ch04, ch15 |
+            | `labs/nccl_nixl_nvshmem/` | Communication-stack tradeoffs with an honest single-GPU analogue and NCCL/NIXL/NVSHMEM stack probing | ch04, ch17, ch19 |
             | `labs/nanochat_fullstack/` | End-to-end inference stack (NanoChat) | ch16 |
             | `labs/occupancy_tuning/` | Triton occupancy/schedule sweeps | ch08, ch14 |
+            | `labs/parameterized_cuda_graphs/` | PyTorch-first parameterized CUDA Graph replay with stable buffers and executable memcpy-node updates | ch10, ch11 |
             | `labs/persistent_decode/` | Persistent decode + TMA prefill | ch10, ch11 |
             | `labs/python_concurrency/` | Python concurrency control-plane playbook (`asyncio`, retries, idempotency, hybrid pipelines) | ch03, ch11, ch16 |
             | `labs/real_world_models/` | Real-world model optimization playbook | ch20 |
@@ -1052,6 +1077,8 @@ ENTRIES["ch02"] = chapter_entry(
                 | `memory_transfer` | `18.901 ms` | `3.637 ms` | `5.20x` | optimized transfer path fits the actual link behavior |
                 | `cublas` | `0.590 ms` | `0.114 ms` | `5.17x` | tuned cuBLAS settings match the hardware better |
 
+                On true Grace-Blackwell hosts, `grace_coherent_memory` is the coherency-placement story from the book. On PCIe-only Blackwell hosts, the same pair intentionally falls back to a host/device transfer-strategy comparison instead of pretending unified Grace memory is present.
+
                 This chapter is the hardware sanity anchor for later claims: if these numbers drift, everything that depends on them deserves scrutiny."""
             ),
         ),
@@ -1070,7 +1097,7 @@ ENTRIES["ch02"] = chapter_entry(
                 The expected story is:
                 - `cublas`: better math-mode and launch configuration behavior
                 - `memory_transfer`: less time lost to the wrong host/device path
-                - `grace_coherent_memory`: the placement choice dominates runtime"""
+                - `grace_coherent_memory`: on GB200/GB300 the placement choice dominates runtime; on other hosts the fallback transfer strategy should still beat the generic path"""
             ),
         ),
         MarkdownSection(
@@ -1102,10 +1129,10 @@ ENTRIES["ch02"] = chapter_entry(
     validation=[
         "`python -m ch02.hardware_info` records the correct device name, SM count, and HBM size for every GPU in the system.",
         "`python -m ch02.nvlink_c2c_bandwidth_benchmark` reports the host↔device and bidirectional bandwidth table for the active topology.",
-        "Running the coherency sample shows zero-copy benefiting sub-MB transfers while large transfers favor explicit H2D copies, matching the documented thresholds.",
+        "Running the coherency sample on GB200/GB300 shows zero-copy benefiting sub-MB transfers while large transfers favor explicit H2D copies; on non-Grace hosts the benchmark should log that it is using the fallback transfer path instead of true coherency.",
     ],
     notes=[
-        "Grace-only coherency tests require GB200/GB300 nodes; the binaries no-op on PCIe-only hosts.",
+        "Grace-only coherency tests require GB200/GB300 nodes; on PCIe-only or discrete-GPU Blackwell hosts the Python benchmark pair falls back to a transfer-strategy comparison and logs that downgrade explicitly.",
         "`Makefile` builds both CUDA and CPU tools so results can be compared without leaving the chapter.",
     ],
 )
@@ -1317,7 +1344,7 @@ ENTRIES["ch04"] = chapter_entry(
     ],
     validation=[
         "`python compare.py --examples dataparallel_multigpu` shows the optimized pair overlapping compute and communication with lower latency.",
-        "`python bandwidth_benchmark_suite_multigpu.py --profile minimal` surfaces >=250 GB/s links on connected GPU pairs and highlights any slow hops.",
+        "`python -m cli.aisp bench run --targets ch04:bandwidth_benchmark_suite_multigpu --profile minimal` surfaces >=250 GB/s links on connected GPU pairs and highlights any slow hops on a host with >=2 visible GPUs.",
         "NVSHMEM samples emit consistent outputs when `NVSHMEM_SYMMETRIC_SIZE` is sized to hold the workload; mismatched config raises clear errors.",
     ],
     notes=[
@@ -3560,12 +3587,138 @@ ENTRIES["labs/cache_aware_disagg_inference"] = lab_entry(
     ],
     validation=[
         "`python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference --profile minimal` compares the cache-unaware and cache-aware paths through the standard harness.",
-        "`python -m labs.cache_aware_disagg_inference.baseline_cache_aware_disagg` prints JSON metrics for the round-robin control path.",
-        "`python -m labs.cache_aware_disagg_inference.optimized_cache_aware_disagg` prints JSON metrics for the cache-affine path with lower KV transfer and fewer worker switches.",
+        "`python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference:cache_aware_disagg --profile minimal` emits the round-robin baseline and cache-affine optimized metrics through one harness artifact set.",
+        "The cache-aware path should report lower KV transfer volume and fewer worker switches than the round-robin control on the same warm/cold request mix.",
     ],
     notes=[
         "This lab is intentionally a logical reproduction of the scheduler/caching story, not a full serving engine.",
         "The defaults model chunked prefill, warm/cold requests, and a 2P1D-style control problem without forcing an 8-GPU host.",
+    ],
+)
+
+ENTRIES["labs/nccl_nixl_nvshmem"] = lab_entry(
+    slug="labs/nccl_nixl_nvshmem",
+    title="Lab - NCCL, NIXL, and NVSHMEM",
+    summary=dedent(
+        """\
+        Explores communication-stack tradeoffs without pretending a `1x B200` host can exercise every path in the GTC deck. The lab exposes one honest benchmark pair for the decision we can measure locally, then pairs it with a stack probe runner that tells you when NCCL collectives, NIXL, or NVSHMEM are actually available."""
+    ),
+    lead_sections=[
+        MarkdownSection(
+            "Problem",
+            dedent(
+                """\
+                NCCL, NVSHMEM, and NIXL solve different communication problems. The practical mistake is to treat them as interchangeable before checking runtime and topology constraints. This lab keeps that straight by benchmarking the host-staged versus packed async tier-handoff decision we can run locally while making the unavailable paths explicit."""
+            ),
+        ),
+        MarkdownSection(
+            "Baseline Path",
+            dedent(
+                """\
+                - CPU-staged, block-by-block handoff
+                - per-block D2H and H2D copies with explicit synchronizations
+                - models the control path that appears when movement and metadata bounce through the host"""
+            ),
+        ),
+        MarkdownSection(
+            "Optimized Path",
+            dedent(
+                """\
+                - packed async handoff over the same selected blocks
+                - coalesces noncontiguous blocks into one packed transfer plan
+                - uses a dedicated copy stream and one bulk roundtrip instead of per-block synchronization"""
+            ),
+        ),
+        MarkdownSection(
+            "Stack Mapping",
+            dedent(
+                """\
+                | Deck theme | What this lab does |
+                | --- | --- |
+                | NCCL symmetric memory and copy-engine collectives | Probes whether NCCL collectives are runnable on this host and records the repo-local `all_reduce_perf` binary path. True collective benchmarking still requires `>=2` GPUs. |
+                | NVSHMEM GPU-initiated one-sided communication | Probes PyTorch symmetric-memory availability plus NVSHMEM launcher/runtime presence. On the current host, the probe finds the versioned launcher install but still stays blocked instead of fabricating a one-sided result. |
+                | NIXL async, noncontiguous movement across tiers | The `tier_handoff` benchmark pair is the local analogue: scattered GPU blocks, CPU tier roundtrip, and the difference between host-staged control flow and packed async transport. |"""
+            ),
+        ),
+        MarkdownSection(
+            "Measured Delta",
+            dedent(
+                """\
+                Representative portable/shared-host result from `artifacts/review/labs/nccl_nixl_nvshmem_portable_shared_v3/20260320_041146__bench__profile_none_targets_labs_nccl_nixl_nvshmem_tier_handoff/`:
+
+                | Target | Baseline | Optimized | Measured delta |
+                | --- | ---: | ---: | ---: |
+                | `tier_handoff` | `17.07 ms` | `1.12 ms` | `15.28x` |
+
+                This is intentionally non-canonical: the host is virtualized and the successful dogfood run used `--validity-profile portable --allow-foreign-gpu-processes`. The lab keeps that provenance visible instead of pretending it is publish-grade NCCL or NVSHMEM evidence."""
+            ),
+        ),
+        MarkdownSection(
+            "Related Work",
+            dedent(
+                """\
+                This lab sits between the low-level communication primitives in `ch04` and the higher-level workflow labs:
+
+                - `ch04` covers raw NCCL, symmetric-memory, and NVSHMEM building blocks.
+                - `labs/train_distributed` and `labs/fullstack_cluster` use communication as part of broader training or cluster stories.
+                - `labs/cache_aware_disagg_inference` and `labs/dynamic_router` use communication to support serving and routing policies.
+
+                The unique focus here is the communication-stack decision itself: what you can measure locally, what is blocked by runtime or topology, and how to tell those apart honestly."""
+            ),
+        ),
+        MarkdownSection(
+            "Local Reality",
+            dedent(
+                """\
+                | Probe field | Local outcome |
+                | --- | --- |
+                | GPU | `1x NVIDIA B200` |
+                | `torch.distributed` NCCL | available |
+                | `all_reduce_perf` | available at `tools/nccl-tests/build/all_reduce_perf` |
+                | `nixl` import | available |
+                | `nvshmem` import | missing |
+                | NVSHMEM launcher | available at `/usr/bin/nvshmem_13/nvshmrun` |
+                | PyTorch symmetric memory | available |
+                | Multi-GPU NCCL / NVSHMEM validation | blocked by topology (`>=2` GPUs required) |"""
+            ),
+        ),
+    ],
+    goals=[
+        "Separate host-staged control flow from packed async transport planning on a deterministic workload.",
+        "Connect the deck's NIXL memory-tier story to a runnable single-GPU analogue.",
+        "Make NCCL, NVSHMEM, and symmetric-memory availability visible before attempting the wrong experiment.",
+        "Keep local dogfood results honest when the host cannot provide a clean multi-GPU transport path.",
+    ],
+    contents=[
+        ("`baseline_tier_handoff.py`, `optimized_tier_handoff.py`", "Auto-discoverable benchmark pair for the local host-staged vs packed async handoff comparison."),
+        ("`comm_stack_common.py`", "Shared workload, runtime probe, and benchmark implementation for the pair."),
+        ("`run_lab_nccl_nixl_nvshmem.py`", "Standalone probe, direct compare, and sweep entrypoint."),
+    ],
+    run=RunSection(
+        commands=[
+            "python -m cli.aisp bench list-targets --chapter labs/nccl_nixl_nvshmem",
+            "python labs/nccl_nixl_nvshmem/run_lab_nccl_nixl_nvshmem.py --mode probe --json",
+            "python labs/nccl_nixl_nvshmem/run_lab_nccl_nixl_nvshmem.py --mode compare --warmup 3 --iterations 8 --selected-blocks 96 --block-kib 64 --inner-iterations 4",
+            "python -m cli.aisp bench run --targets labs/nccl_nixl_nvshmem:tier_handoff --profile none --validity-profile portable --allow-foreign-gpu-processes --target-extra-arg labs/nccl_nixl_nvshmem:tier_handoff='--selected-blocks 96 --block-kib 64 --inner-iterations 4'",
+        ],
+        notes=[
+            "Targets follow the `labs/nccl_nixl_nvshmem:<workload>` naming convention listed by `list-targets`.",
+            "Use `--target-extra-arg labs/nccl_nixl_nvshmem:tier_handoff=\"--flag value\"` to sweep block counts or block sizes through the harness.",
+            "On clean bare-metal single-GPU hosts, the harness target should run in strict mode.",
+            "On the current shared virtualized host, the successful dogfood run required `--validity-profile portable --allow-foreign-gpu-processes`.",
+        ],
+    ),
+    validation=[
+        "`python -m py_compile labs/nccl_nixl_nvshmem/*.py`",
+        "`python labs/nccl_nixl_nvshmem/run_lab_nccl_nixl_nvshmem.py --mode probe --json`",
+        "`python labs/nccl_nixl_nvshmem/run_lab_nccl_nixl_nvshmem.py --mode compare --warmup 3 --iterations 8 --selected-blocks 96 --block-kib 64 --inner-iterations 4 --json`",
+        "`python -m cli.aisp bench list-targets --chapter labs/nccl_nixl_nvshmem`",
+        "`python -m cli.aisp bench run --targets labs/nccl_nixl_nvshmem:tier_handoff --profile none --validity-profile portable --allow-foreign-gpu-processes --target-extra-arg labs/nccl_nixl_nvshmem:tier_handoff='--selected-blocks 96 --block-kib 64 --inner-iterations 4' --artifacts-dir artifacts/review/labs/nccl_nixl_nvshmem_portable_shared_v3`",
+    ],
+    notes=[
+        "The strict harness path was attempted first and failed for a real reason: a separate isolated benchmark runner already owned GPU memory on the current host. The lab keeps that provenance visible instead of rewriting history.",
+        "No expectation file is checked in yet. The current verified data point is portable and shared-host only, so it is useful for dogfood and documentation, not for a canonical baseline refresh.",
+        "If a future pass adds `>=2` GPUs plus NIXL or NVSHMEM runtime support, keep the probe behavior intact and add new benchmark targets only when those paths are actually runnable and verifiable.",
     ],
 )
 
@@ -5477,6 +5630,152 @@ ENTRIES["labs/vllm-deepseek-tuning"] = lab_entry(
     ],
 )
 
+ENTRIES["labs/moe_decode_blackwell_matrix"] = lab_entry(
+    slug="labs/moe_decode_blackwell_matrix",
+    title="Lab - MoE Decode Blackwell Matrix",
+    summary=dedent(
+        """\
+        A Blackwell-class MoE decode scenario matrix for routing locality, persistent scheduling, and graph-launch tradeoffs. This is the canonical public surface for the deck-aligned Blackwell MoE decode work."""
+    ),
+    lead_sections=[
+        MarkdownSection(
+            "Why This Exists",
+            dedent(
+                """\
+                The source PDF in `.cursor/plans/` overlaps enough with the repo's existing MoE and decode material that a second public benchmark pair would be redundant. The more honest surface is a matrix/playbook lab that answers the actual tradeoff questions:
+
+                - how routing locality changes the decode-step shape
+                - when persistent scheduling helps
+                - when graph replay is worth the setup cost
+
+                This lab is the shared-doc Blackwell MoE decode entry."""
+            ),
+        ),
+        MarkdownSection(
+            "What This Lab Is",
+            dedent(
+                """\
+                - a decode-step MoE scenario matrix for Blackwell-class GPUs
+                - a playbook surface with named sweep presets and structured artifacts
+                - focused on routing, scheduling, and launch tradeoffs rather than a single baseline/optimized claim
+
+                It reuses the repo's existing MoE primitives instead of duplicating the staged MoE or decode benchmark stories."""
+            ),
+        ),
+        MarkdownSection(
+            "Why This Is Not A Benchmark Pair",
+            dedent(
+                """\
+                The important comparisons here are multiple named variants, not one universal optimized path. Keeping this as a matrix lab avoids inventing a fake one-dimensional story.
+
+                - `labs/moe_optimization_journey` is the staged MoE benchmark narrative.
+                - `labs/decode_optimization` is the broader decode hot-path microbenchmark suite.
+                - `labs/blackwell_gemm_optimizations` is the grouped expert / GEMM kernel journey.
+
+                `labs/moe_decode_blackwell_matrix` stays at the scenario/playbook layer above those labs."""
+            ),
+        ),
+        MarkdownSection(
+            "What It Measures",
+            dedent(
+                """\
+                Each matrix point runs a deterministic single-step decode-style MoE expert path and records:
+
+                - per-step mean / stdev / p95 latency
+                - tokens per second and dispatch-tokens per second
+                - routing entropy, active-expert fraction, and max tokens per expert
+                - CUDA-graph capture cost when graph mode is enabled
+                - max absolute difference against the non-persistent grouped reference
+                - locked application clocks and theoretical device ceilings"""
+            ),
+        ),
+    ],
+    goals=[
+        "Keep the deck-aligned Blackwell MoE decode work visible without inventing a redundant benchmark pair.",
+        "Make routing locality, persistent scheduling, and graph-launch tradeoffs reproducible and auditable.",
+        "Give readers a MoE-specific decode scenario lab that is clearly distinct from the staged MoE, decode microbenchmark, and grouped-GEMM labs.",
+    ],
+    contents=[
+        ("`matrix_types.py`, `matrix_catalog.py`", "Typed scenario definitions plus YAML playbook loading."),
+        ("`preflight.py`, `runner.py`, `artifact_io.py`, `run_matrix.py`", "Preflight checks, deterministic decode-step execution, artifact writing, and the main matrix runner."),
+        ("`playbooks/deck_matrix.yaml`, `playbooks/smoke_b200.yaml`", "Broad deck-style sweep plus fast local smoke preset."),
+        ("`profiler/run_profile_compare.py`, `profiler/capture.py`, `profiler/compare.py`", "Profiler-backed graph-vs-eager comparison helpers for prior matrix runs."),
+        ("`tests/test_matrix_lab.py`", "Lab-local pytest coverage for playbook loading, batch generation, and summary contracts."),
+    ],
+    run=RunSection(
+        commands=[
+            "python -m labs.moe_decode_blackwell_matrix.run_matrix --playbook smoke_b200 --run-id smoke_20260320",
+            "python -m labs.moe_decode_blackwell_matrix.run_matrix --playbook deck_matrix --run-id deck_20260320",
+        ],
+        notes=[
+            "Use `smoke_b200` first; it is the fast local evidence path for a Blackwell host.",
+            "This lab is script-first, not harness-target driven.",
+            "Use this lab when you want the scenario/playbook view of Blackwell MoE decode tradeoffs rather than a single benchmark-pair claim.",
+        ],
+    ),
+    run_heading="Running The Matrix",
+    run_intro="Use the matrix runner for scenario sweeps. Use the profiler helper when you want a concrete graph-vs-eager comparison from an existing run.",
+    validation=[
+        "`python -m compileall labs/moe_decode_blackwell_matrix` should succeed.",
+        "`python -m pytest labs/moe_decode_blackwell_matrix/tests -q` should keep the playbook and summary contracts green.",
+        "`python -m labs.moe_decode_blackwell_matrix.run_matrix --playbook smoke_b200 --run-id smoke_<date>` should emit a self-contained artifact directory under `artifacts/moe_decode_blackwell_matrix/runs/`.",
+        "`python -m labs.moe_decode_blackwell_matrix.profiler.run_profile_compare --run-dir artifacts/moe_decode_blackwell_matrix/runs/<RUN_ID>` should write trace outputs plus a structured comparison summary.",
+    ],
+    extra_sections=[
+        dedent(
+            """\
+            ## Playbooks
+
+            | Playbook | Intent |
+            | --- | --- |
+            | `deck_matrix` | Broad tradeoff sweep for the duplicated deck surface. |
+            | `smoke_b200` | Fast local B200 smoke run with artifact generation and graph-vs-eager evidence. |
+            """
+        ),
+        dedent(
+            """\
+            ## Artifact Layout
+
+            Every matrix run writes a self-contained directory under `artifacts/moe_decode_blackwell_matrix/runs/<RUN_ID>/`:
+
+            | Artifact | Contents |
+            | --- | --- |
+            | `sys_meta.json` | Playbook config, GPU metadata, profiler-tool visibility, lock state, and command. |
+            | `matrix.jsonl` | One row per matrix point, including unsupported and error states. |
+            | `matrix.csv` | Flat export for spreadsheet-style inspection. |
+            | `summary.json` | Best overall point plus persistent-vs-dynamic and graph-vs-eager deltas. |
+            | `manifest.json` | File hashes for reproducibility. |
+            | `profiles/<name>/summary.json` | Profiler comparison metadata and deltas. |
+            | `profiles/<name>/*.trace.json` | Chrome-trace exports from `torch.profiler`. |
+            """
+        ),
+        dedent(
+            """\
+            ## Profiler-Backed Comparison
+
+            ```bash
+            python -m labs.moe_decode_blackwell_matrix.profiler.run_profile_compare \
+              --run-dir artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320
+            ```
+
+            Or choose explicit config ids from `matrix.jsonl`:
+
+            ```bash
+            python -m labs.moe_decode_blackwell_matrix.profiler.run_profile_compare \
+              --run-dir artifacts/moe_decode_blackwell_matrix/runs/smoke_20260320 \
+              --config-a e8_k2_b8_stk_pst_egr \
+              --config-b e8_k2_b8_stk_pst_grf
+            ```
+            """
+        ),
+    ],
+    notes=[
+        "`dynamic + cuda_graph` is emitted as `unsupported` on purpose; the lab makes that constraint visible instead of silently falling back.",
+        "`sticky` routing is the locality-friendly control, while the other policies help explain when persistent scheduling does or does not pay off.",
+        "This lab remains the matrix/playbook companion to `labs/moe_optimization_journey`, `labs/decode_optimization`, and `labs/blackwell_gemm_optimizations`, not a replacement for those benchmark stories.",
+    ],
+)
+
 ENTRIES["labs/flexattention"] = lab_entry(
     slug="labs/flexattention",
     title="Lab - FlexAttention Harness",
@@ -6149,6 +6448,98 @@ ENTRIES["labs/persistent_decode"] = lab_entry(
     notes=[
         "Set `TORCH_COMPILE_MODE` or `TMA_TILE_SIZE` via env vars before invoking the harness to sweep tile sizes.",
         "`tma_extension.py` caches builds under `~/.cache/torch_extensions`; clean the cache when switching CUDA versions.",
+    ],
+)
+
+ENTRIES["labs/parameterized_cuda_graphs"] = lab_entry(
+    slug="labs/parameterized_cuda_graphs",
+    title="Lab - Parameterized CUDA Graph Launch",
+    summary=dedent(
+        """\
+        A narrow PyTorch-first benchmark pair for parameterized CUDA Graph replay: fixed shapes, fixed device buffers, and fixed graph topology, with request-specific host bindings updated on the executable graph before replay."""
+    ),
+    lead_sections=[
+        MarkdownSection(
+            "Problem",
+            dedent(
+                """\
+                Normal CUDA Graph capture wants stable addresses. Real serving loops often keep tensor shapes static while rotating through different request slots, scalar values, and output buffers. If the graph is recaptured every time those bindings change, capture and instantiation overhead can erase the benefit."""
+            ),
+        ),
+        MarkdownSection(
+            "Baseline Path",
+            dedent(
+                """\
+                - eager-style warmup followed by per-request graph recapture
+                - fresh capture and instantiation for each request slot
+                - same math as the optimized path, but full recapture tax stays in the hot path"""
+            ),
+        ),
+        MarkdownSection(
+            "Optimized Path",
+            dedent(
+                """\
+                - one `torch.cuda.CUDAGraph(keep_graph=True)` capture on stable device buffers
+                - executable memcpy-node parameter updates for the input slot, scalar slot, and output slot
+                - graph replay without changing shapes, weights, or graph topology"""
+            ),
+        ),
+        MarkdownSection(
+            "Measured Delta",
+            dedent(
+                """\
+                Representative local strict result from `artifacts/runs/20260320_parameterized_cuda_graphs_local/`:
+
+                | Target | Baseline | Optimized | Measured delta |
+                | --- | ---: | ---: | ---: |
+                | `parameterized_graph_launch` | `0.938 ms` | `0.096 ms` | `9.74x` |
+
+                This run was verification-clean and used harness clock locking, but the host was also flagged as virtualized. Treat it as solid local evidence for the parameterized replay technique, not as a publish-grade bare-metal number."""
+            ),
+        ),
+        MarkdownSection(
+            "Profiler Evidence",
+            dedent(
+                """\
+                Use the same target with a profiler-backed run when you want Nsight artifacts instead of only the wall-clock delta:
+
+                ```bash
+                python -m cli.aisp bench run --targets labs/parameterized_cuda_graphs:parameterized_graph_launch --profile deep_dive --single-gpu
+                ```
+
+                The thing to look for is unchanged compute and kernels with the recapture overhead removed from the optimized path."""
+            ),
+        ),
+        MarkdownSection(
+            "Repro Commands",
+            dedent(
+                """\
+                ```bash
+                python -m cli.aisp bench list-targets --chapter labs/parameterized_cuda_graphs
+                python -m cli.aisp bench run --targets labs/parameterized_cuda_graphs:parameterized_graph_launch --profile none --single-gpu --gpu-sm-clock-mhz 1500
+                ```"""
+            ),
+        ),
+    ],
+    goals=[
+        "Show a clean benchmark pair for graph recapture versus executable-graph parameter mutation.",
+        "Keep the claim narrow: stable-shape PyTorch work with changing request bindings, not generic dynamic-shape graphing.",
+        "Make the measured artifact prove that replay stays correct while per-request graph construction disappears from the hot path.",
+    ],
+    contents=[
+        ("`baseline_parameterized_graph_launch.py`, `optimized_parameterized_graph_launch.py`", "Benchmark wrappers for per-request recapture versus parameterized executable-graph replay."),
+        ("`parameterized_cuda_graphs_common.py`", "Shared PyTorch block, request-slot buffers, graph capture, memcpy-node mutation, and verification helpers."),
+        ("`__init__.py`", "Package export for the shared benchmark classes and config."),
+    ],
+    validation=[
+        "`python -m cli.aisp bench list-targets --chapter labs/parameterized_cuda_graphs` should discover `parameterized_graph_launch`.",
+        "`python -m cli.aisp bench run --targets labs/parameterized_cuda_graphs:parameterized_graph_launch --profile none --single-gpu --gpu-sm-clock-mhz 1500` should keep the optimized path verification-clean and faster than the recapture baseline.",
+        "The optimized path should report executable memcpy-node parameter updates while avoiding per-iteration graph recapture.",
+    ],
+    notes=[
+        "This lab overlaps conceptually with `labs/persistent_decode` and `labs/decode_optimization`, but it is intentionally the narrower companion focused on executable-graph parameter mutation in PyTorch.",
+        "The current measured delta is backed by a local virtualized B200 run; replace the artifact when a canonical bare-metal run is collected.",
+        "Optional local shape sweeps use `AISP_PARAMETERIZED_CUDA_GRAPHS_*` environment variables without changing the core fixed-shape benchmark contract.",
     ],
 )
 

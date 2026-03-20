@@ -745,24 +745,58 @@ def check_benchmark_file_ast(file_path: Path) -> Tuple[bool, List[str], List[str
             if len(node.args.args) > 0 or node.args.vararg is not None or node.args.kwarg is not None:
                 errors.append("get_benchmark() should take no arguments")
 
-        def _is_main_guard(stmt: ast.stmt) -> bool:
-            if not isinstance(stmt, ast.If):
+        def _is_name_main_expr(expr: ast.AST) -> bool:
+            if isinstance(expr, ast.Name):
+                return expr.id == "__name__"
+            if not isinstance(expr, ast.Call):
                 return False
-            test = stmt.test
+            if not isinstance(expr.func, ast.Attribute) or expr.func.attr != "get":
+                return False
+            if len(expr.args) != 1 or expr.keywords:
+                return False
+            if not isinstance(expr.args[0], ast.Constant) or expr.args[0].value != "__name__":
+                return False
+            globals_call = expr.func.value
+            return (
+                isinstance(globals_call, ast.Call)
+                and isinstance(globals_call.func, ast.Name)
+                and globals_call.func.id == "globals"
+                and not globals_call.args
+                and not globals_call.keywords
+            )
+
+        def _is_main_guard_test(test: ast.AST) -> bool:
             if not isinstance(test, ast.Compare):
                 return False
-            if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
-                return False
-            if len(test.comparators) != 1:
+            if len(test.ops) != 1 or len(test.comparators) != 1:
                 return False
             left = test.left
             right = test.comparators[0]
-            return (
-                isinstance(left, ast.Name)
-                and left.id == "__name__"
-                and isinstance(right, ast.Constant)
-                and right.value == "__main__"
-            )
+            if not isinstance(right, ast.Constant) or right.value != "__main__":
+                return False
+            return _is_name_main_expr(left) and isinstance(test.ops[0], (ast.Eq, ast.NotEq))
+
+        def _is_main_guard(stmt: ast.stmt) -> bool:
+            return isinstance(stmt, ast.If) and _is_main_guard_test(stmt.test)
+
+        def _invokes_main_guard_helper(module_tree: ast.Module) -> bool:
+            helper_names: Set[str] = set()
+            for stmt in module_tree.body:
+                if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if any(
+                    isinstance(node, ast.If) and _is_main_guard_test(node.test)
+                    for node in ast.walk(stmt)
+                ):
+                    helper_names.add(stmt.name)
+            if not helper_names:
+                return False
+            for stmt in module_tree.body:
+                if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+                    continue
+                if isinstance(stmt.value.func, ast.Name) and stmt.value.func.id in helper_names:
+                    return True
+            return False
 
         benchmark_class_refs = _candidate_benchmark_class_refs(module_ctx)
         for class_ref in benchmark_class_refs:
@@ -786,7 +820,7 @@ def check_benchmark_file_ast(file_path: Path) -> Tuple[bool, List[str], List[str
 
         if not has_get_benchmark and not benchmark_class_refs:
             errors.append("No get_benchmark() function or benchmark class found")
-        elif any(_is_main_guard(node) for node in tree.body):
+        elif any(_is_main_guard(node) for node in tree.body) or _invokes_main_guard_helper(tree):
             errors.append(
                 "Benchmark modules must not define __main__ blocks; run them via compare.py or cli.aisp bench run"
             )

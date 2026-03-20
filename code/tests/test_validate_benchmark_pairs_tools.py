@@ -8,7 +8,7 @@ from core.benchmark.verification import InputSignature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark
 from core.scripts.ci.check_verification_compliance import check_file_compliance
-from core.scripts.validate_benchmark_pairs import discover_benchmark_pairs, get_input_signature_safe
+from core.scripts.validate_benchmark_pairs import discover_benchmark_pairs, get_input_signature_safe, validate_pair
 
 
 class _DummyPayloadBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -109,3 +109,45 @@ def test_ci_compliance_checker_accepts_imported_benchmark_base_inheritance(tmp_p
     )
     issues = check_file_compliance(file_path)
     assert not any("get_input_signature" in issue.message for issue in issues)
+
+
+def test_ch04_torchrun_multigpu_pairs_skip_cleanly_on_single_gpu_hosts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
+        ("pipeline_parallel_multigpu_1f1b", "baseline_pipeline_parallel_multigpu.py", "optimized_pipeline_parallel_multigpu_1f1b.py"),
+        ("tensor_parallel_allgather_multigpu", "baseline_tensor_parallel_allgather_multigpu.py", "optimized_tensor_parallel_allgather_multigpu.py"),
+        ("tensor_parallel_multigpu", "baseline_tensor_parallel_multigpu.py", "optimized_tensor_parallel_multigpu.py"),
+        ("torchcomms_multigpu", "baseline_torchcomms_multigpu.py", "optimized_torchcomms_multigpu.py"),
+    ]
+
+    for example_name, baseline_name, optimized_name in cases:
+        result = validate_pair(
+            "ch04",
+            example_name,
+            repo_root / "ch04" / baseline_name,
+            repo_root / "ch04" / optimized_name,
+        )
+        if torch.cuda.device_count() < 2:
+            assert result.skipped is True
+            assert result.error is not None and "SKIPPED" in result.error
+        else:
+            assert result.error is None
+            assert result.valid is True
+
+
+def test_ch04_no_overlap_pair_validates_on_single_gpu_hosts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = validate_pair(
+        "ch04",
+        "no_overlap",
+        repo_root / "ch04" / "baseline_no_overlap.py",
+        repo_root / "ch04" / "optimized_no_overlap.py",
+    )
+
+    if torch.cuda.is_available():
+        assert result.skipped is False
+        assert result.error is None
+        assert result.valid is True
+    else:
+        assert result.skipped is True
+        assert result.error is not None and "SKIPPED" in result.error

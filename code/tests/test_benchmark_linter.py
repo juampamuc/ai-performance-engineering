@@ -159,6 +159,31 @@ def test_contract_ast_rejects_benchmark_module_main_guard(tmp_path: Path) -> Non
     assert warnings == []
 
 
+def test_contract_ast_rejects_indirect_benchmark_module_main_guard(tmp_path: Path) -> None:
+    ok, errors, warnings = _lint_tmp_file(
+        tmp_path,
+        "baseline_tmp_main_guard_shim.py",
+        "class TmpBench:\n"
+        "    def setup(self):\n"
+        "        pass\n\n"
+        "    def benchmark_fn(self):\n"
+        "        pass\n\n"
+        "    def teardown(self):\n"
+        "        pass\n\n"
+        "def get_benchmark():\n"
+        "    return TmpBench()\n\n"
+        "def _maybe_run_cli():\n"
+        "    if globals().get(\"__name__\") != \"__main__\":\n"
+        "        return\n"
+        "    print('bad entrypoint')\n\n"
+        "_maybe_run_cli()\n",
+    )
+
+    assert not ok
+    assert any("must not define __main__ blocks" in error for error in errors)
+    assert warnings == []
+
+
 def test_contract_ast_accepts_payload_mixin_inherited_verification_methods():
     """AST validation should recognize VerificationPayloadMixin via inheritance."""
     repo_root = Path(__file__).parent.parent

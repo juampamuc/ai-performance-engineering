@@ -191,6 +191,7 @@ def test_selected_public_lab_families_are_free_of_local_sys_path_bootstrap() -> 
         "nvfp4_gemm",
         "nvfp4_group_gemm",
         "occupancy_tuning",
+        "parameterized_cuda_graphs",
         "real_world_models",
         "async_input_pipeline",
         "persistent_decode",

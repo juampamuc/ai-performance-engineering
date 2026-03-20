@@ -57,6 +57,19 @@ python -m cli.aisp bench run --targets labs/persistent_decode:persistent_decode 
 - `deep_dive` is the profiler-backed path for Nsight Systems + Nsight Compute comparisons.
 - The benchmark harness now blocks more hot-path anti-patterns and follows imported helper code, so "clean benchmark" means more than it used to.
 
+## Lab Navigation
+If you are navigating by performance problem instead of by chapter, start with these benchmark-pair labs:
+
+| Lab | Best for | Distinct from |
+| --- | --- | --- |
+| `labs/parameterized_cuda_graphs` | fixed-shape PyTorch CUDA Graph replay where request bindings change but graph topology does not | broader decode-serving labs; dynamic-shape graph problems |
+| `labs/persistent_decode` | persistent decode kernels plus graph/TMA variants on serving-style decode paths | the narrower executable-graph parameter-mutation story |
+| `labs/decode_optimization` | decode microbenchmarks that separate pinned memory, streams, compile, graphs, and cache policy | a single graph-launch-overhead benchmark pair |
+| `labs/block_scaling` | Blackwell block-scaled GEMM mechanics and measured tensor-core wins | serving/control-plane orchestration labs |
+| `labs/training_hotpath` | training-path launch and fusion bottlenecks with clean benchmark pairs | inference/decode-oriented graph replay work |
+
+This keeps `labs/parameterized_cuda_graphs` visible without pretending it replaces the broader persistent-decode or decode-optimization stories.
+
 ## Benchmark Methodology
 This repo now exposes one repeatable benchmarking methodology instead of leaving performance work as a collection of scripts.
 
@@ -103,7 +116,7 @@ The current published canonical package lives under `cluster/published/current/`
 | Path | Description |
 | --- | --- |
 | `ch01` - `ch20` | One directory per chapter with baseline/optimized benchmarks, workload configs, and chapter-level harness entrypoints such as `ch01/compare.py`. |
-| `labs/` | Deep-dive labs for matmul, routing, FlexAttention, MoE, persistent decode, distributed training, and more. |
+| `labs/` | Deep-dive labs for memory-bandwidth patterns, matmul, routing, FlexAttention, MoE, persistent decode, distributed training, and more. |
 | `core/benchmark/`, `profiling/`, `core/`, `optimization/`, `analysis/` | Shared harness, logging, workload metadata, profiling, and optimization utilities used by every chapter. |
 | `python -m cli.aisp bench` | Typer-based CLI for running and profiling targets with reproducible artifacts. |
 | `docs/` + `core/scripts/` | Operational guides, profiling workflows, and setup/reset helpers (`setup.sh`, `cleanup.py`, `reset-gpu.sh`). |
@@ -121,7 +134,7 @@ python -m cli.aisp bench run-tier1 --single-gpu --profile minimal
 - `setup.sh` installs system prerequisites (drivers, CUDA, Nsight) and should be rerun after driver upgrades.
 - Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited hosts.
 - Use `python -m cli.aisp bench expectations --hardware b200 --min-speedup 1.05` to report expectation entries below a target threshold.
-- Use `python -m cli.aisp bench run --targets ch*` for automated regression suites.
+- Repeat `--targets` for multi-scope runs, for example `python -m cli.aisp bench run --targets ch01 --targets ch02 --profile minimal`; use `python -m cli.aisp bench run-tier1 --single-gpu --profile minimal` for the canonical regression suite.
 - Portable runs do not update expectation files unless `--allow-portable-expectations-update` is supplied.
 - `python core/analysis/analyze_expectations.py --artifacts-dir artifacts` compares new runs to stored thresholds.
 

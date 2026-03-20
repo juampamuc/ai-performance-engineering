@@ -26,6 +26,8 @@ import torch
 
 from core.benchmark.verification import InputSignature
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 @contextlib.contextmanager
 def _capture_process_output() -> List[str]:
@@ -54,16 +56,14 @@ def _capture_process_output() -> List[str]:
             captured.extend(line.strip() for line in combined.splitlines() if line.strip())
 
 
-@contextlib.contextmanager
-def _prepend_sys_path(path: Path):
-    """Temporarily prepend a benchmark's directory so sibling imports resolve."""
-    path_str = str(path)
-    sys.path.insert(0, path_str)
+def _module_name_for_path(filepath: Path) -> str:
+    """Resolve a benchmark file to its repo package module path."""
+    resolved = filepath.resolve()
     try:
-        yield
-    finally:
-        with contextlib.suppress(ValueError):
-            sys.path.remove(path_str)
+        relative = resolved.relative_to(REPO_ROOT)
+    except ValueError:
+        return resolved.stem
+    return ".".join(relative.with_suffix("").parts)
 
 
 def _should_retry_with_multigpu_floor(exc: BaseException) -> bool:
@@ -242,14 +242,16 @@ def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str, List[str]]]
     Returns:
         Tuple of (benchmark_instance, class_name, captured_output) or None if failed
     """
+    module_name = _module_name_for_path(filepath)
+    previous_module = sys.modules.get(module_name)
     try:
-        spec = importlib.util.spec_from_file_location("benchmark_module", filepath)
+        spec = importlib.util.spec_from_file_location(module_name, filepath)
         if spec is None or spec.loader is None:
             return None
         
         module = importlib.util.module_from_spec(spec)
-        sys.modules["benchmark_module"] = module
-        with _capture_process_output() as captured_output, _prepend_sys_path(filepath.parent):
+        sys.modules[module_name] = module
+        with _capture_process_output() as captured_output:
             spec.loader.exec_module(module)
             
             # Look for get_benchmark factory function
@@ -269,8 +271,10 @@ def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str, List[str]]]
         return None
     finally:
         # Clean up
-        if "benchmark_module" in sys.modules:
-            del sys.modules["benchmark_module"]
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
 
 
 def check_compliance(benchmark: Any) -> Dict[str, bool]:
@@ -511,7 +515,7 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed output")
     args = parser.parse_args()
     
-    code_dir = repo_root
+    code_dir = REPO_ROOT
     
     total_compliant = 0
     total_needs_work = 0

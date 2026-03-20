@@ -1,0 +1,20 @@
+name: smoke_b200
+description: >
+  Fast B200 smoke playbook for this lab. Small shapes, real GPU execution, and enough
+  matrix coverage to prove artifact generation plus graph-vs-eager comparisons.
+seed: 17
+dtype: bf16
+hidden_size: 256
+intermediate_size: 1024
+steps: 4
+warmup: 1
+repeats: 2
+expert_counts: [8]
+top_k_values: [2]
+decode_batches: [1, 8]
+routing_policies: [balanced, sticky]
+schedule_modes: [dynamic, persistent]
+launch_modes: [eager, cuda_graph]
+sm_clock_mhz: 1500
+mem_clock_mhz:
+allow_non_blackwell: false

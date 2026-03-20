@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 
+from core.benchmark.gpu_requirements import require_min_gpus
 from core.benchmark.verification import PrecisionFlags
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
@@ -133,9 +134,11 @@ class BaselineTorchcommsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._aux_block: Optional[nn.Sequential] = None
         self._input: Optional[torch.Tensor] = None
         self._output: Optional[torch.Tensor] = None
-        self._world_size = _resolve_world_size()
+        self._world_size = 1
 
     def setup(self) -> None:
+        require_min_gpus(2, "baseline_torchcomms_multigpu.py")
+        self._world_size = torch.cuda.device_count()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._comm_block = _build_block(_DEFAULT_HIDDEN, self.device)
@@ -203,7 +206,7 @@ class BaselineTorchcommsBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=_resolve_world_size(),
+            nproc_per_node=max(torch.cuda.device_count(), 1),
             iterations=50,
             warmup=5,
             multi_gpu_required=True,
@@ -226,5 +229,4 @@ class BaselineTorchcommsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineTorchcommsBenchmark()
-
 

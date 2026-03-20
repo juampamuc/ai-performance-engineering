@@ -20,7 +20,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 
-from core.benchmark.gpu_requirements import skip_if_insufficient_gpus
+from core.benchmark.gpu_requirements import require_min_gpus
 from ch04.distributed_helper import setup_single_gpu_env
 
 from typing import Optional
@@ -73,7 +73,7 @@ class BaselineNoOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         """Setup a one-GPU overlap simulation without distributed init."""
         print("[baseline_no_overlap] setup starting", flush=True)
-        skip_if_insufficient_gpus()
+        require_min_gpus(1, "ddp_no_overlap.py")
         # Treat as single process even if torchrun sets RANK/LOCAL_RANK; skip dist.init.
         self.rank = 0
         self.world_size = 1

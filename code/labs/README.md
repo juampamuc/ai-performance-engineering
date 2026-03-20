@@ -27,9 +27,9 @@ If a lab cannot answer those questions yet, the doc should say so directly inste
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `labs/block_scaling`, `labs/blackwell_matmul`, `labs/blackwell_gemm_optimizations`, `labs/flashattention4`, `labs/persistent_decode`, `labs/training_hotpath` | Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas. |
+| `labs/block_scaling`, `labs/blackwell_matmul`, `labs/blackwell_gemm_optimizations`, `labs/flashattention4`, `labs/memory_bandwidth_patterns`, `labs/nccl_nixl_nvshmem`, `labs/persistent_decode`, `labs/parameterized_cuda_graphs`, `labs/training_hotpath` | Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas, including narrow bandwidth-pattern, communication-stack tradeoff, and CUDA-graph replay labs. |
 | `labs/decode_optimization`, `labs/kv_optimization`, `labs/moe_cuda`, `labs/moe_optimization_journey` | Serving-path and MoE labs where the benchmark pair is part of a broader optimization story. |
-| `labs/nanochat_fullstack`, `labs/python_concurrency`, `labs/vllm-deepseek-tuning` | Larger workflow-oriented labs that need a richer doc model than a simple pair benchmark. |
+| `labs/moe_decode_blackwell_matrix`, `labs/nanochat_fullstack`, `labs/python_concurrency`, `labs/vllm-deepseek-tuning` | Larger workflow-oriented and matrix/playbook labs that need a richer doc model than a simple pair benchmark. |
 | `labs/nvfp4_*` | Low-precision kernel labs where verification discipline matters as much as the timing win. |
 
 ## Running the Benchmarks
@@ -37,9 +37,13 @@ Use the benchmark harness for quick comparisons or drive the Typer CLI when you 
 ```bash
 python -m cli.aisp bench list-targets --chapter labs/block_scaling
 python -m cli.aisp bench list-targets --chapter labs/decode_optimization
+python -m cli.aisp bench list-targets --chapter labs/memory_bandwidth_patterns
+python -m cli.aisp bench list-targets --chapter labs/nccl_nixl_nvshmem
 python -m cli.aisp bench list-targets --chapter labs/moe_cuda
 ```
 - Use `list-targets` first; the benchmark-pair labs expose clean harness targets, while the playbook/matrix labs often have their own scripts or Makefiles.
+- Use `labs/memory_bandwidth_patterns` when you want a narrow coalescing/vectorization/shared-memory bandwidth lab instead of a broader serving-path workflow.
+- Use `labs/nccl_nixl_nvshmem` when you want communication-stack tradeoffs and capability probing instead of a broader distributed-training or serving workflow.
 - If a lab does not have a clean baseline/optimized target yet, do not invent one in documentation.
 
 ## Validation Checklist
@@ -69,11 +73,15 @@ python -m cli.aisp bench list-targets --chapter labs/moe_cuda
 | `labs/fullstack_cluster/` | Full-stack cluster + DSMEM workflows | ch10 |
 | `labs/kv_cache_compression/` | KV-cache compression/quantization | ch18, ch19 |
 | `labs/kv_optimization/` | KV-cache performance optimization | ch15, ch18, ch19 |
+| `labs/memory_bandwidth_patterns/` | Measured bandwidth patterns: coalesced vs strided access, vectorized copy, shared-memory transpose, and cp.async checkpoints | ch02, ch10, ch11 |
 | `labs/moe_cuda/` | CUDA MoE decode toolkit | ch06, ch10, ch15 |
+| `labs/moe_decode_blackwell_matrix/` | Blackwell MoE decode scenario matrix for routing locality, persistent scheduling, and graph-launch tradeoffs | ch10, ch15, ch18, ch19 |
 | `labs/moe_optimization_journey/` | MoE optimization narrative | ch15, ch19 |
 | `labs/moe_parallelism/` | MoE parallelism planning | ch04, ch15 |
+| `labs/nccl_nixl_nvshmem/` | Communication-stack tradeoffs with an honest single-GPU analogue and NCCL/NIXL/NVSHMEM stack probing | ch04, ch17, ch19 |
 | `labs/nanochat_fullstack/` | End-to-end inference stack (NanoChat) | ch16 |
 | `labs/occupancy_tuning/` | Triton occupancy/schedule sweeps | ch08, ch14 |
+| `labs/parameterized_cuda_graphs/` | PyTorch-first parameterized CUDA Graph replay with stable buffers and executable memcpy-node updates | ch10, ch11 |
 | `labs/persistent_decode/` | Persistent decode + TMA prefill | ch10, ch11 |
 | `labs/python_concurrency/` | Python concurrency control-plane playbook (`asyncio`, retries, idempotency, hybrid pipelines) | ch03, ch11, ch16 |
 | `labs/real_world_models/` | Real-world model optimization playbook | ch20 |

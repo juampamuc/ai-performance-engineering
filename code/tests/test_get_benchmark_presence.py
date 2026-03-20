@@ -38,21 +38,59 @@ def _has_get_benchmark_symbol(path: Path) -> bool:
     return False
 
 
+def _is_name_main_expr(expr: ast.AST) -> bool:
+    if isinstance(expr, ast.Name):
+        return expr.id == "__name__"
+    if not isinstance(expr, ast.Call):
+        return False
+    if not isinstance(expr.func, ast.Attribute) or expr.func.attr != "get":
+        return False
+    if len(expr.args) != 1 or expr.keywords:
+        return False
+    if not isinstance(expr.args[0], ast.Constant) or expr.args[0].value != "__name__":
+        return False
+    globals_call = expr.func.value
+    return (
+        isinstance(globals_call, ast.Call)
+        and isinstance(globals_call.func, ast.Name)
+        and globals_call.func.id == "globals"
+        and not globals_call.args
+        and not globals_call.keywords
+    )
+
+
+def _is_main_guard_test(test: ast.AST) -> bool:
+    if not isinstance(test, ast.Compare):
+        return False
+    if len(test.ops) != 1 or len(test.comparators) != 1:
+        return False
+    if not _is_name_main_expr(test.left):
+        return False
+    right = test.comparators[0]
+    return (
+        isinstance(right, ast.Constant)
+        and right.value == "__main__"
+        and isinstance(test.ops[0], (ast.Eq, ast.NotEq))
+    )
+
+
 def _has_main_guard(path: Path) -> bool:
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    helper_names: set[str] = set()
     for node in tree.body:
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
+        if isinstance(node, ast.If) and _is_main_guard_test(node.test):
+            return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+            isinstance(child, ast.If) and _is_main_guard_test(child.test)
+            for child in ast.walk(node)
+        ):
+            helper_names.add(node.name)
         if (
-            isinstance(test, ast.Compare)
-            and len(test.ops) == 1
-            and isinstance(test.ops[0], ast.Eq)
-            and len(test.comparators) == 1
-            and isinstance(test.left, ast.Name)
-            and test.left.id == "__name__"
-            and isinstance(test.comparators[0], ast.Constant)
-            and test.comparators[0].value == "__main__"
+            helper_names
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id in helper_names
         ):
             return True
     return False

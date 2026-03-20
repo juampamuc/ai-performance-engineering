@@ -23,7 +23,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 
-from core.benchmark.gpu_requirements import skip_if_insufficient_gpus
+from core.benchmark.gpu_requirements import require_min_gpus
 from core.common.device_utils import require_cuda_device
 from core.harness import arch_config as _arch_config_patch  # noqa: F401
 from core.harness.benchmark_harness import (
@@ -81,7 +81,7 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup real DDP when available, otherwise a single-GPU overlap simulation."""
-        skip_if_insufficient_gpus()
+        require_min_gpus(1, "ddp_overlap.py")
         
         # Initialize distributed if environment variables are set
         if "RANK" in os.environ and "WORLD_SIZE" in os.environ:

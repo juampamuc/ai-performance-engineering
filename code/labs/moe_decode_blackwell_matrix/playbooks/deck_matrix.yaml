@@ -1,0 +1,20 @@
+name: deck_matrix
+description: >
+  Broad decode-step tradeoff sweep for the duplicated Blackwell MoE deck:
+  experts, top-k, routing skew, token-batch regime, and graph/persistent launch choices.
+seed: 17
+dtype: bf16
+hidden_size: 512
+intermediate_size: 2048
+steps: 8
+warmup: 2
+repeats: 6
+expert_counts: [8, 16, 32]
+top_k_values: [1, 2, 4]
+decode_batches: [1, 8, 32, 128]
+routing_policies: [balanced, sticky, skewed]
+schedule_modes: [dynamic, persistent]
+launch_modes: [eager, cuda_graph]
+sm_clock_mhz: 1500
+mem_clock_mhz:
+allow_non_blackwell: false

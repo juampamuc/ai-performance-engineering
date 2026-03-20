@@ -3599,7 +3599,7 @@ if [[ "$RUN_FABRIC_EVAL" -eq 1 ]]; then
   if [[ "$REQUIRE_MANAGEMENT_PLANE" -eq 1 ]]; then
     fabric_args+=(--require-management-plane)
   fi
-  run_step "build_fabric_eval" python3 "${ROOT_DIR}/scripts/build_fabric_eval.py" "${fabric_args[@]}"
+  run_step "build_fabric_eval" bash -lc 'cd "$1" && shift && python3 -m cluster.scripts.build_fabric_eval "$@"' _ "${ROOT_DIR}/.." "${fabric_args[@]}"
 fi
 
 scorecard_args=(
