@@ -33,6 +33,7 @@ from core.harness.serving_stack import (
     get_serving_stack_pins,
     preload_serving_stack_shared_libs,
 )
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.utils.logger import get_logger
 from ch18.vllm_process_cleanup import shutdown_vllm_runtime
@@ -374,10 +375,18 @@ class BaselineVLLMV1IntegrationBenchmark(VerificationPayloadMixin, BaseBenchmark
             tokens_per_iteration=float(self.runner.batch_size * self.runner.max_tokens),
         )
 
+    def get_input_signature(self) -> dict:
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        return simple_signature(
+            batch_size=self.runner.batch_size,
+            dtype="int64",
+            max_tokens=self.runner.max_tokens,
+            precision_flags=PrecisionFlags(bf16=True, tf32=tf32_enabled),
+        ).to_dict()
+
     def get_custom_metrics(self) -> Dict[str, Any]:
         return self._metrics
 
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineVLLMV1IntegrationBenchmark()
-

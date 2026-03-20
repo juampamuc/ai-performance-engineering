@@ -8,6 +8,7 @@ import torch
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.benchmark.verification import simple_signature
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
@@ -99,6 +100,14 @@ class BaselineKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.N,
+            dtype="float32",
+            elements=self.N,
+            iterations=self.iterations,
+        ).to_dict()
     
     def get_custom_metrics(self) -> Optional[dict]:
         """Return workload metrics for the unfused kernel path."""

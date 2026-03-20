@@ -201,12 +201,15 @@ class HangingPairBenchmark(BaseBenchmark):
     (ch_dir / "baseline_hanging.py").write_text(benchmark_source, encoding="utf-8")
     (ch_dir / "optimized_hanging.py").write_text(benchmark_source, encoding="utf-8")
 
-    report = validate_all_pairs(tmp_path, chapter="ch01", pair_timeout_seconds=3)
+    # Isolated pair startup includes interpreter + module import overhead on real hosts.
+    # Give the validator enough time to reach setup() and spawn the descendant process
+    # before the intentional benchmark_fn() hang triggers timeout cleanup.
+    report = validate_all_pairs(tmp_path, chapter="ch01", pair_timeout_seconds=8)
     assert report.total_pairs == 1
     assert len(report.results) == 1
     result = report.results[0]
     assert result.valid is False
-    assert result.error == "Validation timeout after 3 seconds"
+    assert result.error == "Validation timeout after 8 seconds"
 
     deadline = time.time() + 2.0
     while not pid_file.exists() and time.time() < deadline:

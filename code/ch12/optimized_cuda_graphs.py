@@ -33,8 +33,7 @@ class OptimizedCudaGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize tensors and load CUDA extension."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         self._extension = load_cuda_graphs_extension()
         
         torch.manual_seed(42)
@@ -123,4 +122,3 @@ class OptimizedCudaGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedCudaGraphsBenchmark()
-

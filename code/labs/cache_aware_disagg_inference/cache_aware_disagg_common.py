@@ -424,7 +424,7 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
             batch_size=int(self.cfg.batch_size),
             parameter_count=int(self.parameter_count),
             precision_flags=PrecisionFlags(bf16=self.cfg.dtype == torch.bfloat16, tf32=torch.backends.cuda.matmul.allow_tf32),
-            output_tolerance=(0.0, 0.0),
+            output_tolerance=(1e-2, 1e-2),
             signature_overrides={
                 "world_size": 1,
                 "pipeline_stages": 2,

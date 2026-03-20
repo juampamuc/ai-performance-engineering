@@ -27,7 +27,7 @@ class OptimizedPipeline3StageBenchmark(CudaBinaryBenchmark):
                 "segment_size": 65536,
             },
         )
-        self.register_workload_metadata(bytes_per_iteration=65536)
+        self.register_workload_metadata(bytes_per_iteration=float(8 * 1024 * 1024 * 4))
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Report the declared pipeline structure and workload params."""

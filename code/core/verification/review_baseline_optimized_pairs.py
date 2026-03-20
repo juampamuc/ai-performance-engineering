@@ -41,6 +41,8 @@ FINDING_METADATA: Dict[str, Dict[str, str]] = {
     "hot_path_extra_work": {"issue_id": "PAIR_HOT_PATH_EXTRA_WORK", "category": "hot_path"},
     "algorithmic_pair_mismatch": {"issue_id": "PAIR_ALGORITHMIC_MISMATCH", "category": "semantic"},
     "report_drift": {"issue_id": "PAIR_REVIEW_REPORT_DRIFT", "category": "documentation"},
+    "source_doc_missing": {"issue_id": "PAIR_SOURCE_DOC_MISSING", "category": "documentation"},
+    "scope_contract_mismatch": {"issue_id": "PAIR_SCOPE_CONTRACT_MISMATCH", "category": "documentation"},
 }
 
 

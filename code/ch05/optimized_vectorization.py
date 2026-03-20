@@ -27,7 +27,6 @@ class OptimizedVectorizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize data."""
-        # Enable cuDNN benchmarking for optimal kernel selection
         torch.manual_seed(42)
         self.data = torch.randn(self.N, device=self.device)
     

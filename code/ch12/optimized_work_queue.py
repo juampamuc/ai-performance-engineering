@@ -35,8 +35,7 @@ class OptimizedWorkQueueBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize tensors and load CUDA extension."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         # Load CUDA extension (will compile on first call)
         self._extension = load_work_queue_extension()
         
@@ -132,4 +131,3 @@ class OptimizedWorkQueueBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedWorkQueueBenchmark()
-

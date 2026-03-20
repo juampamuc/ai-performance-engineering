@@ -31,6 +31,15 @@ AUDIT_PYTEST_TARGETS = [
 ]
 REVIEW_REPORT_NAME = "BENCHMARK_PAIR_REVIEW_REPORT.md"
 AUDIT_PAIR_VALIDATION_TIMEOUT_SECONDS = 30
+LABS_INDEX_PATH = REPO_ROOT / "labs" / "README.md"
+PLAYBOOK_README_HINTS = (
+    "not currently a clean benchmark-pair lab",
+    "matrix/playbook",
+    "scenario and playbook lab",
+    "component doc, not a benchmark-pair lab",
+    "tool-driven, not benchmark-pair driven",
+    "workflow-oriented",
+)
 
 
 def _utc_now_iso() -> str:
@@ -255,6 +264,187 @@ def _validation_lookup(report: Optional[pair_validation.ValidationReport]) -> Di
     return {f"{result.chapter}:{result.example_name}": result for result in report.results}
 
 
+def _scope_type(scope: str) -> str:
+    return "lab" if scope.startswith("labs/") else "chapter"
+
+
+def _chapter_source_doc(scope: str) -> Tuple[Optional[Path], Optional[Path]]:
+    match = re.fullmatch(r"ch(\d{2})", scope)
+    if not match:
+        return None, None
+    chapter_num = int(match.group(1))
+    manuscript_candidates = [
+        REPO_ROOT / "book-after" / f"ch{chapter_num}.md",
+        REPO_ROOT / "book-after" / f"ch{chapter_num:02d}.md",
+    ]
+    fix_candidates = [
+        REPO_ROOT / "book-after" / f"ch{chapter_num:02d}-fix.md",
+        REPO_ROOT / "book-after" / f"ch{chapter_num}-fix.md",
+    ]
+    manuscript = next((path for path in manuscript_candidates if path.exists()), manuscript_candidates[0])
+    fix_packet = next((path for path in fix_candidates if path.exists()), None)
+    return manuscript, fix_packet
+
+
+def _load_lab_classifications(index_path: Path = LABS_INDEX_PATH) -> Dict[str, str]:
+    if not index_path.exists():
+        return {}
+    classifications: Dict[str, str] = {}
+    for raw_line in index_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 2 or cells[0] in {"Path", "---"}:
+            continue
+        desc = cells[1].lower()
+        if "benchmark-pair labs" in desc:
+            classification = "benchmark-pair"
+        elif "broader optimization story" in desc:
+            classification = "benchmark-story"
+        elif "workflow-oriented" in desc or "matrix/playbook" in desc:
+            classification = "playbook-matrix"
+        elif "verification discipline matters" in desc:
+            classification = "challenge-kernel-lab"
+        else:
+            continue
+        for match in re.finditer(r"`(labs/[^`]+)`", cells[0]):
+            classifications[match.group(1).rstrip("/")] = classification
+    return classifications
+
+
+def _first_pair_paths_for_scope(
+    scope: str,
+    pairs: Dict[str, Dict[str, Path]],
+) -> Tuple[Optional[Path], Optional[Path]]:
+    scoped_keys = sorted(key for key in pairs if key.startswith(f"{scope}:"))
+    if not scoped_keys:
+        return None, None
+    first_pair = pairs[scoped_keys[0]]
+    return first_pair.get("baseline"), first_pair.get("optimized")
+
+
+def _build_scope_contracts(
+    scopes: List[str],
+    pairs: Dict[str, Dict[str, Path]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    pair_counts = {
+        scope: sum(1 for pair_key in pairs if pair_key.startswith(f"{scope}:"))
+        for scope in scopes
+    }
+    lab_classes = _load_lab_classifications()
+    contracts: List[Dict[str, Any]] = []
+    findings: List[Dict[str, Any]] = []
+
+    for scope in scopes:
+        scope_kind = _scope_type(scope)
+        baseline_path, optimized_path = _first_pair_paths_for_scope(scope, pairs)
+        notes: List[str] = []
+        if scope_kind == "chapter":
+            source_doc, supplemental_doc = _chapter_source_doc(scope)
+            review_mode = "chapter-manuscript"
+            if source_doc is None or not source_doc.exists():
+                findings.append(
+                    pair_review._make_issue(
+                        file=scope,
+                        issue_type="source_doc_missing",
+                        severity="high",
+                        message=f"Missing chapter manuscript source doc for {scope} under book-after/",
+                        baseline_path=baseline_path,
+                        optimized_path=optimized_path,
+                    )
+                )
+                notes.append("missing manuscript")
+        else:
+            source_doc = REPO_ROOT / scope / "README.md"
+            supplemental_doc = None
+            review_mode = lab_classes.get(scope, "unknown")
+            readme_text = source_doc.read_text(encoding="utf-8").lower() if source_doc.exists() else ""
+            if not source_doc.exists():
+                findings.append(
+                    pair_review._make_issue(
+                        file=scope,
+                        issue_type="source_doc_missing",
+                        severity="high",
+                        message=f"Missing lab README for {scope}",
+                        baseline_path=baseline_path,
+                        optimized_path=optimized_path,
+                    )
+                )
+                notes.append("missing README")
+            if review_mode == "unknown":
+                findings.append(
+                    pair_review._make_issue(
+                        file=scope,
+                        issue_type="scope_contract_mismatch",
+                        severity="medium",
+                        message=f"Lab {scope} is not classified in labs/README, so audit expectations are ambiguous",
+                        baseline_path=baseline_path,
+                        optimized_path=optimized_path,
+                    )
+                )
+                notes.append("unclassified in labs/README")
+            if review_mode in {"benchmark-pair", "benchmark-story", "challenge-kernel-lab"} and pair_counts.get(scope, 0) == 0:
+                findings.append(
+                    pair_review._make_issue(
+                        file=scope,
+                        issue_type="scope_contract_mismatch",
+                        severity="high",
+                        message=f"Benchmark-facing lab {scope} has no discoverable baseline/optimized pair targets",
+                        baseline_path=baseline_path,
+                        optimized_path=optimized_path,
+                    )
+                )
+                notes.append("no discoverable pairs")
+            if review_mode == "playbook-matrix" and readme_text and not any(hint in readme_text for hint in PLAYBOOK_README_HINTS):
+                findings.append(
+                    pair_review._make_issue(
+                        file=str(source_doc),
+                        issue_type="scope_contract_mismatch",
+                        severity="medium",
+                        message=(
+                            f"Playbook/matrix lab {scope} does not clearly explain its non-pair benchmark contract in the README"
+                        ),
+                        baseline_path=baseline_path,
+                        optimized_path=optimized_path,
+                    )
+                )
+                notes.append("README lacks non-pair contract language")
+
+        contracts.append(
+            {
+                "scope": scope,
+                "scope_type": scope_kind,
+                "review_mode": review_mode,
+                "pair_count": pair_counts.get(scope, 0),
+                "source_doc": str(source_doc) if source_doc is not None else None,
+                "source_doc_exists": bool(source_doc and source_doc.exists()),
+                "supplemental_doc": str(supplemental_doc) if supplemental_doc is not None else None,
+                "status": "FLAG" if notes else "PASS",
+                "notes": notes,
+            }
+        )
+
+    return contracts, pair_review.dedupe_issues(findings)
+
+
+def _run_scope_contract_step(
+    scopes: List[str],
+    pairs: Dict[str, Dict[str, Path]],
+    output_dir: Path,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    contract_dir = output_dir / "scope_contract"
+    contracts, findings = _build_scope_contracts(scopes, pairs)
+    report_path = contract_dir / "scope_contracts.json"
+    _write_json(report_path, {"scope_contracts": contracts, "findings": findings})
+    step = {
+        "status": "completed_with_findings" if findings else "completed",
+        "summary": {"scopes": len(contracts), "findings": len(findings)},
+        "artifacts": {"json": str(report_path)},
+    }
+    return step, contracts, findings
+
+
 def _pair_statuses(
     pairs: Dict[str, Dict[str, Path]],
     review_report: pair_review.ReviewReport,
@@ -467,6 +657,21 @@ def _render_summary_markdown(summary: Dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## Scope Contracts",
+            "",
+            "| Scope | Type | Review Mode | Pairs | Status | Source Doc |",
+            "|---|---|---|---:|---|---|",
+        ]
+    )
+    for item in summary.get("scope_contracts", []):
+        source_doc = item.get("source_doc") or "n/a"
+        lines.append(
+            f"| `{item['scope']}` | {item['scope_type']} | {item['review_mode']} | "
+            f"{item['pair_count']} | {item['status']} | `{source_doc}` |"
+        )
+    lines.extend(
+        [
+            "",
             "## Pair Statuses",
             "",
             "| Pair | Status | Bucket |",
@@ -507,6 +712,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     compliance_step, _compliance_report = _run_compliance_step(files, output_dir)
     validation_step, validation_report = _run_pair_validation_step(scopes, output_dir, cuda_available=cuda_available)
     pytest_step = _run_pytest_audit_step(output_dir)
+    contract_scopes = scopes if scopes != ["all"] else sorted({pair_key.split(":", 1)[0] for pair_key in pairs})
+    scope_contract_step, scope_contracts, scope_contract_findings = _run_scope_contract_step(
+        contract_scopes,
+        pairs,
+        output_dir,
+    )
     report_drift_step, report_drift_findings = _run_report_drift_step(
         scopes,
         pairs,
@@ -526,14 +737,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             "compliance": compliance_step,
             "pair_validation": validation_step,
             "pytest_audit": pytest_step,
+            "scope_contract": scope_contract_step,
             "report_drift": report_drift_step,
             "gpu_rescan": gpu_step,
         },
         "summary": {
             "review_findings": len(review_report.findings),
+            "scope_contract_findings": len(scope_contract_findings),
             "report_drift_findings": len(report_drift_findings),
             "pair_validation_ran": validation_report is not None,
         },
+        "scope_contracts": scope_contracts,
         "pair_results": _pair_results(
             pairs,
             review_report,
@@ -607,6 +821,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "compliance": compliance_step.get("artifacts", {}),
             "pair_validation": validation_step.get("artifacts", {}),
             "pytest_audit": pytest_step.get("artifacts", {}),
+            "scope_contract": scope_contract_step.get("artifacts", {}),
             "report_drift": report_drift_step.get("artifacts", {}),
             "gpu_rescan": gpu_step.get("artifacts", {}),
         },

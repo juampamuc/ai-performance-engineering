@@ -19,6 +19,8 @@ class BaselineCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """
 
     allow_cpu = True
+    signature_equivalence_group = "ch02_cublas_tf32"
+    signature_equivalence_ignore_fields = ("precision_flags",)
 
     def __init__(self):
         super().__init__()

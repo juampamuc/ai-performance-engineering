@@ -210,8 +210,7 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
     
     def setup(self) -> None:
         """Setup: Initialize model with integrated KV cache."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         

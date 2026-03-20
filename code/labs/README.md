@@ -28,7 +28,7 @@ If a lab cannot answer those questions yet, the doc should say so directly inste
 | Path | Description |
 | --- | --- |
 | `labs/block_scaling`, `labs/blackwell_matmul`, `labs/blackwell_gemm_optimizations`, `labs/flashattention4`, `labs/memory_bandwidth_patterns`, `labs/nccl_nixl_nvshmem`, `labs/persistent_decode`, `labs/parameterized_cuda_graphs`, `labs/training_hotpath` | Benchmark-pair labs with strong kernel/perf narratives and artifact-backed measured deltas, including narrow bandwidth-pattern, communication-stack tradeoff, and CUDA-graph replay labs. |
-| `labs/decode_optimization`, `labs/kv_optimization`, `labs/moe_cuda`, `labs/moe_optimization_journey` | Serving-path and MoE labs where the benchmark pair is part of a broader optimization story. |
+| `labs/cache_aware_disagg_inference`, `labs/decode_optimization`, `labs/kv_optimization`, `labs/moe_cuda`, `labs/moe_optimization_journey` | Serving-path and MoE labs where the benchmark pair is part of a broader optimization story. |
 | `labs/moe_decode_blackwell_matrix`, `labs/nanochat_fullstack`, `labs/python_concurrency`, `labs/vllm-deepseek-tuning` | Larger workflow-oriented and matrix/playbook labs that need a richer doc model than a simple pair benchmark. |
 | `labs/nvfp4_*` | Low-precision kernel labs where verification discipline matters as much as the timing win. |
 

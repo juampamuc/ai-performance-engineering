@@ -43,8 +43,7 @@ class OptimizedArithmeticIntensityBenchmark(VerificationPayloadMixin, BaseBenchm
     
     def setup(self) -> None:
         """Setup: Initialize tensors for compute-bound operation."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
@@ -125,4 +124,3 @@ class OptimizedArithmeticIntensityBenchmark(VerificationPayloadMixin, BaseBenchm
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedArithmeticIntensityBenchmark()
-

@@ -1,4 +1,4 @@
-"""optimized_kernel_fusion.py - Fused kernel using CUDA graphs (optimized)."""
+"""optimized_kernel_fusion.py - Fused elementwise kernel (optimized)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import torch
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.benchmark.verification import simple_signature
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
@@ -24,6 +25,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.data = None
+        self._verify_input: Optional[torch.Tensor] = None
         self.N = 16_000_000  # Larger size to be memory-bound
         self.iterations = 10
         self._extension = None
@@ -50,10 +52,11 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Initialize deterministic input on the device.
         torch.manual_seed(42)
         self.data = torch.arange(self.N, dtype=torch.float32, device=self.device)
+        self._verify_input = self.data.detach().clone()
 
         # Perform a dry run on the dedicated stream to pay compilation and
-        # any internal setup costs up front. This also helps CUDA Graphs
-        # inside the extension to capture a stable pattern if implemented.
+        # any internal setup costs up front so later benchmark iterations
+        # run from a stable first-launch state.
         with torch.cuda.stream(self._stream):
             self._extension.fused_kernel(self.data, 1)
 
@@ -98,7 +101,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"data": self.data},
+            inputs={"data": self._verify_input},
             output=self.data.detach().clone(),
             batch_size=self.N,
             precision_flags={
@@ -114,6 +117,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         """Teardown: Clean up resources and destroy the dedicated stream."""
         self.data = None
+        self._verify_input = None
         # Explicitly delete the stream so that future benchmarks start from
         # a clean state and to avoid holding onto resources.
         self._stream = None
@@ -132,6 +136,14 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.N,
+            dtype="float32",
+            elements=self.N,
+            iterations=self.iterations,
+        ).to_dict()
     
     def get_custom_metrics(self) -> Optional[dict]:
         """Return workload metrics for the fused LLM kernel path."""
@@ -159,4 +171,3 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedKernelFusionBenchmark()
-

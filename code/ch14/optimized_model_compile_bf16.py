@@ -62,8 +62,7 @@ class OptimizedModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark
     
     def setup(self) -> None:
         """Setup: initialize model and compile it."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         

@@ -56,7 +56,6 @@ class OptimizedStreamsBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize streams, pinned memory, and device buffers."""
-        # Enable cuDNN benchmarking for optimal kernel selection
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
@@ -209,5 +208,4 @@ class OptimizedStreamsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> OptimizedStreamsBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedStreamsBenchmark()
-
 

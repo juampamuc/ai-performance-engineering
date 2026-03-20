@@ -24,6 +24,8 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """
 
     allow_cpu = True
+    signature_equivalence_group = "ch02_cublas_tf32"
+    signature_equivalence_ignore_fields = ("precision_flags",)
 
     def __init__(self):
         super().__init__()
@@ -71,11 +73,11 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
             batch_size=self.A.shape[0],
             parameter_count=0,
             precision_flags={
-                # Keep signature aligned with baseline; TF32 is the optimization detail, not a workload change.
+                # TF32 is the optimized math mode; signature equivalence ignores this field so the workload still pairs cleanly.
                 "fp16": False,
                 "bf16": False,
                 "fp8": False,
-                "tf32": False,
+                "tf32": True,
             },
             output_tolerance=(1e-2, 1e-1),
         )

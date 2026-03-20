@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from ch01.optimized_performance import OptimizedPerformanceBatchBenchmark
 from ch01.optimized_performance_fp16 import OptimizedPerformanceFP16Benchmark
 from ch02.baseline_cublas import BaselineCublasBenchmark
 from ch02.optimized_cublas import OptimizedCublasBenchmark
+from core.benchmark.verification import coerce_input_signature
 from core.harness.benchmark_harness import BaseBenchmark
 from labs.flexattention.baseline_flex_attention import BaselineFlexAttentionBenchmark
 from labs.flexattention.optimized_flex_attention import OptimizedFlexAttentionBenchmark
@@ -36,6 +38,19 @@ from core.harness.run_benchmarks import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+KERNEL_FUSION_SIGNATURE_MODULES = (
+    "ch12.baseline_kernel_fusion",
+    "ch12.optimized_kernel_fusion",
+    "ch12.optimized_kernel_fusion_llm_dedicated_stream_and_prefetch_for_blackwell",
+    "ch12.optimized_kernel_fusion_llm_persistent_buffer_and_stream_friendly_setup",
+    "ch12.optimized_kernel_fusion_llm_reuse_static_tensor_and_simplify_setup",
+)
+TIMEOUT_PRONE_SIGNATURE_CASES = (
+    ("ch13.baseline_bandwidth_naive", 16_777_216, (4096, 4096, 16), "float32"),
+    ("ch13.optimized_bandwidth_naive", 16_777_216, (4096, 4096, 16), "float32"),
+    ("ch18.baseline_vllm_v1_integration", 8, (128,), "int64"),
+    ("ch18.optimized_vllm_v1_integration", 8, (128,), "int64"),
+)
 
 
 def test_ch01_precision_benchmarks_disable_tf32_during_setup() -> None:
@@ -557,3 +572,25 @@ def test_run_benchmarks_reaps_current_run_descendants() -> None:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2)
+
+
+def test_ch12_kernel_fusion_variants_publish_static_input_signatures_without_execution() -> None:
+    for module_name in KERNEL_FUSION_SIGNATURE_MODULES:
+        module = importlib.import_module(module_name)
+        benchmark = module.get_benchmark()
+        signature = coerce_input_signature(benchmark.get_input_signature())
+
+        assert signature.batch_size == 16_000_000
+        assert signature.dtypes["workload"] == "float32"
+        assert signature.shapes["workload"] == (16_000_000, 10)
+
+
+def test_timeout_prone_pairs_publish_static_input_signatures_without_execution() -> None:
+    for module_name, expected_batch_size, expected_shape, expected_dtype in TIMEOUT_PRONE_SIGNATURE_CASES:
+        module = importlib.import_module(module_name)
+        benchmark = module.get_benchmark()
+        signature = coerce_input_signature(benchmark.get_input_signature())
+
+        assert signature.batch_size == expected_batch_size
+        assert signature.dtypes["workload"] == expected_dtype
+        assert signature.shapes["workload"] == expected_shape

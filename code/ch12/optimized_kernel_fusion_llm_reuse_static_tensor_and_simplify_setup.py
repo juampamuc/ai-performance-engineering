@@ -1,4 +1,4 @@
-"""optimized_kernel_fusion.py - Fused kernel using CUDA graphs (optimized)."""
+"""optimized_kernel_fusion.py - Fused elementwise kernel (optimized)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import torch
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.benchmark.verification import simple_signature
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
@@ -24,6 +25,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.data = None
+        self._verify_input: Optional[torch.Tensor] = None
         self.N = 16_000_000  # Larger size to be memory-bound
         self.iterations = 10
         self._extension = None
@@ -38,8 +40,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         This version avoids redundant allocations and RNG reseeding around the
         warmup call so that we have a single, persistent buffer layout. In
         realistic settings this reduces allocator pressure and page table
-        activity, and more closely matches how CUDA Graphs expect static
-        memory.
+        activity while keeping memory layout stable across runs.
         """
         # Load CUDA extension (will compile on first call)
         self._extension = load_kernel_fusion_extension()
@@ -47,6 +48,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Initialize data once; we keep this buffer layout stable
         torch.manual_seed(42)
         self.data = torch.arange(self.N, dtype=torch.float32, device=self.device)
+        self._verify_input = self.data.detach().clone()
         torch.cuda.synchronize(self.device)
 
         # Warmup fused kernel so any one-time costs (JIT, caches) are paid up front.
@@ -80,7 +82,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"data": self.data},
+            inputs={"data": self._verify_input},
             output=self.data.detach().clone(),
             batch_size=self.N,
             precision_flags={
@@ -96,6 +98,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.data = None
+        self._verify_input = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -111,6 +114,14 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.N,
+            dtype="float32",
+            elements=self.N,
+            iterations=self.iterations,
+        ).to_dict()
     
     def get_custom_metrics(self) -> Optional[dict]:
         """Return workload metrics for the static-tensor fused path."""
@@ -138,4 +149,3 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return OptimizedKernelFusionBenchmark()
-

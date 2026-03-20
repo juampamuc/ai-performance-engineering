@@ -16,6 +16,7 @@ import torch
 
 from typing import Optional
 
+from core.benchmark.verification import simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
@@ -119,6 +120,15 @@ class BaselineBandwidthNaiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
             enable_profiling=False,
             timing_method="wall_clock",
         )
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.size,
+            dtype="float32",
+            rows=self.rows,
+            cols=self.cols,
+            passes=self.passes,
+        ).to_dict()
     
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
@@ -139,4 +149,3 @@ class BaselineBandwidthNaiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselineBandwidthNaiveBenchmark()
-

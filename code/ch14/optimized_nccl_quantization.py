@@ -39,8 +39,7 @@ class OptimizedNcclQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark
     
     def setup(self) -> None:
         """Setup: Initialize quantized model for NCCL."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self.tensor = torch.randn(self.num_chunks, self.chunk_len, device=self.device, dtype=torch.float32)

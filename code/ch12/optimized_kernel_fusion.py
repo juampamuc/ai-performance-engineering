@@ -1,4 +1,4 @@
-"""optimized_kernel_fusion.py - Fused kernel using CUDA graphs (optimized)."""
+"""optimized_kernel_fusion.py - Fused elementwise kernel (optimized)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import torch
 from typing import Optional
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.benchmark.verification import simple_signature
 from core.harness.benchmark_harness import (  # noqa: E402
     BaseBenchmark,
     BenchmarkConfig,
@@ -35,8 +36,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize tensors and load CUDA extension."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+
         # Load CUDA extension (will compile on first call)
         self._extension = load_kernel_fusion_extension()
         
@@ -44,7 +44,7 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.data = torch.arange(self.N, dtype=torch.float32, device=self.device)
         self._verify_input = self.data.detach().clone()
         torch.cuda.synchronize(self.device)
-        # Dry run so CUDA graph / kernel fusion setup cost is prepaid
+        # Dry run so first-launch kernel fusion overhead is prepaid
         self._extension.fused_kernel(self.data, 1)
         torch.cuda.synchronize()
         torch.manual_seed(42)
@@ -100,6 +100,14 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.N,
+            dtype="float32",
+            elements=self.N,
+            iterations=self.iterations,
+        ).to_dict()
     
     def get_custom_metrics(self) -> Optional[dict]:
         """Return workload metrics for the fused kernel path."""

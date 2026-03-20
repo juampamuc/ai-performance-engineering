@@ -44,7 +44,6 @@ class OptimizedTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize matrices in FP16/BF16 for tensor cores."""
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
