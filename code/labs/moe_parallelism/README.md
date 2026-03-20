@@ -31,5 +31,6 @@ python labs/moe_parallelism/run_lab.py --scenario deepseek_gb200
 - `python labs/moe_parallelism/run_lab.py --scenario deepseek_gb200` runs the planner directly (without aisp).
 
 ## Notes
+- This is a workflow-oriented scenario and playbook lab, not a benchmark-pair lab.
 - Baseline vs optimized here are *planning* scenarios (different designs), not comparable performance benchmarks.
 - `plan.py` centralizes scenario definitions so you only update one file when adding a new topology.

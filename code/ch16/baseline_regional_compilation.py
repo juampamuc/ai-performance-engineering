@@ -1,4 +1,4 @@
-"""baseline_regional_compilation.py - Full model compilation baseline (piece-graph context)."""
+"""baseline_regional_compilation.py - Eager whole-model baseline for regional compilation."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ class DummyTransformer(nn.Module):
 
 
 class BaselineRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Full-model compilation baseline that demonstrates piece-graph issues."""
+    """Eager whole-model baseline for the regional compilation comparison."""
 
     def __init__(self):
         super().__init__()
@@ -181,4 +181,3 @@ class BaselineRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchma
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineRegionalCompilationBenchmark()
-

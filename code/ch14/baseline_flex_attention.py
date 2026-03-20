@@ -124,13 +124,14 @@ class BaselineFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_triton_metrics
-        return compute_triton_metrics(
-            num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
+        total_flops = 2.0 * self.seq_len * self.seq_len * self.head_dim * self.num_heads
+        total_bytes = float(self.seq_len * self.num_heads * self.head_dim * 3 * (2 if self.dtype != torch.float32 else 4))
+        from core.benchmark.metrics import compute_roofline_metrics
+        return compute_roofline_metrics(
+            total_flops=total_flops,
+            total_bytes=total_bytes,
             elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            block_size=getattr(self, 'BLOCK_SIZE', 1024),
-            num_warps=getattr(self, 'num_warps', 4),
+            precision="bf16" if self.dtype == torch.bfloat16 else "fp16",
         )
 
     def validate_result(self) -> Optional[str]:

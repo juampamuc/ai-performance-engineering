@@ -37,7 +37,7 @@ class BaselineTrainingSingleBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.criterion: Optional[nn.Module] = None
         self.output: Optional[torch.Tensor] = None
-        # Heavier batch/hidden to highlight benefits of AMP/compile in the optimized path.
+        # Heavier batch/hidden to highlight benefits of TF32 + fused AdamW in the optimized path.
         self.batch_size = 32
         self.hidden_dim = 8192
         self.train_steps = 6

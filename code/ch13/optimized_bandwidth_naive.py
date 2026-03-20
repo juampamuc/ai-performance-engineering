@@ -132,7 +132,7 @@ class OptimizedBandwidthCoalescedBenchmark(VerificationPayloadMixin, BaseBenchma
         return compute_precision_metrics(
             fp32_time_ms=None,
             reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
-            precision_type="fp8",
+            precision_type="fp32",
         )
 
     def validate_result(self) -> Optional[str]:

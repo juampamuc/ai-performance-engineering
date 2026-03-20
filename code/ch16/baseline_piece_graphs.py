@@ -152,11 +152,10 @@ class BaselinePieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def validate_result(self) -> Optional[str]:
-        if self.model is None or self.inputs is None:
+        if self.model is None or self._verify_input is None:
             return "Model/inputs not initialized"
         return None
 
 
 def get_benchmark() -> BaseBenchmark:
     return BaselinePieceGraphsBenchmark()
-

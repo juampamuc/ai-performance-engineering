@@ -13,6 +13,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from labs.persistent_decode.optimized_persistent_decode_triton import persistent_decode_kernel
 from labs.persistent_decode.persistent_decode_common import (
     build_inputs,
+    build_decode_input_signature,
     get_decode_options,
     get_decode_profile,
     resolve_device,
@@ -250,6 +251,14 @@ class OptimizedPersistentDecodeGraphsBenchmark(VerificationPayloadMixin, BaseBen
             "persistent_decode_gr.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
         }
 
+    def get_input_signature(self) -> dict:
+        return build_decode_input_signature(
+            batch=self.batch,
+            seq_len=self.seq_len,
+            head_dim=self.head_dim,
+            quantization=self.options.quantization,
+        )
+
     def validate_result(self) -> str | None:
         if self.inputs is None:
             return "Inputs not initialized"
@@ -259,4 +268,3 @@ class OptimizedPersistentDecodeGraphsBenchmark(VerificationPayloadMixin, BaseBen
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedPersistentDecodeGraphsBenchmark()
-

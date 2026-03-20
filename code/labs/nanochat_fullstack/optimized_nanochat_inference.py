@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optimized: NanoChat inference loop with Flash SDPA + KV paging."""
+"""Optimized: NanoChat inference loop with compile-driven decode overhead reduction."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Optional
 
 import torch
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
@@ -53,13 +54,13 @@ class OptimizedNanochatInferenceBenchmark(VerificationPayloadMixin, BaseBenchmar
             n_head=self.n_head,
             n_kv_head=self.n_kv_head,
             n_embd=self.n_embd,
-            # Keep attention backend identical to baseline; this benchmark's optimization
-            # story is reduced overhead via compilation on Blackwell.
+            # Keep the model path aligned with the baseline. The optimization here
+            # is the compiled steady-state decode path, not a different attention backend.
             use_flash_sdp=False,
             use_flash3=False,
             use_cta_clustering=False,
-            # Keep KV cache layout identical to baseline; focus the optimization on
-            # attention kernel choice (fused SDPA vs. efficient/math backends).
+            # Keep KV cache layout aligned with the baseline so the comparison isolates
+            # compilation/runtime-overhead changes.
             kv_block_size=None,
             kv_page_size=None,
         )
@@ -144,6 +145,20 @@ class OptimizedNanochatInferenceBenchmark(VerificationPayloadMixin, BaseBenchmar
             output_tolerance=(0.05, 0.2),
         )
 
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.batch_size,
+            dtype="int64",
+            prompt_len=self.prompt_len,
+            decode_len=self.decode_len,
+            vocab_size=self.vocab_size,
+            n_layer=self.n_layer,
+            n_head=self.n_head,
+            n_kv_head=self.n_kv_head,
+            n_embd=self.n_embd,
+            precision_flags=PrecisionFlags(bf16=True, tf32=False),
+        ).to_dict()
+
     def validate_result(self) -> Optional[str]:
         if self.output is None:
             return "benchmark_fn() did not produce output"
@@ -155,5 +170,4 @@ class OptimizedNanochatInferenceBenchmark(VerificationPayloadMixin, BaseBenchmar
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedNanochatInferenceBenchmark()
-
 

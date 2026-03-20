@@ -2,6 +2,7 @@
 
 ## Summary
 Automates CUTLASS profiler sweeps for transformer-style GEMMs, records Triton or custom kernel results, and compares everything so you can prove custom kernels beat the fastest stock CUTLASS option.
+This is a workflow-oriented matrix/playbook lab, not currently a clean benchmark-pair lab.
 
 ## Learning Goals
 - Generate per-shape CUTLASS profiler logs and store the best kernel metadata.

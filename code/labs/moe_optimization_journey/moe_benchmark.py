@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
@@ -216,7 +217,23 @@ class MoEJourneyBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def validate_result(self) -> Optional[str]:
         return None if self.compiled_model is not None else "Model not initialized"
-    
+
+    def get_input_signature(self) -> dict:
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        return simple_signature(
+            batch_size=self.BATCH_SIZE,
+            dtype="int64",
+            seq_len=self.SEQ_LEN,
+            vocab_size=self.VOCAB_SIZE,
+            hidden_size=self.HIDDEN_SIZE,
+            intermediate_size=self.INTERMEDIATE_SIZE,
+            num_layers=self.NUM_LAYERS,
+            num_heads=self.NUM_HEADS,
+            num_experts=self.NUM_EXPERTS,
+            num_experts_per_tok=self.NUM_EXPERTS_PER_TOK,
+            precision_flags=PrecisionFlags(bf16=True, tf32=tf32_enabled),
+        ).to_dict()
+
     def get_custom_metrics(self) -> Optional[Dict[str, float]]:
         metrics = {
             "level": float(self.LEVEL),

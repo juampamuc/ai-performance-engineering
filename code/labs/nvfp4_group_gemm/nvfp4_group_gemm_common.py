@@ -15,6 +15,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 import torch
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.benchmark.wrapper_utils import attach_benchmark_metadata
 from core.harness.benchmark_harness import (
@@ -296,6 +297,20 @@ class NVFP4GroupGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if len(self._last_output) != self.case.g:
             return f"Expected {self.case.g} group outputs, got {len(self._last_output)}"
         return None
+
+    def get_input_signature(self) -> dict:
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        return simple_signature(
+            batch_size=self.case.g,
+            dtype="float16",
+            groups=self.case.g,
+            total_m=sum(int(v) for v in self.case.m),
+            total_n=sum(int(v) for v in self.case.n),
+            total_k=sum(int(v) for v in self.case.k),
+            inputs_per_iteration=self.inputs_per_iteration,
+            seed=self.case.seed,
+            precision_flags=PrecisionFlags(fp16=True, fp8=True, tf32=tf32_enabled),
+        ).to_dict()
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload

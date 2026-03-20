@@ -1,4 +1,4 @@
-"""Chapter 16: MoE Routing - Compare baseline vs optimized implementations using formal harness.
+"""Chapter 16: Production inference optimization benchmark entrypoint.
 
 Uses the BaseBenchmark - benchmarks provide get_benchmark() function,
 harness measures directly (no subprocess, no output parsing).

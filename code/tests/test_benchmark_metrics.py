@@ -334,6 +334,29 @@ class TestPrecisionMetrics:
         assert metrics["precision.speedup"] == 2.0
         assert metrics["precision.memory_reduction_factor"] == 2.0
 
+    def test_int8_speedup(self):
+        """Test INT8 precision speedup."""
+        metrics = compute_precision_metrics(
+            fp32_time_ms=12.0,
+            reduced_precision_time_ms=3.0,
+            precision_type="int8",
+        )
+
+        assert metrics["precision.speedup"] == 4.0
+        assert metrics["precision.memory_reduction_factor"] == 4.0
+        assert metrics["precision.speedup_efficiency_pct"] == 100.0
+
+    def test_fp32_is_neutral_precision(self):
+        """FP32 should report no storage reduction versus itself."""
+        metrics = compute_precision_metrics(
+            fp32_time_ms=10.0,
+            reduced_precision_time_ms=None,
+            precision_type="fp32",
+        )
+
+        assert metrics["precision.fp32_ms"] == 10.0
+        assert metrics["precision.memory_reduction_factor"] == 1.0
+
 
 class TestInferenceMetrics:
     """Test compute_inference_metrics."""

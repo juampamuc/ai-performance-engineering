@@ -155,7 +155,6 @@ class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp16": False,
                 "bf16": False,
                 "fp8": False,
-                "int8": True,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
             },
             output_tolerance=(1.0, 10.0),
@@ -179,12 +178,11 @@ class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
             fp32_time_ms=None,
             reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
-            precision_type="fp8",
+            precision_type="int8",
         )
 
     def validate_result(self) -> Optional[str]:

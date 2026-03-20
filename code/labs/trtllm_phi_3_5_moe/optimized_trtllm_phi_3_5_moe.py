@@ -7,6 +7,7 @@ from typing import Optional
 
 import torch
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from labs.trtllm_phi_3_5_moe.trtllm_common import (
@@ -195,6 +196,17 @@ class OptimizedTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
+    def get_input_signature(self) -> dict:
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        return simple_signature(
+            batch_size=self.batch_size,
+            dtype="int64",
+            prompt_len=self.prompt_len,
+            max_new_tokens=self.max_new_tokens,
+            vocab_slice=self.vocab_slice,
+            precision_flags=PrecisionFlags(fp16=True, tf32=tf32_enabled),
+        ).to_dict()
+
     def validate_result(self) -> Optional[str]:
         if self._generated_output_ids is None:
             return "benchmark_fn() did not produce output"
@@ -203,5 +215,4 @@ class OptimizedTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTrtLlmPhi35MoeBenchmark()
-
 

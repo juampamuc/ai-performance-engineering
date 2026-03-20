@@ -7,6 +7,7 @@ from functools import partial
 from typing import Optional, Tuple
 
 import torch
+from core.benchmark.verification import InputSignature, PrecisionFlags
 from core.common.device_utils import require_cuda_device
 
 resolve_device = partial(require_cuda_device, "CUDA device required for persistent decode lab")
@@ -147,6 +148,39 @@ def build_inputs(
 def tokens_per_iteration() -> float:
     batch, seq_len, _ = resolve_shapes()
     return float(batch * seq_len)
+
+
+def build_decode_input_signature(
+    *,
+    batch: int,
+    seq_len: int,
+    head_dim: int,
+    quantization: str,
+) -> dict:
+    """Publish a static workload signature without running the decode kernels."""
+    quant = str(quantization).lower()
+    use_fp16 = quant in {"fp16", "int4"}
+    input_dtype = "float16" if use_fp16 else "float32"
+    tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+    signature = InputSignature(
+        batch_size=batch,
+        shapes={
+            "q": (batch, seq_len, head_dim),
+            "k": (batch, seq_len, head_dim),
+            "v": (batch, seq_len, head_dim),
+            "output": (1, min(8, seq_len), head_dim),
+        },
+        dtypes={
+            "q": input_dtype,
+            "k": input_dtype,
+            "v": input_dtype,
+            "output": "float32",
+        },
+        parameter_count=0,
+        precision_flags=PrecisionFlags(fp16=use_fp16, tf32=tf32_enabled),
+    )
+    signature.quantization_mode = quant
+    return signature.to_dict()
 
 
 def _fake_int4(t: torch.Tensor) -> torch.Tensor:

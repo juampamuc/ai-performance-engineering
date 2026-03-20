@@ -8,6 +8,8 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from labs.persistent_decode.persistent_decode_common import (
     build_inputs,
+    build_decode_input_signature,
+    get_decode_options,
     resolve_device,
     resolve_shapes,
     tokens_per_iteration,
@@ -20,6 +22,7 @@ class BaselinePersistentDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def __init__(self) -> None:
         super().__init__()
         self.device = resolve_device()
+        self.options = get_decode_options()
         self.inputs = None
         self.output: Optional[torch.Tensor] = None
         batch, seq_len, head_dim = resolve_shapes()
@@ -101,6 +104,14 @@ class BaselinePersistentDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
             "persistent_decode.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
         }
 
+    def get_input_signature(self) -> dict:
+        return build_decode_input_signature(
+            batch=self.batch,
+            seq_len=self.seq_len,
+            head_dim=self.head_dim,
+            quantization=self.options.quantization,
+        )
+
     def validate_result(self) -> str | None:
         if self.inputs is None:
             return "Inputs not initialized"
@@ -110,4 +121,3 @@ class BaselinePersistentDecodeBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
 def get_benchmark() -> BaseBenchmark:
     return BaselinePersistentDecodeBenchmark()
-

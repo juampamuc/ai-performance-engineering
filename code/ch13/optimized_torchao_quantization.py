@@ -97,7 +97,6 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
                 "fp16": False,
                 "bf16": False,
                 "fp8": False,
-                "int8": True,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
             },
             output_tolerance=(1.0, 10.0),

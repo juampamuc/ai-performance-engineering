@@ -30,6 +30,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.arch_config import prefer_sdpa_backends
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
@@ -559,6 +560,19 @@ class PagedKVOffloadBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Force single-GPU visibility for consistent runs on multi-GPU hosts.
         config.single_gpu = True
         return config
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.cfg.batch_size,
+            dtype="float16",
+            num_heads=self.cfg.num_heads,
+            head_dim=self.cfg.head_dim,
+            max_seq_len=self.cfg.max_seq_len,
+            page_tokens=self.cfg.page_tokens,
+            decode_tokens=self.cfg.decode_tokens,
+            repeat_pages=self.cfg.repeat_pages,
+            precision_flags=PrecisionFlags(fp16=True, tf32=False),
+        ).to_dict()
 
     def validate_result(self) -> Optional[str]:
         if self._fp8_reason and self.cfg.prefer_fp8:

@@ -15,7 +15,7 @@ from core.harness.benchmark_harness import (
     LaunchVia,
     TorchrunLaunchSpec,
 )
-from core.benchmark.verification import PrecisionFlags
+from core.benchmark.verification import PrecisionFlags, InputSignature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
@@ -67,6 +67,11 @@ class TorchrunScriptBenchmark(VerificationPayloadMixin, BaseBenchmark):
         hidden = 128 + (seed % 128)
         meta = 32 + ((seed >> 8) % 64)
         return hidden, meta
+
+    def _signature_world_size(self) -> int:
+        if self._default_nproc_per_node is not None:
+            return int(self._default_nproc_per_node)
+        return 2 if self._multi_gpu_required else 1
 
     def setup(self) -> None:
         torch.manual_seed(42)
@@ -133,6 +138,25 @@ class TorchrunScriptBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if self._output is None:
             return "No output captured"
         return None
+
+    def get_input_signature(self) -> InputSignature:
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        return InputSignature(
+            shapes={
+                "input": (self._batch_size, self._hidden_dim),
+                "meta": (self._batch_size, self._meta_dim),
+                "output": (self._batch_size, self._hidden_dim),
+            },
+            dtypes={
+                "input": "torch.float32",
+                "meta": "torch.float32",
+                "output": "torch.float32",
+            },
+            batch_size=self._batch_size,
+            parameter_count=int(self._hidden_dim * self._hidden_dim),
+            precision_flags=PrecisionFlags(tf32=tf32_enabled),
+            world_size=self._signature_world_size(),
+        )
 
     def _resolve_nproc_per_node(self) -> Optional[int]:
         if self._default_nproc_per_node is None and not self._multi_gpu_required:

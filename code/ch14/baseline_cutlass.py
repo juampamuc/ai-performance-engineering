@@ -115,13 +115,12 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_triton_metrics
-        return compute_triton_metrics(
-            num_elements=getattr(self, 'N', getattr(self, 'num_elements', 1024)),
+        from core.benchmark.metrics import compute_gemm_metrics
+        return compute_gemm_metrics(
+            self.m, self.n, self.k,
             elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            block_size=getattr(self, 'BLOCK_SIZE', 1024),
-            num_warps=getattr(self, 'num_warps', 4),
+            precision="fp16",
+            bytes_per_element=2,
         )
 
     def validate_result(self) -> Optional[str]:
@@ -134,4 +133,3 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
     return BaselineCutlassBenchmark()
-

@@ -4,7 +4,7 @@
 Exploratory lab for the CUTLASS tcgen05 dense-GEMM cluster-shape question: when does `1-SM` beat `2-SM`, and is `4-SM` even available in the current SM100 CUTLASS schedule set?
 
 ## Why This Is A Lab
-This is not a canonical baseline/optimized chapter pair.
+This is a workflow-oriented matrix/playbook lab, not a benchmark-pair lab.
 It is a shape-and-schedule probe that benchmarks the shipped `1-SM` and `2-SM` wrappers and reports whether `4-SM` is supported by the current CUTLASS headers.
 It uses the repo's harness clock-lock helper by default so the direct script is still measured under the same app-clock discipline as the benchmark harness.
 

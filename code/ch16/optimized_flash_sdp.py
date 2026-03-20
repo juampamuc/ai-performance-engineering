@@ -1,4 +1,4 @@
-"""Optimized Flash SDP attention benchmark with torch.compile and fail-fast checks."""
+"""Optimized Flash SDP attention benchmark with fail-fast backend checks."""
 
 from __future__ import annotations
 
@@ -149,5 +149,4 @@ class OptimizedFlashSDPBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedFlashSDPBenchmark()
-
 

@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 import torch
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from labs.memory_bandwidth_patterns.bandwidth_patterns_extension import (
@@ -218,6 +219,15 @@ class BandwidthPatternsBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
 
     def get_custom_metrics(self) -> Optional[dict]:
         return dict(self._custom_metrics)
+
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.config.rows,
+            dtype="float32",
+            rows=self.config.rows,
+            cols=self.config.cols,
+            precision_flags=PrecisionFlags(tf32=False),
+        ).to_dict()
 
     def validate_result(self) -> Optional[str]:
         if self.output is None:

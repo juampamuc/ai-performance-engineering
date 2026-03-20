@@ -94,13 +94,12 @@ class BaselineTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_roofline_metrics
         return compute_roofline_metrics(
-            total_flops=float(getattr(self, 'total_flops', getattr(self, 'N', 1024) * 2)),
-            total_bytes=float(getattr(self, 'N', 1024) * 4 * 2),
+            total_flops=float(self.N * 2),
+            total_bytes=float(self.N * 4 * 2),
             elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            precision="fp16",
+            precision="fp32",
         )
 
     def validate_result(self) -> Optional[str]:

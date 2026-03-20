@@ -9,6 +9,7 @@ from types import ModuleType
 import torch
 
 from core.benchmark.tcgen05_requirements import ensure_tcgen05_supported
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from labs.custom_vs_cublas.tcgen05_loader import load_tcgen05_cluster_module, matmul_tcgen05_cluster
@@ -67,11 +68,20 @@ class OptimizedTcgen05MatmulBenchmark(VerificationPayloadMixin, BaseBenchmark):
             return "benchmark_fn() did not produce output"
         return None
 
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.size,
+            dtype="float16",
+            m=self.size,
+            n=self.size,
+            k=self.size,
+            precision_flags=PrecisionFlags(fp16=True, tf32=False),
+        ).to_dict()
+
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=20, warmup=5)
 
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTcgen05MatmulBenchmark()
-
 

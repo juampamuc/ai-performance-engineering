@@ -11,6 +11,7 @@ from typing import Optional
 
 import torch
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
@@ -127,6 +128,20 @@ class BaselineNanochatInferenceBenchmark(VerificationPayloadMixin, BaseBenchmark
             output_tolerance=(0.05, 0.2),
         )
 
+    def get_input_signature(self) -> dict:
+        return simple_signature(
+            batch_size=self.batch_size,
+            dtype="int64",
+            prompt_len=self.prompt_len,
+            decode_len=self.decode_len,
+            vocab_size=self.vocab_size,
+            n_layer=self.n_layer,
+            n_head=self.n_head,
+            n_kv_head=self.n_kv_head,
+            n_embd=self.n_embd,
+            precision_flags=PrecisionFlags(bf16=True, tf32=False),
+        ).to_dict()
+
     def validate_result(self) -> Optional[str]:
         if self.output is None:
             return "benchmark_fn() did not produce output"
@@ -138,5 +153,4 @@ class BaselineNanochatInferenceBenchmark(VerificationPayloadMixin, BaseBenchmark
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineNanochatInferenceBenchmark()
-
 

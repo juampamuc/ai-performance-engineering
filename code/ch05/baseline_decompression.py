@@ -22,7 +22,7 @@ class CPUDecompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.counts_i64: Optional[torch.Tensor] = None
         self.values: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self._workload = WorkloadMetadata(bytes_per_iteration=0.0)
+        self._workload = WorkloadMetadata(bytes_per_iteration=float(1024 * 1024 * 4))
 
     def setup(self) -> None:
         torch.manual_seed(42)

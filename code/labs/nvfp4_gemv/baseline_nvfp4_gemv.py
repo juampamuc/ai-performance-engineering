@@ -9,6 +9,7 @@ import torch
 
 LAB_DIR = Path(__file__).resolve().parent
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from labs.nvfp4_gemv.local_eval_loader import (
@@ -119,6 +120,18 @@ class BaselineNvfp4GemvBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
+    def get_input_signature(self) -> dict:
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        return simple_signature(
+            batch_size=1,
+            dtype="float16",
+            m=self.m,
+            k=self.k,
+            l=self.l,
+            seed=self.seed,
+            precision_flags=PrecisionFlags(fp16=True, tf32=tf32_enabled),
+        ).to_dict()
+
     def validate_result(self) -> Optional[str]:
         if self._input_data is None or self.output is None:
             return "Benchmark output missing"
@@ -129,5 +142,4 @@ class BaselineNvfp4GemvBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineNvfp4GemvBenchmark()
-
 

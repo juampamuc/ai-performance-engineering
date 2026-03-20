@@ -522,7 +522,7 @@ def compute_graph_metrics(
 def compute_precision_metrics(
     fp32_time_ms: Optional[float],
     reduced_precision_time_ms: Optional[float],
-    precision_type: str,  # "fp16", "bf16", "fp8", "fp4"
+    precision_type: str,  # "fp32", "fp16", "bf16", "fp8", "fp4", "int8"
     accuracy_delta: float = 0.0,  # Accuracy loss (if measured)
 ) -> Dict[str, float]:
     """Compute metrics for precision optimization benchmarks (ch13, ch19).
@@ -530,7 +530,8 @@ def compute_precision_metrics(
     Args:
         fp32_time_ms: Baseline FP32 execution time
         reduced_precision_time_ms: Reduced precision execution time
-        precision_type: Type of reduced precision used
+        precision_type: Precision mode for this path. Memory reduction factors
+            are interpreted relative to FP32 storage.
         accuracy_delta: Change in accuracy (negative = loss)
     
     Returns:
@@ -538,8 +539,10 @@ def compute_precision_metrics(
     """
     # Memory reduction factors
     memory_reduction = {
+        "fp32": 1.0,
         "fp16": 2.0,
         "bf16": 2.0,
+        "int8": 4.0,
         "fp8": 4.0,
         "fp4": 8.0,
     }
