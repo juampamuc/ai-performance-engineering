@@ -1,6 +1,12 @@
 {
   "examples": {
     "cluster_gemm": {
+      "custom_metrics": {
+        "capstone_baseline.arithmetic_intensity": 682.6666666666666,
+        "capstone_baseline.bytes_transferred": 25165824.0,
+        "capstone_baseline.flops": 17179869184.0,
+        "capstone_baseline.size": 2048.0
+      },
       "example": "cluster_gemm",
       "metadata": {
         "best_memory_savings_pct": -4.441360166551006,
@@ -8,52 +14,52 @@
         "best_optimization": "optimized_cluster_gemm",
         "best_optimization_file": "optimized_cluster_gemm.py",
         "best_optimization_memory_mb": 188.125,
-        "best_optimization_speedup": 6.428120886238113,
+        "best_optimization_speedup": 6.427764856865859,
         "best_optimization_technique": "optimized_cluster_gemm",
-        "best_optimization_time_ms": 4.547399260781028,
+        "best_optimization_time_ms": 4.544642903588035,
         "optimization_goal": "speed"
       },
       "metrics": {
         "baseline_memory_mb": 180.125,
-        "baseline_p75_ms": 29.210336685180664,
+        "baseline_p75_ms": 29.2227840423584,
         "baseline_throughput.bytes_per_s": null,
         "baseline_throughput.custom_unit_name": "FLOPs",
-        "baseline_throughput.custom_unit_per_s": 587723058893.5618,
+        "baseline_throughput.custom_unit_per_s": 588112090283.5574,
         "baseline_throughput.goodput": null,
-        "baseline_throughput.latency_ms": 29.231232166290283,
-        "baseline_throughput.requests_per_s": 34.20998452310228,
-        "baseline_throughput.samples_per_s": 143487074.92518598,
+        "baseline_throughput.latency_ms": 29.21189594268799,
+        "baseline_throughput.requests_per_s": 34.23262913033584,
+        "baseline_throughput.samples_per_s": 143582053.29188412,
         "baseline_throughput.schemaVersion": "1.0",
-        "baseline_throughput.tokens_per_s": 143487074.92518598,
-        "baseline_time_ms": 29.231232166290283,
+        "baseline_throughput.tokens_per_s": 143582053.29188412,
+        "baseline_time_ms": 29.21189594268799,
         "best_memory_savings_pct": -4.441360166551006,
         "best_memory_savings_ratio": 0.9574750830564784,
         "best_optimized_memory_mb": 188.125,
-        "best_optimized_p75_ms": 4.544032096862793,
-        "best_optimized_speedup": 6.428120886238113,
+        "best_optimized_p75_ms": 4.540800094604492,
+        "best_optimized_speedup": 6.427764856865859,
         "best_optimized_throughput.bytes_per_s": null,
         "best_optimized_throughput.custom_unit_name": "FLOPs",
-        "best_optimized_throughput.custom_unit_per_s": 3777954870197.4565,
+        "best_optimized_throughput.custom_unit_per_s": 3780246225822.5713,
         "best_optimized_throughput.goodput": null,
-        "best_optimized_throughput.latency_ms": 4.547399260781028,
-        "best_optimized_throughput.requests_per_s": 219.90591603083632,
-        "best_optimized_throughput.samples_per_s": 922352263.2318009,
+        "best_optimized_throughput.latency_ms": 4.544642903588035,
+        "best_optimized_throughput.requests_per_s": 220.03929048209517,
+        "best_optimized_throughput.samples_per_s": 922911676.2262137,
         "best_optimized_throughput.schemaVersion": "1.0",
-        "best_optimized_throughput.tokens_per_s": 922352263.2318009,
-        "best_optimized_time_ms": 4.547399260781028,
-        "best_speedup": 6.428120886238113,
+        "best_optimized_throughput.tokens_per_s": 922911676.2262137,
+        "best_optimized_time_ms": 4.544642903588035,
+        "best_speedup": 6.427764856865859,
         "is_regression": false
       },
       "provenance": {
         "dmi_product_name": "Standard PC (Q35 + ICH9, 2009)",
         "execution_environment": "virtualized",
-        "git_commit": "b39acf103da24b29cae6e825033d89b27e184d15",
+        "git_commit": "e1af4ba1ac65cde755e836586cdb44cad06a0010",
         "hardware_key": "b200",
-        "iterations": 1,
-        "profile_name": "minimal",
-        "timestamp": "2026-03-18T00:49:20.350446",
-        "validity_profile": "strict",
-        "warmup_iterations": 1
+        "iterations": 0,
+        "profile_name": "none",
+        "timestamp": "2026-03-21T13:07:54+00:00",
+        "validity_profile": "portable",
+        "warmup_iterations": 0
       },
       "type": "python"
     },
@@ -112,34 +118,37 @@
       "type": "python"
     },
     "moe_hybrid_ep": {
+      "custom_metrics": {
+        "moe_hybrid_ep.workload_size": 1.0
+      },
       "example": "moe_hybrid_ep",
       "metadata": {
         "best_optimization": "optimized_moe_hybrid_ep",
         "best_optimization_file": "optimized_moe_hybrid_ep.py",
-        "best_optimization_speedup": 1.0118526161168369,
+        "best_optimization_speedup": 1.0101816711097873,
         "best_optimization_technique": "optimized_moe_hybrid_ep",
-        "best_optimization_time_ms": 9841.235160827637,
+        "best_optimization_time_ms": 8360.163927078247,
         "optimization_goal": "speed"
       },
       "metrics": {
-        "baseline_p75_ms": 9957.879543304443,
-        "baseline_time_ms": 9957.879543304443,
-        "best_optimized_p75_ms": 9841.235160827637,
-        "best_optimized_speedup": 1.0118526161168369,
-        "best_optimized_time_ms": 9841.235160827637,
-        "best_speedup": 1.0118526161168369,
+        "baseline_p75_ms": 8445.284366607666,
+        "baseline_time_ms": 8445.284366607666,
+        "best_optimized_p75_ms": 8360.163927078247,
+        "best_optimized_speedup": 1.0101816711097873,
+        "best_optimized_time_ms": 8360.163927078247,
+        "best_speedup": 1.0101816711097873,
         "is_regression": false
       },
       "provenance": {
         "dmi_product_name": "Standard PC (Q35 + ICH9, 2009)",
         "execution_environment": "virtualized",
-        "git_commit": "7adca4bde1c98eca81be18acc253f6390de35494",
+        "git_commit": "e1af4ba1ac65cde755e836586cdb44cad06a0010",
         "hardware_key": "b200",
-        "iterations": 20,
-        "profile_name": "minimal",
-        "timestamp": "2026-03-17T19:47:59.540270",
-        "validity_profile": "strict",
-        "warmup_iterations": 5
+        "iterations": 0,
+        "profile_name": "none",
+        "timestamp": "2026-03-21T13:09:41+00:00",
+        "validity_profile": "portable",
+        "warmup_iterations": 0
       },
       "type": "python"
     }

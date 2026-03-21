@@ -150,27 +150,30 @@
       "metadata": {
         "best_optimization": "optimized_symmem_training",
         "best_optimization_file": "optimized_symmem_training.py",
-        "best_optimization_speedup": 1.058569074620214,
+        "best_optimization_speedup": 1.0236489739978951,
         "best_optimization_technique": "optimized_symmem_training",
-        "best_optimization_time_ms": 17307.915449142456,
+        "best_optimization_time_ms": 160.59886693954468,
         "optimization_goal": "speed"
       },
       "metrics": {
-        "baseline_p75_ms": 18321.624040603638,
-        "baseline_time_ms": 18321.624040603638,
-        "best_optimized_p75_ms": 17307.915449142456,
-        "best_optimized_speedup": 1.058569074620214,
-        "best_optimized_time_ms": 17307.915449142456,
-        "best_speedup": 1.058569074620214,
+        "baseline_p75_ms": 164.3968653678894,
+        "baseline_time_ms": 164.3968653678894,
+        "best_optimized_p75_ms": 160.59886693954468,
+        "best_optimized_speedup": 1.0236489739978951,
+        "best_optimized_time_ms": 160.59886693954468,
+        "best_speedup": 1.0236489739978951,
         "is_regression": false
       },
       "provenance": {
-        "git_commit": "d6e32769490215d76082ab3082f04d94f3556ef7",
+        "dmi_product_name": "Standard PC (Q35 + ICH9, 2009)",
+        "execution_environment": "virtualized",
+        "git_commit": "e1af4ba1ac65cde755e836586cdb44cad06a0010",
         "hardware_key": "b200",
-        "iterations": 1,
+        "iterations": 0,
         "profile_name": "none",
-        "timestamp": "2026-03-01T15:23:43.462320",
-        "warmup_iterations": 5
+        "timestamp": "2026-03-21T15:15:24+00:00",
+        "validity_profile": "portable",
+        "warmup_iterations": 0
       },
       "type": "python"
     }
