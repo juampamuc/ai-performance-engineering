@@ -120,6 +120,13 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
             )
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
 
+        # Warm every sequence bucket in setup so the timed path measures steady
+        # state regional compilation, not first-bucket Inductor/autotune churn.
+        with torch.no_grad():
+            for _ in range(3):
+                for seq in self.sequence_schedule:
+                    _ = self._compiled_model(self.inputs[seq])
+
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
             tokens_per_iteration=self._workload.tokens_per_iteration,
@@ -199,4 +206,3 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedRegionalTritonBenchmark()
-

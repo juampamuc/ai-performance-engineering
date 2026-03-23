@@ -21,9 +21,9 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
-| `docker` | `4.456 ms` | `1.225 ms` | `3.64x` | container setup stops throttling the workload |
+| `pinned_prefetch_mlp` | `4.456 ms` | `1.225 ms` | `3.64x` | pinned-memory prefetch removes blocking host staging |
 | `gemm` | `0.548 ms` | `0.189 ms` | `2.90x` | control GEMM shows how host/runtime launch overhead caps achievable FLOP/s |
-| `kubernetes` | `1.734 ms` | `1.076 ms` | `1.61x` | topology-aware scheduling reduces orchestration drag |
+| `double_buffered_batch_provisioning` | `1.734 ms` | `1.076 ms` | `1.61x` | double-buffered provisioning overlaps batch copies with compute |
 
 The magnitude is smaller than the headline CUDA chapters, but the lesson is important: host tuning changes are often prerequisite wins, not optional polish.
 `gemm` is intentionally a control workload for host/runtime overhead, while `rack_prep` is the more chapter-native staged-copy example for locality-aware host preparation. Structured metrics mark `gemm` with `story.control_pair=1` and `story.chapter_native_exemplar=0`, and structured story metadata marks it as a supplementary control pair with chapter-native targets like `pageable_copy` and `rack_prep`, so downstream reports can keep that distinction explicit.
@@ -32,15 +32,15 @@ The magnitude is smaller than the headline CUDA chapters, but the lesson is impo
 For this chapter, pair the harness runtime with host/GPU traces so the bottleneck story stays grounded:
 
 ```bash
-python -m cli.aisp bench run --targets ch03:docker --profile deep_dive --single-gpu
+python -m cli.aisp bench run --targets ch03:pinned_prefetch_mlp --profile deep_dive --single-gpu
 python -m cli.aisp bench run --targets ch03:gemm --profile deep_dive --single-gpu
-python -m cli.aisp bench run --targets ch03:kubernetes --profile deep_dive --single-gpu
+python -m cli.aisp bench run --targets ch03:double_buffered_batch_provisioning --profile deep_dive --single-gpu
 ```
 
 Expected evidence:
-- `docker`: less launch jitter and cleaner host scheduling
+- `pinned_prefetch_mlp`: pinned-memory prefetch removes blocking host staging
 - `gemm`: lower host overhead around the same kernel without changing the math
-- `kubernetes`: fewer placement-related stalls and better runtime consistency
+- `double_buffered_batch_provisioning`: double buffering reduces batch-provisioning stalls
 
 ## Repro Commands
 ```bash
@@ -61,8 +61,8 @@ python -m ch03.power_tuning_tool --power-limits 300,350 --iterations 5 --warmup 
 | --- | --- |
 | `baseline_pageable_copy.py`, `optimized_pageable_copy.py`, `bind_numa_affinity.py`, `numa_topology_script.sh` | Host-transfer and NUMA-adjacent helpers: the benchmark pair covers pageable-vs-pinned async copies, while the scripts handle CPU/GPU socket placement and topology inspection. |
 | `baseline_rack_prep.py`, `optimized_rack_prep.py`, `grace_blackwell_topology.py` | Topology-aware staging control pair: baseline uses blocking pageable staging, while optimized adds affinity planning plus pinned double-buffered copy/compute overlap. |
-| `baseline_docker.py`, `optimized_docker.py`, `docker_gpu_optimized.dockerfile`, `system_tuning.sh`, `gpu_setup_commands.sh` | Container configs plus host setup scripts that toggle persistence mode, huge pages, IRQ steering, and MIG visibility. |
-| `baseline_kubernetes.py`, `optimized_kubernetes.py`, `kubernetes_mig_pod.yaml`, `kubernetes_topology_pod.yaml` | Kubernetes manifests demonstrating topology-aware scheduling and MIG partitioning for multi-tenant fleets. |
+| `baseline_pinned_prefetch_mlp.py`, `optimized_pinned_prefetch_mlp.py`, `docker_gpu_optimized.dockerfile`, `system_tuning.sh`, `gpu_setup_commands.sh` | Pinned-memory prefetch control pair plus host/container setup scripts that toggle persistence mode, huge pages, IRQ steering, and MIG visibility. |
+| `baseline_double_buffered_batch_provisioning.py`, `optimized_double_buffered_batch_provisioning.py`, `kubernetes_mig_pod.yaml`, `kubernetes_topology_pod.yaml` | Batch-provisioning overlap pair plus Kubernetes manifests demonstrating topology-aware scheduling and MIG partitioning for multi-tenant fleets. |
 | `cpu_gpu_numa_optimizations.sh`, `system_tuning.sh`, `gpu_setup_commands.sh` | Workflow scripts for aligning CPU governors, cgroup limits, persistence mode, and driver settings with the benchmark harness. |
 | `baseline_gemm.py`, `optimized_gemm.py`, `train.py` | Control GEMM + training loops that expose host/runtime launch overhead in measurable FLOP/s without claiming a NUMA-specific kernel optimization. |
 | `compare.py`, `requirements.txt`, `expectations_{hardware_key}.json` | Harness entry, Python deps, and regression thresholds. |

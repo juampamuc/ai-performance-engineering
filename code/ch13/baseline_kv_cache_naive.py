@@ -240,6 +240,10 @@ class BaselineKVCacheNaiveBenchmark(VerificationPayloadMixin, BaseBenchmark):
             precision_type="fp16",
         )
 
+    def get_optimization_goal(self) -> str:
+        """Naive-vs-paged KV cache is tracked as a memory benchmark."""
+        return "memory"
+
     def validate_result(self) -> Optional[str]:
         if self.model is None:
             return "Model not initialized"

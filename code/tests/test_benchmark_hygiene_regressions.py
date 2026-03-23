@@ -240,8 +240,8 @@ def test_moe_cuda_decode_attention_preconverts_bf16_outside_hot_loop() -> None:
     assert "v = self._v_bf16" in benchmark_section
 
 
-def test_ch20_multiple_unoptimized_preconverts_activation_dtype_outside_hot_loop() -> None:
-    source = (REPO_ROOT / "ch20" / "optimized_multiple_unoptimized.py").read_text(encoding="utf-8")
+def test_ch20_bf16_mlp_preconverts_activation_dtype_outside_hot_loop() -> None:
+    source = (REPO_ROOT / "ch20" / "optimized_bf16_mlp.py").read_text(encoding="utf-8")
     setup_section = source.split("def benchmark_fn", maxsplit=1)[0]
     benchmark_section = source.split("def benchmark_fn", maxsplit=1)[1].split(
         "def capture_verification_payload", maxsplit=1

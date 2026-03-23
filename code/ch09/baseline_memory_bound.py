@@ -89,7 +89,7 @@ class BaselineMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             total_flops=float(getattr(self, 'total_flops', getattr(self, 'N', 1024) * 2)),
             total_bytes=float(getattr(self, 'N', 1024) * 4 * 2),
             elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            precision="fp16",
+            precision="fp32",
         )
 
     def validate_result(self) -> Optional[str]:
@@ -101,4 +101,3 @@ class BaselineMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineMemoryBoundBenchmark()
-

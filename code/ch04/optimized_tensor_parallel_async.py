@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 
+from core.benchmark.gpu_requirements import require_min_gpus
 from core.benchmark.verification import PrecisionFlags
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
@@ -40,7 +41,10 @@ _DEFAULT_LAYERS = 4
 def _resolve_world_size() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA required for tensor-parallel benchmark")
-    return 1
+    world_size = torch.cuda.device_count()
+    if world_size < 2:
+        raise RuntimeError("optimized_tensor_parallel_async requires >=2 GPUs.")
+    return world_size
 
 
 def _resolve_hidden(hidden: Optional[int], world_size: int) -> int:
@@ -88,9 +92,10 @@ def _run_worker(
     hidden: Optional[int],
     num_layers: int,
 ) -> None:
+    require_min_gpus(2, "optimized_tensor_parallel_async.py")
     rank, world_size, local_rank = _init_distributed()
-    if world_size < 1:
-        raise RuntimeError("optimized_tensor_parallel_async requires >=1 GPU.")
+    if world_size < 2:
+        raise RuntimeError("optimized_tensor_parallel_async requires >=2 GPUs.")
     hidden = _resolve_hidden(hidden, world_size)
 
     torch.manual_seed(42)
@@ -109,16 +114,12 @@ def _run_worker(
         x = inputs
         for layer_idx in range(num_layers):
             local_out = shard_layers[layer_idx](x)
-            if world_size > 1:
-                comm_stream.wait_stream(torch.cuda.current_stream())
-                with torch.cuda.stream(comm_stream):
-                    work = dist.all_gather(gather_list, local_out, async_op=True)
-                aux_out = aux_layers[layer_idx](x)
-                work.wait()
-                full_out = torch.cat(gather_list, dim=-1)
-            else:
-                aux_out = aux_layers[layer_idx](x)
-                full_out = local_out
+            comm_stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(comm_stream):
+                work = dist.all_gather(gather_list, local_out, async_op=True)
+            aux_out = aux_layers[layer_idx](x)
+            work.wait()
+            full_out = torch.cat(gather_list, dim=-1)
             proj_out = proj_layers[layer_idx](full_out)
             x = proj_out + aux_out
 
@@ -168,6 +169,7 @@ def main() -> None:
 
 class OptimizedTensorParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Harness entry that launches this module via torchrun."""
+    multi_gpu_required = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -178,11 +180,15 @@ class OptimizedTensorParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._aux_layers: Optional[nn.ModuleList] = None
         self._input: Optional[torch.Tensor] = None
         self._output: Optional[torch.Tensor] = None
-        self._world_size = _resolve_world_size()
-        self._hidden = _resolve_hidden(None, self._world_size)
-        self._hidden_per_rank = self._hidden // self._world_size
+        self._world_size = 1
+        self._hidden = _DEFAULT_HIDDEN
+        self._hidden_per_rank = _DEFAULT_HIDDEN
 
     def setup(self) -> None:
+        require_min_gpus(2, "optimized_tensor_parallel_async.py")
+        self._world_size = torch.cuda.device_count()
+        self._hidden = _resolve_hidden(None, self._world_size)
+        self._hidden_per_rank = self._hidden // self._world_size
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._shard_layers, self._proj_layers, self._aux_layers = _build_layers(
@@ -257,10 +263,10 @@ class OptimizedTensorParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=1,
+            nproc_per_node=max(torch.cuda.device_count(), 1),
             iterations=3,
             warmup=5,
-            multi_gpu_required=False,
+            multi_gpu_required=True,
             measurement_timeout_seconds=900,
         )
 
@@ -269,7 +275,7 @@ class OptimizedTensorParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=[],
-            multi_gpu_required=False,
+            multi_gpu_required=True,
             name="optimized_tensor_parallel_async",
             config_arg_map={
                 "iterations": "--iters",
@@ -280,5 +286,3 @@ class OptimizedTensorParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTensorParallelBenchmark()
-
-

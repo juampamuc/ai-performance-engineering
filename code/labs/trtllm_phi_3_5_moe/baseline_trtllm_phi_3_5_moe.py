@@ -124,7 +124,7 @@ class BaselineTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp16": True,
                 "bf16": False,
                 "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32,
+                "tf32": False,
             },
             output_tolerance=(0.0, 0.0),
         )
@@ -151,14 +151,13 @@ class BaselineTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_input_signature(self) -> dict:
-        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
         return simple_signature(
             batch_size=self.batch_size,
             dtype="int64",
             prompt_len=self.prompt_len,
             max_new_tokens=self.max_new_tokens,
             vocab_slice=self.vocab_slice,
-            precision_flags=PrecisionFlags(fp16=True, tf32=tf32_enabled),
+            precision_flags=PrecisionFlags(fp16=True, tf32=False),
         ).to_dict()
 
     def validate_result(self) -> Optional[str]:
@@ -169,4 +168,3 @@ class BaselineTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineTrtLlmPhi35MoeBenchmark()
-

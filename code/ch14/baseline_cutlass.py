@@ -30,7 +30,6 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.m = 4096
         self.n = 4096
         self.k = 4096
-        self.block_k = 128
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.m * self.n),
@@ -53,17 +52,6 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.B = torch.randn(self.k, self.n, device=self.device, dtype=torch.float16)
         self.C = torch.zeros(self.m, self.n, device=self.device, dtype=torch.float16)
 
-    def _naive_matmul(self) -> torch.Tensor:
-        """Compute C = A @ B using many small GEMMs (poor locality)."""
-        assert self.A is not None and self.B is not None and self.C is not None
-        self.C.zero_()
-        for k in range(0, self.k, self.block_k):
-            k_end = min(k + self.block_k, self.k)
-            a_slice = self.A[:, k:k_end]
-            b_slice = self.B[k:k_end, :]
-            self.C.add_(torch.matmul(a_slice, b_slice))
-        return self.C
-    
     def benchmark_fn(self) -> None:
         """Benchmark: Standard GEMM."""
         from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
@@ -74,8 +62,7 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with nvtx_range("baseline_cutlass", enable=enable_nvtx):
             if self.A is None or self.B is None or self.C is None:
                 raise RuntimeError("Benchmark not initialized")
-            # Baseline: naive blocked matmul built from many GEMM calls.
-            _ = self._naive_matmul()
+            self.C = torch.matmul(self.A, self.B)
         if self.A is None or self.B is None or self.C is None:
             raise RuntimeError("Benchmark not initialized")
 

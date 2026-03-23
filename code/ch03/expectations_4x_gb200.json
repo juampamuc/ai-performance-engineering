@@ -1,15 +1,15 @@
 {
   "examples": {
-    "docker": {
-      "example": "docker",
+    "pinned_prefetch_mlp": {
+      "example": "pinned_prefetch_mlp",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_docker",
-        "best_optimization_file": "optimized_docker.py",
+        "best_optimization": "optimized_pinned_prefetch_mlp",
+        "best_optimization_file": "optimized_pinned_prefetch_mlp.py",
         "best_optimization_memory_mb": 471.47314453125,
         "best_optimization_speedup": 1.9731110049623246,
-        "best_optimization_technique": "optimized_docker",
+        "best_optimization_technique": "optimized_pinned_prefetch_mlp",
         "best_optimization_time_ms": 1.7042125761508942,
         "optimization_goal": "speed"
       },
@@ -108,16 +108,16 @@
       },
       "type": "python"
     },
-    "kubernetes": {
-      "example": "kubernetes",
+    "double_buffered_batch_provisioning": {
+      "example": "double_buffered_batch_provisioning",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_kubernetes",
-        "best_optimization_file": "optimized_kubernetes.py",
+        "best_optimization": "optimized_double_buffered_batch_provisioning",
+        "best_optimization_file": "optimized_double_buffered_batch_provisioning.py",
         "best_optimization_memory_mb": 191.44140625,
         "best_optimization_speedup": 0.986317559998446,
-        "best_optimization_technique": "optimized_kubernetes",
+        "best_optimization_technique": "optimized_double_buffered_batch_provisioning",
         "best_optimization_time_ms": 1.1330538709958395,
         "optimization_goal": "speed"
       },

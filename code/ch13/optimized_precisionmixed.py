@@ -48,7 +48,9 @@ class OptimizedPrecisionMixedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.optimizer = None
         self.criterion = None
         self.batch_size = 512
-        self.hidden_dim = 2048
+        # Match the larger GEMM-heavy workload so BF16 autocast is compared
+        # against the same training shape as the FP32 baseline.
+        self.hidden_dim = 3072
         self.micro_steps = 4
         tokens = self.batch_size * self.hidden_dim
         self._workload = WorkloadMetadata(

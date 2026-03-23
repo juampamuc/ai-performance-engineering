@@ -79,7 +79,12 @@ def test_ch03_gemm_reports_control_story_explicitly() -> None:
     assert baseline_story["chapter_alignment"] == "supplementary"
     assert baseline_story["chapter_native_exemplar"] is False
     assert baseline_story["execution_pattern"] == "fragmented_gemm_launches"
-    assert baseline_story["chapter_native_targets"] == ["pageable_copy", "rack_prep", "docker", "kubernetes"]
+    assert baseline_story["chapter_native_targets"] == [
+        "pageable_copy",
+        "rack_prep",
+        "pinned_prefetch_mlp",
+        "double_buffered_batch_provisioning",
+    ]
     assert optimized_metrics["story.control_pair"] == 1.0
     assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
     assert optimized_metrics["launch.gemm_calls_per_iteration"] == 1.0

@@ -142,7 +142,7 @@
       },
       "type": "python"
     },
-    "flex_attention": {
+    "attention_eager_sdpa": {
       "custom_metrics": {
         "roofline.achieved_gbps": 5.374593595796667,
         "roofline.achieved_tflops": 1.8345279473652623,
@@ -154,15 +154,15 @@
         "roofline.peak_tflops": 160.0,
         "roofline.ridge_point": 20.0
       },
-      "example": "flex_attention",
+      "example": "attention_eager_sdpa",
       "metadata": {
         "best_memory_savings_pct": 4.777440744920993,
         "best_memory_savings_ratio": 1.0501713121585332,
-        "best_optimization": "optimized_flex_attention",
-        "best_optimization_file": "optimized_flex_attention.py",
+        "best_optimization": "optimized_attention_eager_sdpa",
+        "best_optimization_file": "optimized_attention_eager_sdpa.py",
         "best_optimization_memory_mb": 158.1884765625,
         "best_optimization_speedup": 6.42638511346543,
-        "best_optimization_technique": "optimized_flex_attention",
+        "best_optimization_technique": "optimized_attention_eager_sdpa",
         "best_optimization_time_ms": 0.18564352507774645,
         "optimization_goal": "speed"
       },

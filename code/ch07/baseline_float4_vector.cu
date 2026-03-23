@@ -1,4 +1,4 @@
-// baseline_float8_vector.cu - Scalar Loads (Ch7)
+// baseline_float4_vector.cu - Scalar Loads (Ch7)
 //
 // WHAT: Naive scalar loads - 1 float (4 bytes) per memory operation.
 //
@@ -19,7 +19,7 @@
 //   - ~2.5-3 TB/s effective bandwidth (well below HBM peak of 8 TB/s)
 //   - Limited by instruction throughput, not memory bandwidth
 //
-// COMPARE WITH: optimized_float8_vector.cu
+// COMPARE WITH: optimized_float4_vector.cu
 //   - Uses float4 (16-byte) vectorized loads
 //   - 4 floats per load instruction → fewer instructions
 //   - Saturates HBM bandwidth at ~6 TB/s
@@ -146,7 +146,7 @@ int main() {
     printf("\nKey insight:\n");
     printf("  Scalar loads are instruction-limited, not bandwidth-limited.\n");
     printf("  Many small loads → high instruction overhead.\n");
-    printf("  See optimized_float8_vector.cu for vectorized loads.\n");
+    printf("  See optimized_float4_vector.cu for vectorized loads.\n");
 
 #ifdef VERIFY
     std::vector<float> h_verify(N);

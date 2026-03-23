@@ -1,4 +1,4 @@
-"""baseline_multiple_unoptimized.py - Multiple unoptimized techniques (baseline).
+"""baseline_bf16_mlp.py - FP32 MLP baseline for the BF16 precision comparison.
 
 Chapter 20: AI-Assisted Performance Optimizations
 
@@ -42,10 +42,10 @@ class UnoptimizedModel(nn.Module):
         return x
 
 
-class BaselineMultipleUnoptimizedBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: Multiple anti-patterns (FP32, unfused ops, redundant compute)."""
+class BaselineBF16MLPBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Baseline: FP32 eager MLP used for the BF16 precision comparison."""
 
-    signature_equivalence_group = "ch20_multiple_unoptimized_precision"
+    signature_equivalence_group = "ch20_bf16_mlp_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
     
     def __init__(self):
@@ -127,4 +127,4 @@ class BaselineMultipleUnoptimizedBenchmark(VerificationPayloadMixin, BaseBenchma
 
 
 def get_benchmark() -> BaseBenchmark:
-    return BaselineMultipleUnoptimizedBenchmark()
+    return BaselineBF16MLPBenchmark()

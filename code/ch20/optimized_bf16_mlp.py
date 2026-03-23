@@ -1,4 +1,4 @@
-"""optimized_multiple_unoptimized.py - AI-suggested optimizations applied.
+"""optimized_bf16_mlp.py - BF16 MLP precision optimization.
 
 Chapter 20: AI-Assisted Performance Optimizations
 
@@ -45,10 +45,10 @@ class OptimizedModel(nn.Module):
         return x
 
 
-class OptimizedAllTechniquesBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: BF16 + no redundant compute on the same eager graph."""
+class OptimizedBF16MLPBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Optimized: BF16 precision on the same eager MLP graph."""
 
-    signature_equivalence_group = "ch20_multiple_unoptimized_precision"
+    signature_equivalence_group = "ch20_bf16_mlp_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
     
     def __init__(self):
@@ -152,4 +152,4 @@ class OptimizedAllTechniquesBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedAllTechniquesBenchmark()
+    return OptimizedBF16MLPBenchmark()

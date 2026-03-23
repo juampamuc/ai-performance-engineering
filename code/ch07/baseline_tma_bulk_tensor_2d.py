@@ -15,8 +15,8 @@ class BaselineTMABulkTensor2D(CudaBinaryBenchmark):
         chapter_dir = Path(__file__).parent
         width = 2048
         height = 2048
-        tile_m = 64
-        tile_n = 32
+        tile_m = 128
+        tile_n = 64
         bytes_per_matrix = width * height * 4
         super().__init__(
             chapter_dir=chapter_dir,
@@ -42,4 +42,3 @@ class BaselineTMABulkTensor2D(CudaBinaryBenchmark):
 def get_benchmark() -> BaselineTMABulkTensor2D:
     """Factory for discover_benchmarks()."""
     return BaselineTMABulkTensor2D()
-

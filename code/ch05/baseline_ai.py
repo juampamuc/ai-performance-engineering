@@ -63,7 +63,6 @@ class BaselineAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
                     device_batch = torch.from_numpy(host_batches[step]).to(self.device)
                     out = self.block(device_batch)
                     last_input = device_batch
-                    self._synchronize()
         if out is None or last_input is None:
             raise RuntimeError("benchmark_fn() must produce output")
         self._last_input = last_input

@@ -1,4 +1,4 @@
-"""optimized_gemm_ilp.py - Independent operations and loop unrolling for high ILP (optimized)."""
+"""optimized_elementwise_ilp.py - Independent operations for high ILP."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 from ch06.cuda_extensions import load_ilp_extension
 
 
-class OptimizedILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Independent operations and unrolling - high ILP (uses CUDA extension).
+class OptimizedElementwiseILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Independent operations and unrolling for high ILP.
     
     Does the same amount of work as baseline (repeat count) for fair comparison.
     The ILP benefit is measured per-operation - both baseline and optimized do
@@ -52,7 +52,7 @@ class OptimizedILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         Same iteration count as baseline for fair comparison and output verification.
         """
         assert self._extension is not None and self.input is not None and self._buf0 is not None and self._buf1 is not None
-        with self._nvtx_range("gemm_ilp_optimized"):
+        with self._nvtx_range("elementwise_ilp_optimized"):
             src: torch.Tensor = self.input
             buf0: torch.Tensor = self._buf0
             buf1: torch.Tensor = self._buf1
@@ -120,4 +120,4 @@ class OptimizedILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
-    return OptimizedILPBenchmark()
+    return OptimizedElementwiseILPBenchmark()

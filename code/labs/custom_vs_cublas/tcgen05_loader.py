@@ -10,11 +10,13 @@ ONLY includes working kernels that exist in this directory.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from functools import lru_cache
 from pathlib import Path
+import sys
 
 import torch
-from torch.utils.cpp_extension import load
+from torch.utils.cpp_extension import _get_build_directory, load
 
 _LAB_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _LAB_DIR.parents[1]
@@ -61,6 +63,21 @@ def _load_kernel(source_file: Path, name_prefix: str):
     cuda_flags = _get_cuda_flags()
     src_hash = hashlib.md5(source_file.read_bytes()).hexdigest()[:8]
     build_name = f"{name_prefix}_{src_hash}"
+    build_dir = Path(_get_build_directory(build_name, verbose=False))
+    shared_object = build_dir / f"{build_name}.so"
+
+    if shared_object.exists():
+        loaded = sys.modules.get(build_name)
+        if loaded is not None and getattr(loaded, "__file__", None) == str(shared_object):
+            return loaded
+
+        spec = importlib.util.spec_from_file_location(build_name, shared_object)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Unable to import cached extension {shared_object}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[build_name] = module
+        spec.loader.exec_module(module)
+        return module
     
     print(f"  [Compiling {source_file.name} (first time only)...]")
     module = load(

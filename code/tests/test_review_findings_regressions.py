@@ -8,6 +8,12 @@ from ch08.tcgen05_custom_vs_cublas_benchmark_base import Tcgen05CustomVsCublasBa
 from ch08.threshold_tma_benchmark_base import ThresholdBenchmarkBaseTMA
 from ch08.tiling_benchmark_base import TilingBenchmarkBase
 from core.harness.run_benchmarks import INFORMATIONAL_BENCHMARKS
+from scripts.full_virtualized_rerun import (
+    EXPECTED_UNSUPPORTED_RUNTIME_REASON,
+    _expectation_example_key,
+    _expected_unsupported_portable_reason,
+    _is_informational_benchmark,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -129,9 +135,9 @@ def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -
     assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, `tcgen05_custom_vs_cublas`, and `nvfp4_mlp`" in readme_text
     assert "custom-versus-library comparison target" in readme_text
     assert "historical baseline/optimized filenames" not in readme_text
-    assert "custom tcgen05 versus cuBLAS comparison" in baseline_tcgen05_text
-    assert "Custom tcgen05 kernel side of the comparison pair." in baseline_tcgen05_text
-    assert "Vendor cuBLAS reference side of the comparison pair." in optimized_tcgen05_text
+    assert "tcgen05-versus-cuBLAS bridge control" in baseline_tcgen05_text
+    assert "Vendor cuBLAS reference side of the comparison pair." in baseline_tcgen05_text
+    assert "Custom tcgen05 kernel side of the comparison pair." in optimized_tcgen05_text
 
 
 def test_ch15_split_moe_targets_isolate_dispatch_from_routing() -> None:
@@ -171,15 +177,15 @@ def test_ch18_split_paged_attention_targets_isolate_backend_from_layout() -> Non
     assert "optimized_paged_attn_vllm.py" not in readme_text
 
 
-def test_ch16_blackwell_paged_attention_variant_is_intentional() -> None:
+def test_ch16_blackwell_dense_attention_variant_is_explicitly_noncanonical() -> None:
     readme_text = _read("ch16/README.md")
-    source = _read("ch16/optimized_paged_attention_blackwell.py")
+    source = _read("ch16/optimized_dense_attention_flash_blackwell_variant.py")
 
-    assert "paged_attention_blackwell" in readme_text
-    assert "intentional optimized variant" in readme_text
+    assert "dense_attention_flash_blackwell_variant" in readme_text
+    assert "non-canonical hardware variant" in readme_text
     assert "story_metadata" in source
     assert '"variant"' in source
-    assert "paged_attention_blackwell" not in INFORMATIONAL_BENCHMARKS["ch16"]
+    assert "dense_attention_flash_blackwell_variant" in INFORMATIONAL_BENCHMARKS["ch16"]
 
 
 def test_reviewed_pair_fixes_remain_applied() -> None:
@@ -187,7 +193,7 @@ def test_reviewed_pair_fixes_remain_applied() -> None:
     baseline_regional_setup = _setup_section("ch14/baseline_regional_triton.py")
     baseline_regional_bench = _benchmark_section("ch14/baseline_regional_triton.py")
     sliding_window = _read("ch14/optimized_sliding_window.py")
-    blackwell = _read("ch16/optimized_paged_attention_blackwell.py")
+    blackwell = _read("ch16/optimized_dense_attention_flash_blackwell_variant.py")
     baseline_memory = _read("ch17/baseline_memory.py")
     optimized_memory = _read("ch17/optimized_memory.py")
     fp4_baseline = _read("ch19/baseline_fp4_weight_quantization.py")
@@ -240,8 +246,76 @@ def test_ch13_pair_remediations_keep_canonical_and_informational_targets_split()
 
     assert "for pos in range(seq_len):" in canonical_kv
     assert "range(0, seq_len, self.block_size)" not in canonical_kv
+    assert 'return "memory"' in canonical_kv
     assert "range(0, seq_len, self.block_size)" in flash_kv
     assert "kv_cache_naive_flash_blockwise" in INFORMATIONAL_BENCHMARKS["ch13"]
+
+
+def test_ch05_and_ch20_noncanonical_pairs_are_marked_informational() -> None:
+    assert "ai" in INFORMATIONAL_BENCHMARKS["ch05"]
+    assert "cuda_graphs_conditional" in INFORMATIONAL_BENCHMARKS["ch12"]
+    assert "pipeline_sequential" in INFORMATIONAL_BENCHMARKS["ch20"]
+
+
+def test_ch11_stream_ordered_kv_cache_uses_three_streams_without_changing_segments() -> None:
+    source = _read("ch11/optimized_stream_ordered_kv_cache.py")
+
+    assert "num_segments=8" in source
+    assert "num_streams=3" in source
+    assert "same chunked workload and update ordering" in source
+
+
+def test_ch10_attention_and_ch13_precisionmixed_retuned_workloads_match_between_pairs() -> None:
+    ch10_baseline = _read("ch10/baseline_attention.py")
+    ch10_optimized = _read("ch10/optimized_attention.py")
+    ch13_baseline = _read("ch13/baseline_precisionmixed.py")
+    ch13_optimized = _read("ch13/optimized_precisionmixed.py")
+
+    assert "self.seq_len = 1280" in ch10_baseline
+    assert "self.seq_len = 1280" in ch10_optimized
+    assert "self.hidden_dim = 3072" in ch13_baseline
+    assert "self.hidden_dim = 3072" in ch13_optimized
+    assert "same workload" in ch10_optimized
+    assert "same training shape" in ch13_optimized
+
+
+def test_portable_rerun_ignores_informational_targets_for_expectation_queueing() -> None:
+    assert _is_informational_benchmark("ch05", {"example": "ai"}) is True
+    assert _is_informational_benchmark("ch12", {"example": "cuda_graphs_conditional"}) is True
+    assert _is_informational_benchmark("ch20", {"example": "pipeline_sequential"}) is True
+    assert _is_informational_benchmark("ch13", {"example": "kv_cache_naive"}) is False
+
+
+def test_portable_rerun_classifies_runtime_capability_skips_separately() -> None:
+    reason = _expected_unsupported_portable_reason(
+        {
+            "status": "skipped",
+            "error": "SKIPPED: PyTorch build missing batched_reduce_scatter_hook required for optimized ZeRO-2.",
+        }
+    )
+    assert reason == EXPECTED_UNSUPPORTED_RUNTIME_REASON
+
+
+def test_portable_rerun_uses_typed_expectation_keys_for_cuda_examples() -> None:
+    assert _expectation_example_key({"example": "cuda_graphs_conditional_enhanced", "type": "cuda"}) == (
+        "cuda_graphs_conditional_enhanced_cuda"
+    )
+    assert _expectation_example_key({"example": "regional_triton", "type": "python"}) == "regional_triton"
+
+
+def test_ch14_optimized_regional_triton_warms_all_sequence_buckets_in_setup() -> None:
+    setup_section = _setup_section("ch14/optimized_regional_triton.py")
+
+    assert "for _ in range(3):" in setup_section
+    assert "for seq in self.sequence_schedule:" in setup_section
+    assert "_ = self._compiled_model(self.inputs[seq])" in setup_section
+    assert "timed path measures steady" in setup_section
+
+
+def test_parameterized_graph_verification_capture_uses_fixed_request_slot() -> None:
+    source = _read("labs/parameterized_cuda_graphs/parameterized_cuda_graphs_common.py")
+    assert "slot_idx = 0" in source
+    assert "self._run_verification_slot(slot_idx)" in source
 
 
 def test_ch18_and_fullstack_pairs_keep_semantics_fixed() -> None:
@@ -325,8 +399,8 @@ def test_persistent_decode_keeps_canonical_iteration_parity_and_marks_cuda_varia
     assert float(sample.max().item()) <= 255.0
 
 
-def test_ch20_multiple_unoptimized_no_longer_claims_fused_ops() -> None:
-    source = _read("ch20/optimized_multiple_unoptimized.py")
+def test_ch20_bf16_mlp_no_longer_claims_fused_ops() -> None:
+    source = _read("ch20/optimized_bf16_mlp.py")
 
     assert "does not implement a fused MLP kernel today" in source
     assert '"ch20.uses_fused_ops": 0.0' in source

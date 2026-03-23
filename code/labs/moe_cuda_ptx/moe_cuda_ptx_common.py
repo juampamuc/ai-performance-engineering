@@ -946,6 +946,13 @@ class MoECudaPtxBenchmark(VerificationPayloadMixin, BaseBenchmark):
         else:
             verification = build_tensor_slice_verification(self.outputs)
 
+        tolerance = (2e-2, 2e-2)
+        if self.target == "moe_layer" and mode == "forward":
+            # The end-to-end layer surface intentionally quantizes routed
+            # activations before grouped expert compute, so verification needs
+            # to allow the expected FP8 roundtrip drift.
+            tolerance = (5e-2, 2e-1)
+
         self._set_verification_payload(
             inputs=inputs,
             output=verification,
@@ -958,7 +965,7 @@ class MoECudaPtxBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp16": self.workload.dtype == torch.float16,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(2e-2, 2e-2),
+            output_tolerance=tolerance,
         )
 
     def teardown(self) -> None:

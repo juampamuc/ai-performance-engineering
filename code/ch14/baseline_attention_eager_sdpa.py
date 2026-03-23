@@ -1,4 +1,4 @@
-"""Baseline flex attention – naive per-head computation without fusion."""
+"""Baseline eager attention with per-head serial computation."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from core.harness.benchmark_harness import (  # noqa: E402
 )
 
 
-class BaselineFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: Naive attention that iterates per head without fusion."""
+class BaselineAttentionEagerSDPABenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Baseline: naive attention that iterates per head without fusion."""
 
     def __init__(self):
         super().__init__()
@@ -64,7 +64,7 @@ class BaselineFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
 
-        with nvtx_range("baseline_flex_attention", enable=enable_nvtx):
+        with nvtx_range("baseline_attention_eager_sdpa", enable=enable_nvtx):
             if self.q is None or self.k is None or self.v is None:
                 raise RuntimeError("Tensors not initialized")
             scale = 1.0 / math.sqrt(self.head_dim)
@@ -143,5 +143,4 @@ class BaselineFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
-    return BaselineFlexAttentionBenchmark()
-
+    return BaselineAttentionEagerSDPABenchmark()

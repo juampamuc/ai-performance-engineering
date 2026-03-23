@@ -2,9 +2,10 @@
 #!POPCORN gpu NVIDIA
 
 import os
+from pathlib import Path
 import torch
 from task import input_t, output_t
-from torch.utils.cpp_extension import load_inline
+from torch.utils.cpp_extension import _get_build_directory, load_inline
 from reference_submission import ref_kernel
 
 CUDA_SRC_COMMON = r"""
@@ -1077,9 +1078,15 @@ _cuda_sources = [
 if _selected_case0_module is not None and _selected_case0_module != "my_module_v4":
     _cuda_sources.append(CUDA_SRC_COMMON + _make_v4_src_with_case0(_selected_case0_module, _selected_case0_launch))
 
-for i, src in enumerate(_cuda_sources):
+def _load_inline_or_cached_library(name: str, src: str) -> None:
+    build_dir = Path(_get_build_directory(name, verbose=False))
+    so_path = build_dir / f"{name}.so"
+    if so_path.exists():
+        torch.ops.load_library(str(so_path))
+        return
+
     load_inline(
-        f"gemm_{i}",
+        name,
         cpp_sources="",
         cuda_sources=src,
         verbose=True,
@@ -1099,6 +1106,10 @@ for i, src in enumerate(_cuda_sources):
         ],
         extra_ldflags=["-lcuda"],
     )
+
+
+for i, src in enumerate(_cuda_sources):
+    _load_inline_or_cached_library(f"gemm_{i}", src)
 
 gemm_v4 = torch.ops.my_module_v4.gemm
 gemm_v3b = torch.ops.my_module_v3b.gemm

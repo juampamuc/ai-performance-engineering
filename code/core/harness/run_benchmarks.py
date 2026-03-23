@@ -479,22 +479,26 @@ def extract_from_pytorch_trace(trace_path: Path) -> Dict[str, float]:
 INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     # Ch4: DataParallel demo shows basic parallelism pattern (requires multi-GPU)
     "ch04": {"dataparallel_basic"},
+    # Ch5: overlap/control demo remains useful, but no longer carries a canonical speed claim.
+    "ch05": {"ai"},
     # Ch6: launch-bounds bridge targets remain informational.
-    "ch06": {"launch_bounds_gmem"},
+    "ch06": {"launch_bounds_cuda"},
     # Ch12: Graph CUDA demos show graph capture patterns
-    "ch12": {"graph_cuda"},
+    "ch12": {"graph_cuda", "cuda_graphs_conditional"},
     # Ch13: compound optimization and exploratory KV-cache variants stay noncanonical
     "ch13": {"torchao_quantization_compiled", "kv_cache_naive_flash_blockwise"},
     # Ch15: Inference placement demo shows architecture patterns (multi-GPU)
     "ch15": {"inference_placement"},
-    # Ch16: The baseline paged-attention demo and piece-graphs example remain informational.
-    "ch16": {"paged_attention", "piece_graphs"},
-    # Ch17: Pipeline parallelism and routing demos (multi-GPU)
-    "ch17": {"pipeline_parallelism", "prefill_decode_disagg"},
+    # Ch16: Hardware-variant dense-attention path and piece-graphs example remain informational.
+    "ch16": {"dense_attention_flash_blackwell_variant", "piece_graphs"},
+    # Ch17: Pipeline parallelism, routing demos, and the inference control pair remain informational.
+    "ch17": {"pipeline_parallelism", "prefill_decode_disagg", "inference_full"},
     # Ch18: Speculative decoding demos show technique patterns
     "ch18": {"speculative_decoding_multi_draft", "flexdecoding_graphs"},
     # Ch19: NVFP4 is new and may not be faster than BF16 yet
     "ch19": {"nvfp4_training"},
+    # Ch20: overlap demo remains informational until it is re-established as a stable speedup target.
+    "ch20": {"pipeline_sequential"},
     # Labs: Dynamic router demos show routing patterns
     "dynamic_router": {"dynamic_router", "router_vectorized"},
     # Labs: Persistent decode demos show technique patterns
@@ -1790,9 +1794,6 @@ def find_cuda_executable(cu_file: Path, chapter_dir: Path) -> Optional[Path]:
     driver_to_executable = {
         "optimized_warp_specialized_two_pipelines_driver": "optimized_warp_specialized_two_pipelines_multistream",
         "baseline_warp_specialized_two_pipelines_driver": "baseline_warp_specialized_two_pipelines_multistream",
-        # Handle _gmem.cu files that compile to executables without _gmem suffix
-        "baseline_launch_bounds_gmem": "baseline_launch_bounds",
-        "optimized_launch_bounds_gmem": "optimized_launch_bounds",
     }
     if base_name in driver_to_executable:
         base_name = driver_to_executable[base_name]

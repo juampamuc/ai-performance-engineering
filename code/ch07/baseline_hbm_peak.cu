@@ -63,6 +63,7 @@ int main() {
     double bandwidth_tbs = bandwidth_gbs / 1024.0;
     
     printf("Baseline copy: %.2f ms, %.2f TB/s\n", elapsed_ms / iterations, bandwidth_tbs);
+    printf("TIME_MS: %.6f\n", elapsed_ms / iterations);
 
 #ifdef VERIFY
     float* h_verify = static_cast<float*>(malloc(n * sizeof(float)));
@@ -84,6 +85,5 @@ int main() {
     
     return 0;
 }
-
 
 

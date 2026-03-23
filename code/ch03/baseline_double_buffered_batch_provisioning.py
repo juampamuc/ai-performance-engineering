@@ -1,4 +1,4 @@
-"""Kubernetes baseline: per-iteration CPU orchestration with blocking data loading.
+"""Double-buffered batch provisioning baseline with blocking data loading.
 
 This benchmark demonstrates inefficient data provisioning - allocating new
 tensors and blocking on H2D copies each iteration. The optimized version
@@ -19,8 +19,8 @@ from core.harness.benchmark_harness import (
 )
 
 
-class BaselineKubernetesBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Loads batches from CPU each iteration with blocking copies."""
+class BaselineDoubleBufferedBatchProvisioningBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Loads each batch with blocking host orchestration and H2D copies."""
 
     def __init__(self):
         super().__init__()
@@ -64,7 +64,7 @@ class BaselineKubernetesBenchmark(VerificationPayloadMixin, BaseBenchmark):
         idx = self.batch_idx % len(self.host_batches)
         self.batch_idx += 1
         
-        with self._nvtx_range("baseline_kubernetes"):
+        with self._nvtx_range("baseline_double_buffered_batch_provisioning"):
             # Blocking H2D copy (the slow part)
             data = self.host_batches[idx].to(self.device, non_blocking=False)
             target = self.target_batches[idx].to(self.device, non_blocking=False)
@@ -127,5 +127,4 @@ class BaselineKubernetesBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return BaselineKubernetesBenchmark()
-
+    return BaselineDoubleBufferedBatchProvisioningBenchmark()

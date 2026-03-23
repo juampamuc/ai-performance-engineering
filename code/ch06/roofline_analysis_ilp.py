@@ -9,8 +9,8 @@ import torch
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from ch06.baseline_gemm_ilp import BaselineGEMMILPBenchmark
-from ch06.optimized_gemm_ilp import OptimizedILPBenchmark
+from ch06.baseline_elementwise_ilp import BaselineElementwiseILPBenchmark
+from ch06.optimized_elementwise_ilp import OptimizedElementwiseILPBenchmark
 
 
 class RooflineAnalyzer:
@@ -103,12 +103,12 @@ class RooflineAnalysisILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Benchmark: Run roofline analysis."""
         assert self.analyzer is not None
         with self._nvtx_range("roofline_analysis_ilp"):
-            baseline = BaselineGEMMILPBenchmark()
+            baseline = BaselineElementwiseILPBenchmark()
             baseline.setup()
             baseline_result = self.analyzer.analyze_kernel(baseline)
             baseline.teardown()
             
-            optimized = OptimizedILPBenchmark()
+            optimized = OptimizedElementwiseILPBenchmark()
             optimized.setup()
             optimized_result = self.analyzer.analyze_kernel(optimized)
             optimized.teardown()

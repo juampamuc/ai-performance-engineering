@@ -76,7 +76,7 @@ def main():
     )
     hook = getattr(comm_hooks, "batched_reduce_scatter_hook", None)
     if hook is None:
-        raise RuntimeError("PyTorch build missing batched_reduce_scatter_hook required for optimized ZeRO-2.")
+        raise RuntimeError("SKIPPED: PyTorch build missing batched_reduce_scatter_hook required for optimized ZeRO-2.")
     ddp_model.register_comm_hook(state=dist.group.WORLD, hook=hook)
 
     if args.compile:

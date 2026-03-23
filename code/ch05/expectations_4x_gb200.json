@@ -1,59 +1,5 @@
 {
   "examples": {
-    "ai": {
-      "example": "ai",
-      "metadata": {
-        "best_memory_savings_pct": 0.0,
-        "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_ai",
-        "best_optimization_file": "optimized_ai.py",
-        "best_optimization_memory_mb": 168.40966796875,
-        "best_optimization_speedup": 1.0894184011898727,
-        "best_optimization_technique": "optimized_ai",
-        "best_optimization_time_ms": 148.71189575195314,
-        "optimization_goal": "speed"
-      },
-      "metrics": {
-        "baseline_memory_mb": 168.40966796875,
-        "baseline_p75_ms": 159.06378173828125,
-        "baseline_throughput.bytes_per_s": null,
-        "baseline_throughput.custom_unit_name": null,
-        "baseline_throughput.custom_unit_per_s": null,
-        "baseline_throughput.goodput": null,
-        "baseline_throughput.latency_ms": 162.0094757080078,
-        "baseline_throughput.requests_per_s": 6.172478465409736,
-        "baseline_throughput.samples_per_s": null,
-        "baseline_throughput.schemaVersion": "1.0",
-        "baseline_throughput.tokens_per_s": 25889251.11738192,
-        "baseline_time_ms": 162.0094757080078,
-        "best_memory_savings_pct": 0.0,
-        "best_memory_savings_ratio": 1.0,
-        "best_optimized_memory_mb": 168.40966796875,
-        "best_optimized_p75_ms": 149.51913452148438,
-        "best_optimized_speedup": 1.0894184011898727,
-        "best_optimized_throughput.bytes_per_s": null,
-        "best_optimized_throughput.custom_unit_name": null,
-        "best_optimized_throughput.custom_unit_per_s": null,
-        "best_optimized_throughput.goodput": null,
-        "best_optimized_throughput.latency_ms": 148.71189575195314,
-        "best_optimized_throughput.requests_per_s": 6.7244116211655935,
-        "best_optimized_throughput.samples_per_s": null,
-        "best_optimized_throughput.schemaVersion": "1.0",
-        "best_optimized_throughput.tokens_per_s": 28204226.560301334,
-        "best_optimized_time_ms": 148.71189575195314,
-        "best_speedup": 1.0894184011898727,
-        "is_regression": false
-      },
-      "provenance": {
-        "git_commit": "5d7bc9517fae3fe67d0581ab1380d19a44e6e8fe",
-        "hardware_key": "4x_gb200",
-        "iterations": 20,
-        "profile_name": "none",
-        "timestamp": "2026-02-10T16:44:54.324525",
-        "warmup_iterations": 5
-      },
-      "type": "python"
-    },
     "decompression": {
       "example": "decompression",
       "metadata": {

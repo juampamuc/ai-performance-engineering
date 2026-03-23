@@ -1,13 +1,13 @@
-"""Python harness wrapper for optimized_float8_vector.cu - 32-byte Vectorized Loads."""
+"""Python harness wrapper for optimized_float4_vector.cu - float4 loads."""
 
 from __future__ import annotations
 from typing import Optional
 
 from pathlib import Path
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
-class OptimizedFloat8VectorBenchmark(CudaBinaryBenchmark):
-    """Wraps the 32-byte vectorized load benchmark for Blackwell."""
+class OptimizedFloat4VectorBenchmark(CudaBinaryBenchmark):
+    """Wraps the float4 vectorized-load benchmark."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -15,8 +15,8 @@ class OptimizedFloat8VectorBenchmark(CudaBinaryBenchmark):
         bytes_per_array = n_elems * 4
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="optimized_float8_vector",
-            friendly_name="Optimized Float8 Vector",
+            binary_name="optimized_float4_vector",
+            friendly_name="Optimized Float4 Vector",
             iterations=3,
             warmup=5,
             timeout_seconds=120,
@@ -32,4 +32,4 @@ class OptimizedFloat8VectorBenchmark(CudaBinaryBenchmark):
         return None
 def get_benchmark() -> BaseBenchmark:
     """Factory for discover_benchmarks()."""
-    return OptimizedFloat8VectorBenchmark()
+    return OptimizedFloat4VectorBenchmark()

@@ -85,7 +85,7 @@ class OptimizedAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 span = min(chunk, self.N - offset)
                 window = self.input[offset : offset + span]
                 transformed = self._transform(window)
-                self._output_buffer[offset : offset + span].copy_(transformed, non_blocking=True)
+                self._output_buffer[offset : offset + span].copy_(transformed)
             self.output = self._output_buffer
 
     def capture_verification_payload(self) -> None:

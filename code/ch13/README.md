@@ -21,7 +21,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
-| `kv_cache_naive` | `1772.850 ms` | `40.022 ms` | `44.30x` | dramatically better KV-cache path inside the same PyTorch-facing workflow |
+| `kv_cache_naive` | `1664.672 ms / 1194.135 MB` | `1739.080 ms / 370.394 MB` | `68.98% less memory` | token-by-token paged allocation preserves the batch contract while cutting KV-cache footprint |
 | `autograd_standard` | `1.644 ms` | `0.204 ms` | `8.04x` | compiled/optimized autograd path |
 | `precisionfp8_te` | `2.800 ms` | `0.542 ms` | `5.17x` | Transformer Engine FP8 path |
 
@@ -37,7 +37,7 @@ python -m cli.aisp bench run --targets ch13:precisionfp8_te --profile deep_dive 
 ```
 
 Those targets cover three different PyTorch optimization stories:
-- `kv_cache_naive`: cache-path and memory behavior
+- `kv_cache_naive`: cache-path and memory behavior, with memory reduction treated as the primary win
 - `autograd_standard`: framework/compile overhead
 - `precisionfp8_te`: lower-precision execution with real library support
 
@@ -87,4 +87,4 @@ python -m cli.aisp bench run --targets ch13 --profile minimal
 ## Notes
 - `custom_allocator.py` contains a standalone torch allocator shim that can be re-used in other chapters when debugging fragmentation.
 - `compiled_autograd.py` doubles as a tutorial on partial graph capture; the README here references it directly.
-- `torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise` remain informational variants; the fairness-refreshed canonical pairs stay focused on quantization-only and token-by-token cache comparisons.
+- `torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise` remain informational variants; `kv_cache_naive` stays canonical, but now as a memory-goal benchmark instead of a speed-goal benchmark.

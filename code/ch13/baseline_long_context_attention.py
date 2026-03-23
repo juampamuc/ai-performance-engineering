@@ -72,7 +72,7 @@ class BaselineLongContextAttentionBenchmark(VerificationPayloadMixin, BaseBenchm
             output=self.output.detach().float().clone(),
             batch_size=self.batch_size,
             precision_flags=PrecisionFlags(bf16=True, tf32=False),
-            output_tolerance=(1.0, 100.0),
+            output_tolerance=(0.2, 2.0),
         )
 
     def teardown(self) -> None:

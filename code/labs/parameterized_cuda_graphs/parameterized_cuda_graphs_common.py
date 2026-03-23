@@ -189,11 +189,18 @@ class ParameterizedGraphBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
         host_output = self.host_outputs[self._last_slot]
         return host_output[:2, :16].to(dtype=torch.float32).clone()
 
+    def _run_verification_slot(self, slot_idx: int) -> None:
+        self._last_slot = slot_idx
+        self._schedule_request_program(slot_idx)
+
     def capture_verification_payload(self) -> None:
+        slot_idx = 0
+        self._run_verification_slot(slot_idx)
+        self._synchronize()
         self._set_verification_payload(
             inputs={
-                "x": self.host_inputs[self._last_slot].clone(),
-                "scale": self.host_scales[self._last_slot].clone(),
+                "x": self.host_inputs[slot_idx].clone(),
+                "scale": self.host_scales[slot_idx].clone(),
             },
             output=self._current_output_slice(),
             batch_size=self.cfg.batch_size,
@@ -260,6 +267,15 @@ class ParameterizedGraphRecaptureBenchmark(ParameterizedGraphBenchmarkBase):
         with torch.cuda.graph(graph, stream=self.capture_stream):
             self._schedule_request_program(slot_idx)
         self._last_graph = graph
+        graph.replay()
+
+    def _run_verification_slot(self, slot_idx: int) -> None:
+        if self.capture_stream is None:
+            raise RuntimeError("capture stream not initialized")
+        self._last_slot = slot_idx
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=self.capture_stream):
+            self._schedule_request_program(slot_idx)
         graph.replay()
 
 
@@ -382,6 +398,13 @@ class ParameterizedGraphReplayBenchmark(ParameterizedGraphBenchmarkBase):
         if self.graph is None:
             raise RuntimeError("parameterized graph was not captured")
         slot_idx = self._next_slot()
+        self._update_exec_params_for_slot(slot_idx)
+        self.graph.replay()
+
+    def _run_verification_slot(self, slot_idx: int) -> None:
+        if self.graph is None:
+            raise RuntimeError("parameterized graph was not captured")
+        self._last_slot = slot_idx
         self._update_exec_params_for_slot(slot_idx)
         self.graph.replay()
 

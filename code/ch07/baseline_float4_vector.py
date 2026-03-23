@@ -1,13 +1,13 @@
-"""Python harness wrapper for baseline_float8_vector.cu - Scalar/float4 Loads."""
+"""Python harness wrapper for baseline_float4_vector.cu - scalar loads."""
 
 from __future__ import annotations
 from typing import Optional
 
 from pathlib import Path
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
-class BaselineFloat8VectorBenchmark(CudaBinaryBenchmark):
-    """Wraps the scalar/float4 load benchmark (baseline for 32-byte comparison)."""
+class BaselineFloat4VectorBenchmark(CudaBinaryBenchmark):
+    """Wraps the scalar-load baseline for the float4 vectorization comparison."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -15,8 +15,8 @@ class BaselineFloat8VectorBenchmark(CudaBinaryBenchmark):
         bytes_per_array = n_elems * 4
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="baseline_float8_vector",
-            friendly_name="Baseline Float8 Vector",
+            binary_name="baseline_float4_vector",
+            friendly_name="Baseline Float4 Vector",
             iterations=3,
             warmup=5,
             timeout_seconds=120,
@@ -32,4 +32,4 @@ class BaselineFloat8VectorBenchmark(CudaBinaryBenchmark):
         return None
 def get_benchmark() -> BaseBenchmark:
     """Factory for discover_benchmarks()."""
-    return BaselineFloat8VectorBenchmark()
+    return BaselineFloat4VectorBenchmark()

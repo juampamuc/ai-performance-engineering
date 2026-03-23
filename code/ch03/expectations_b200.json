@@ -1,6 +1,6 @@
 {
   "examples": {
-    "docker": {
+    "pinned_prefetch_mlp": {
       "custom_metrics": {
         "system.cores_per_numa": 0.0,
         "system.cpu_cores": 64.0,
@@ -9,15 +9,15 @@
         "system.nvlink_connections": 0.0,
         "system.pcie_lanes": 0.0
       },
-      "example": "docker",
+      "example": "pinned_prefetch_mlp",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_docker",
-        "best_optimization_file": "optimized_docker.py",
+        "best_optimization": "optimized_pinned_prefetch_mlp",
+        "best_optimization_file": "optimized_pinned_prefetch_mlp.py",
         "best_optimization_memory_mb": 469.2978515625,
         "best_optimization_speedup": 3.4254489737788214,
-        "best_optimization_technique": "optimized_docker",
+        "best_optimization_technique": "optimized_pinned_prefetch_mlp",
         "best_optimization_time_ms": 1.2609642696380616,
         "optimization_goal": "speed"
       },
@@ -134,7 +134,7 @@
       },
       "type": "python"
     },
-    "kubernetes": {
+    "double_buffered_batch_provisioning": {
       "custom_metrics": {
         "system.cores_per_numa": 0.0,
         "system.cpu_cores": 64.0,
@@ -143,15 +143,15 @@
         "system.nvlink_connections": 0.0,
         "system.pcie_lanes": 0.0
       },
-      "example": "kubernetes",
+      "example": "double_buffered_batch_provisioning",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_kubernetes",
-        "best_optimization_file": "optimized_kubernetes.py",
+        "best_optimization": "optimized_double_buffered_batch_provisioning",
+        "best_optimization_file": "optimized_double_buffered_batch_provisioning.py",
         "best_optimization_memory_mb": 189.26611328125,
         "best_optimization_speedup": 1.9521303606466571,
-        "best_optimization_technique": "optimized_kubernetes",
+        "best_optimization_technique": "optimized_double_buffered_batch_provisioning",
         "best_optimization_time_ms": 0.8395018657048543,
         "optimization_goal": "speed"
       },

@@ -32,7 +32,9 @@ class BaselineAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.value: Optional[torch.Tensor] = None
         # Larger sizes to show optimization benefits
         self.batch_size = 16
-        self.seq_len = 1024
+        # Retuned to a longer context so the eager-vs-SDPA gap reflects the
+        # intended O(n^2) materialization penalty on modern decoder workloads.
+        self.seq_len = 1280
         self.hidden_dim = 1024
         self.num_heads = 16
         self.head_dim = self.hidden_dim // self.num_heads

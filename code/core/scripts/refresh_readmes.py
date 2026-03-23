@@ -1178,9 +1178,9 @@ ENTRIES["ch03"] = chapter_entry(
 
                 | Target | Baseline | Optimized | Measured delta | What changed |
                 | --- | ---: | ---: | ---: | --- |
-                | `docker` | `4.456 ms` | `1.225 ms` | `3.64x` | container setup stops throttling the workload |
+                | `pinned_prefetch_mlp` | `4.456 ms` | `1.225 ms` | `3.64x` | pinned-memory prefetch removes blocking host staging |
                 | `gemm` | `0.548 ms` | `0.189 ms` | `2.90x` | control GEMM shows how host/runtime launch overhead caps achievable FLOP/s |
-                | `kubernetes` | `1.734 ms` | `1.076 ms` | `1.61x` | topology-aware scheduling reduces orchestration drag |
+                | `double_buffered_batch_provisioning` | `1.734 ms` | `1.076 ms` | `1.61x` | double-buffered provisioning overlaps batch copies with compute |
 
                 The magnitude is smaller than the headline CUDA chapters, but the lesson is important: host tuning changes are often prerequisite wins, not optional polish.
                 `gemm` is intentionally a control workload for host/runtime overhead, while `rack_prep` is the more chapter-native staged-copy example for locality-aware host preparation. Structured metrics mark `gemm` with `story.control_pair=1` and `story.chapter_native_exemplar=0`, and structured story metadata marks it as a supplementary control pair with chapter-native targets like `pageable_copy` and `rack_prep`, so downstream reports can keep that distinction explicit."""
@@ -1193,15 +1193,15 @@ ENTRIES["ch03"] = chapter_entry(
                 For this chapter, pair the harness runtime with host/GPU traces so the bottleneck story stays grounded:
 
                 ```bash
-                python -m cli.aisp bench run --targets ch03:docker --profile deep_dive --single-gpu
+                python -m cli.aisp bench run --targets ch03:pinned_prefetch_mlp --profile deep_dive --single-gpu
                 python -m cli.aisp bench run --targets ch03:gemm --profile deep_dive --single-gpu
-                python -m cli.aisp bench run --targets ch03:kubernetes --profile deep_dive --single-gpu
+                python -m cli.aisp bench run --targets ch03:double_buffered_batch_provisioning --profile deep_dive --single-gpu
                 ```
 
                 Expected evidence:
-                - `docker`: less launch jitter and cleaner host scheduling
+                - `pinned_prefetch_mlp`: pinned-memory prefetch removes blocking host staging
                 - `gemm`: lower host overhead around the same kernel without changing the math
-                - `kubernetes`: fewer placement-related stalls and better runtime consistency"""
+                - `double_buffered_batch_provisioning`: double buffering reduces batch-provisioning stalls"""
             ),
         ),
         MarkdownSection(
@@ -1226,8 +1226,8 @@ ENTRIES["ch03"] = chapter_entry(
     contents=[
         ("`baseline_pageable_copy.py`, `optimized_pageable_copy.py`, `bind_numa_affinity.py`, `numa_topology_script.sh`", "Host-transfer and NUMA-adjacent helpers: the benchmark pair covers pageable-vs-pinned async copies, while the scripts handle CPU/GPU socket placement and topology inspection."),
         ("`baseline_rack_prep.py`, `optimized_rack_prep.py`, `grace_blackwell_topology.py`", "Topology-aware staging control pair: baseline uses blocking pageable staging, while optimized adds affinity planning plus pinned double-buffered copy/compute overlap."),
-        ("`baseline_docker.py`, `optimized_docker.py`, `docker_gpu_optimized.dockerfile`, `system_tuning.sh`, `gpu_setup_commands.sh`", "Container configs plus host setup scripts that toggle persistence mode, huge pages, IRQ steering, and MIG visibility."),
-        ("`baseline_kubernetes.py`, `optimized_kubernetes.py`, `kubernetes_mig_pod.yaml`, `kubernetes_topology_pod.yaml`", "Kubernetes manifests demonstrating topology-aware scheduling and MIG partitioning for multi-tenant fleets."),
+        ("`baseline_pinned_prefetch_mlp.py`, `optimized_pinned_prefetch_mlp.py`, `docker_gpu_optimized.dockerfile`, `system_tuning.sh`, `gpu_setup_commands.sh`", "Pinned-memory prefetch control pair plus host/container setup scripts that toggle persistence mode, huge pages, IRQ steering, and MIG visibility."),
+        ("`baseline_double_buffered_batch_provisioning.py`, `optimized_double_buffered_batch_provisioning.py`, `kubernetes_mig_pod.yaml`, `kubernetes_topology_pod.yaml`", "Batch-provisioning overlap pair plus Kubernetes manifests demonstrating topology-aware scheduling and MIG partitioning for multi-tenant fleets."),
         ("`cpu_gpu_numa_optimizations.sh`, `system_tuning.sh`, `gpu_setup_commands.sh`", "Workflow scripts for aligning CPU governors, cgroup limits, persistence mode, and driver settings with the benchmark harness."),
         ("`baseline_gemm.py`, `optimized_gemm.py`, `train.py`", "Control GEMM + training loops that expose host/runtime launch overhead in measurable FLOP/s without claiming a NUMA-specific kernel optimization."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`", "Harness entry, Python deps, and regression thresholds."),
@@ -1396,9 +1396,8 @@ ENTRIES["ch05"] = chapter_entry(
                 | --- | ---: | ---: | ---: | --- |
                 | `vectorization` | `3.861 ms` | `0.053 ms` | `72.64x` | Python-heavy preprocessing becomes vectorized |
                 | `storage_cpu` | `111.652 ms` | `53.898 ms` | `2.07x` | storage path stops starving the device |
-                | `ai` | `63.724 ms` | `47.702 ms` | `1.34x` | streaming/inference pipeline overlaps IO better |
 
-                The headline win here is often preprocessing, not raw storage hardware. That is why both vectorization and storage-path examples belong in the same chapter."""
+                The headline win here is often preprocessing, not raw storage hardware. The `ai` pair now stays in the chapter as an informational overlap/control demo instead of a canonical speedup claim."""
             ),
         ),
         MarkdownSection(
@@ -1410,13 +1409,12 @@ ENTRIES["ch05"] = chapter_entry(
                 ```bash
                 python -m cli.aisp bench run --targets ch05:vectorization --profile deep_dive --single-gpu
                 python -m cli.aisp bench run --targets ch05:storage_cpu --profile deep_dive --single-gpu
-                python -m cli.aisp bench run --targets ch05:ai --profile deep_dive --single-gpu
                 ```
 
                 The expected evidence is:
                 - `vectorization`: dramatically less CPU time in preprocessing
                 - `storage_cpu`: fewer long idle gaps between batches
-                - `ai`: better overlap between read/decode work and compute"""
+                - `ai`: useful as an overlap/control trace, but no longer treated as a canonical speed target"""
             ),
         ),
         MarkdownSection(
@@ -1441,7 +1439,7 @@ ENTRIES["ch05"] = chapter_entry(
     contents=[
         ("`baseline_storage_cpu.py`, `optimized_storage_cpu.py`", "Single-node dataloader comparison covering worker count, pinned memory, and caching strategies."),
         ("`baseline_vectorization.py`, `optimized_vectorization.py`", "Vectorized parsing and memory-map examples that remove Python loops from preprocessing."),
-        ("`baseline_ai.py`, `optimized_ai.py`, `storage_io_optimization.py`", "LLM-style token pipelines showcasing overlapping compute with streaming reads and prefetch."),
+        ("`baseline_ai.py`, `optimized_ai.py`, `storage_io_optimization.py`", "LLM-style token pipelines showcasing overlapping compute with streaming reads and prefetch. `ai` is kept as an informational overlap/control demo."),
         ("`baseline_host_staged_reduction.py`, `optimized_host_staged_reduction.py`", "Single-GPU host-staged reduction vs on-device reduction."),
         ("`baseline_distributed_multigpu.py`, `optimized_distributed_multigpu.py`", "Actual multi-GPU reduction baseline (CPU staging) vs GPU-side reduce_add."),
         ("`gds_cufile_minimal.py`, `gpudirect_storage_example.py`", "GPUDirect Storage samples for verifying cuFile setup, buffer alignment, and throughput."),
@@ -1450,7 +1448,7 @@ ENTRIES["ch05"] = chapter_entry(
     validation=[
         "`python baseline_storage_cpu.py --inspect` exposes CPU wait time > GPU time; `optimized_storage_cpu.py` reverses the ratio with >=80% GPU utilization.",
         "`python -m ch05.gds_cufile_minimal /tmp/gds_test_file.bin 1073741824 --generate` sustains multi-GB/s throughput when `/etc/cufile.json` is configured and NVMe advertises GPUDirect support.",
-        "`python -m ch05.compare` shows optimized_ai eliminating CPU-side preprocessing from the critical path.",
+        "`python -m ch05.compare` remains useful for inspecting the `ai` overlap/control demo, but canonical chapter claims should come from `vectorization` and `storage_cpu`.",
     ],
     notes=[
         "GPUDirect scripts fall back to host-mediated reads when `libcufile.so` is unavailable, making it safe to run on dev laptops.",
@@ -1545,7 +1543,7 @@ ENTRIES["ch06"] = chapter_entry(
     ],
     contents=[
         ("`my_first_kernel.cu`, `simple_kernel.cu`, `baseline_add_cuda.cu`, `optimized_add_cuda_parallel.cu`, `baseline_add.py`, `optimized_add.py`, `baseline_add_cuda.py`, `optimized_add_cuda_parallel.py`", "Hello-world kernels plus Python wrappers for the canonical `add` / `add_cuda` targets and the underlying CUDA launch-path verification."),
-        ("`baseline_attention_ilp.py`, `optimized_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `ilp_low_occupancy_vec4_demo.cu`, `ilp_extreme_low_occupancy_vec4_demo.cu`", "Instruction-level parallelism studies that keep the math fixed while changing independent chains per thread, register pressure, and vector width."),
+        ("`baseline_attention_ilp.py`, `optimized_attention_ilp.py`, `baseline_elementwise_ilp.py`, `optimized_elementwise_ilp.py`, `ilp_low_occupancy_vec4_demo.cu`, `ilp_extreme_low_occupancy_vec4_demo.cu`", "Instruction-level parallelism studies that keep the math fixed while changing independent chains per thread, register pressure, and vector width."),
         ("`baseline_bank_conflicts.cu`, `optimized_bank_conflicts.cu`, `baseline_launch_bounds*.{py,cu}`, `optimized_launch_bounds*.{py,cu}`", "Bank conflict and launch-bound exercises to highlight shared memory layouts and CTA sizing."),
         ("`baseline_autotuning.py`, `optimized_autotuning.py`, `memory_pool_tuning.cu`, `stream_ordered_allocator/`", "Autotuning harness plus allocator experiments for controlling fragmentation and stream ordering."),
         ("`unified_memory.cu`, `occupancy_api.cu`, `baseline_quantization_ilp.py`, `optimized_quantization_ilp.py`", "Unified memory demo, occupancy calculator sample, and quantization-focused ILP workloads."),
@@ -2197,6 +2195,7 @@ ENTRIES["ch12"] = chapter_entry(
     notes=[
         "`cuda_graphs_workload.cuh` holds reusable graph capture helpers when you want to wrap your own kernels.",
         "`helper_*.cu` files contain host/device glue for the dynamic-parallelism case studies-copy them when bootstrapping new experiments.",
+        "`graph_conditional_runtime` is the canonical conditional-node benchmark. Keep `cuda_graphs_conditional` as a supplementary demo rather than a canonical speedup target.",
         "For a smaller supporting lab that keeps Chapter 12's CUDA Graph story primary while adding fused reduction and padding-aware projection examples, see `labs/training_hotpath`.",
     ],
 )
@@ -2242,7 +2241,7 @@ ENTRIES["ch13"] = chapter_entry(
 
                 | Target | Baseline | Optimized | Measured delta | What changed |
                 | --- | ---: | ---: | ---: | --- |
-                | `kv_cache_naive` | `1772.850 ms` | `40.022 ms` | `44.30x` | dramatically better KV-cache path inside the same PyTorch-facing workflow |
+                | `kv_cache_naive` | `1664.672 ms / 1194.135 MB` | `1739.080 ms / 370.394 MB` | `68.98% less memory` | token-by-token paged allocation preserves the batch contract while cutting KV-cache footprint |
                 | `autograd_standard` | `1.644 ms` | `0.204 ms` | `8.04x` | compiled/optimized autograd path |
                 | `precisionfp8_te` | `2.800 ms` | `0.542 ms` | `5.17x` | Transformer Engine FP8 path |
 
@@ -2262,7 +2261,7 @@ ENTRIES["ch13"] = chapter_entry(
                 ```
 
                 Those targets cover three different PyTorch optimization stories:
-                - `kv_cache_naive`: cache-path and memory behavior
+                - `kv_cache_naive`: cache-path and memory behavior, with memory reduction treated as the primary win
                 - `autograd_standard`: framework/compile overhead
                 - `precisionfp8_te`: lower-precision execution with real library support"""
             ),
@@ -2305,7 +2304,7 @@ ENTRIES["ch13"] = chapter_entry(
     notes=[
         "`custom_allocator.py` contains a standalone torch allocator shim that can be re-used in other chapters when debugging fragmentation.",
         "`compiled_autograd.py` doubles as a tutorial on partial graph capture; the README here references it directly.",
-        "`torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise` remain informational variants; the fairness-refreshed canonical pairs stay focused on quantization-only and token-by-token cache comparisons.",
+        "`torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise` remain informational variants; `kv_cache_naive` stays canonical, but now as a memory-goal benchmark instead of a speed-goal benchmark.",
     ],
 )
 
@@ -2397,7 +2396,7 @@ ENTRIES["ch14"] = chapter_entry(
     contents=[
         ("`baseline_model_compile_bf16.py`, `optimized_model_compile_bf16.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py`", "Model-scale examples showcasing the eager-vs-compiled BF16 pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests."),
         ("`baseline_cutlass.py`, `optimized_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py`", "CUTLASS vs Triton comparisons plus advanced TMA/NVSHMEM Triton kernels."),
-        ("`baseline_flex_attention.py`, `optimized_flex_attention.py`, `baseline_flex_attention_sparse.py`, `optimized_flex_attention_sparse.py`, `flex_attention_sparse_demo.py`", "FlexAttention workloads that validate custom score mods, masks, sparsity, and compile speedups."),
+        ("`baseline_attention_eager_sdpa.py`, `optimized_attention_eager_sdpa.py`, `baseline_flex_attention_sparse.py`, `optimized_flex_attention_sparse.py`, `flex_attention_sparse_demo.py`", "Eager-vs-SDPA attention plus FlexAttention sparse workloads that validate custom score mods, masks, sparsity, and compile speedups."),
         ("`baseline_nccl_quantization.py`, `optimized_nccl_quantization.py`, `deepseek_innovation_l2_bypass.py`", "Quantization-aware communication and the DeepSeek-inspired L2 bypass experiment."),
         ("`baseline_regional_triton.py`, `optimized_regional_triton.py`, `inspect_compiled_code.py`, `benchmark_tma_configs.py`", "Regional compilation and TMA parameter sweeps for auto-tuning generated kernels."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`, `train.py`, `transformer.py`", "Harness entry plus model definitions and dependency pins."),
@@ -2405,7 +2404,7 @@ ENTRIES["ch14"] = chapter_entry(
     validation=[
         "`python -m cli.aisp bench run --targets ch14:model_compile_bf16 --profile minimal` produces compile-time summaries followed by steady-state throughput gains vs an eager baseline running the same reduced-precision model.",
         "`python -m ch14.triton_tma_blackwell --validate` compares Triton and CUDA outputs to double-check TMA scheduling logic.",
-        "`python -m ch14.compare --examples flex_attention` shows the compiled path significantly reducing kernel launch count without changing accuracy.",
+        "`python -m ch14.compare --examples attention_eager_sdpa` shows the fused SDPA path reducing kernel launch count without changing accuracy.",
     ],
     notes=[
         "`inspect_compiled_code.py` dumps Triton/PTX/Graph captures for any target; edit the helper to introspect new workloads.",
@@ -2607,7 +2606,7 @@ ENTRIES["ch16"] = chapter_entry(
     ],
     contents=[
         ("`inference_optimizations_blackwell.py`, `inference_profiling.py`, `inference_server_load_test.py`, `inference_serving_multigpu.py`", "Top-level orchestration scripts for profiling and load testing multi-GPU inference deployments."),
-        ("`baseline_flash_sdp.py`, `optimized_flash_sdp.py`, `baseline_paged_attention.py`, `optimized_paged_attention.py`, `optimized_paged_attention_blackwell.py`", "Attention kernels that compare naive implementations versus Flash/paged variants, including an intentional `paged_attention_blackwell` discovery alias for the Blackwell-tuned path."),
+        ("`baseline_flash_sdp.py`, `optimized_flash_sdp.py`, `baseline_dense_attention_flash.py`, `optimized_dense_attention_flash.py`, `optimized_dense_attention_flash_blackwell_variant.py`", "Attention kernels that compare naive implementations versus Flash backends, including an explicit non-canonical hardware variant for the Blackwell-tagged dense-attention path."),
         ("`baseline_piece_graphs.py`, `optimized_piece_graphs.py`, `baseline_regional_compilation.py`, `optimized_regional_compilation.py`", "Piecewise graph capture and regional compilation for stable low-latency decode."),
         ("`fp8_transformer_engine.py`, `test_fp8_quantization_real.py`, `symmetric_memory_inference.py`, `multi_gpu_validation.py`", "Serving-time FP8 and symmetric-memory validations to guarantee accuracy and NVLink efficiency."),
         ("`moe_performance_benchmark.py`, `synthetic_moe_inference_benchmark.py`, `moe_workload.py`", "MoE inference harnesses that stress router placement and per-expert batching."),
@@ -2615,14 +2614,14 @@ ENTRIES["ch16"] = chapter_entry(
         ("`compare.py`, `requirements.txt`, `Makefile`, `expectations_{hardware_key}.json`", "Harness entry and dependencies for inference-focused verification."),
     ],
     validation=[
-        "`python optimized_paged_attention.py --profile minimal` yields fewer page faults and improved throughput relative to the baseline script.",
+        "`python optimized_dense_attention_flash.py --profile minimal` yields fewer page faults and improved throughput relative to the baseline script.",
         "`python symmetric_memory_inference.py --validate` confirms NVLink-backed KV replicas stay in sync with negligible skew.",
         "`python inference_server_load_test.py --duration 120` exercises the scheduler and should report stable TTFT/TPOT metrics after warm-up.",
     ],
     notes=[
         "`dcgm_prometheus_exporter.py` emits per-GPU metrics consumable by Prometheus/Grafana without extra setup.",
         "`cache_monitoring.py` can be run standalone to sanity-check allocator health between runs.",
-        "`optimized_paged_attention_blackwell.py` is an intentional optimized variant of `baseline_paged_attention.py`; discovery surfaces it as the first-class target `paged_attention_blackwell` rather than treating it as an orphan file.",
+        "`optimized_dense_attention_flash_blackwell_variant.py` is an explicit non-canonical hardware variant of `baseline_dense_attention_flash.py`; keep it out of canonical expectation coverage unless it grows real hardware-specific behavior.",
     ],
 )
 
@@ -3077,10 +3076,9 @@ ENTRIES["ch20"] = chapter_entry(
                 | Target | Baseline | Optimized | Measured delta | What changed |
                 | --- | ---: | ---: | ---: | --- |
                 | `integrated_kv_cache` | `456.705 ms` | `67.381 ms` | `6.78x` | integrated KV-cache and overlap path |
-                | `pipeline_sequential` | `27.927 ms` | `1.683 ms` | `16.60x` | sequential pipeline replaced by coordinated staged execution |
-                | `multiple_unoptimized` | `0.616 ms` | `0.234 ms` | `2.63x` | stacked subsystem cleanup versus the intentionally rough composite baseline |
+                | `bf16_mlp` | `0.616 ms` | `0.234 ms` | `2.63x` | BF16 precision policy on the same eager MLP graph |
 
-                This chapter is the best place to check whether wins compose. A chapter 20 speedup is more meaningful than a microbench speedup when you want to know what survives in a real end-to-end path."""
+                This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements."""
             ),
         ),
         MarkdownSection(
@@ -3091,8 +3089,7 @@ ENTRIES["ch20"] = chapter_entry(
 
                 ```bash
                 python -m cli.aisp bench run --targets ch20:integrated_kv_cache --profile deep_dive --single-gpu
-                python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive --single-gpu
-                python -m cli.aisp bench run --targets ch20:multiple_unoptimized --profile deep_dive --single-gpu
+                python -m cli.aisp bench run --targets ch20:bf16_mlp --profile deep_dive --single-gpu
                 ```
 
                 That is the right place to answer whether the gain came from overlap, memory movement, or simply removing one obvious bottleneck from the baseline."""
@@ -3106,7 +3103,6 @@ ENTRIES["ch20"] = chapter_entry(
                 python -m ch20.compare
                 python -m cli.aisp bench list-targets --chapter ch20
                 python -m cli.aisp bench run --targets ch20 --profile minimal
-                python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive --single-gpu
                 ```"""
             ),
         ),
@@ -3118,8 +3114,8 @@ ENTRIES["ch20"] = chapter_entry(
         "Validate improvements with workload-specific acceptance tests.",
     ],
     contents=[
-        ("`baseline_multiple_unoptimized.py`, `optimized_multiple_unoptimized.py`, `ai_kernel_generator.py`, `core/optimization/inductor_guard.py`", "Composite workloads that stack several bottlenecks plus the shared Inductor cudagraph guard used by the compiled end-to-end paths."),
-        ("`baseline_pipeline_sequential.py`, `optimized_pipeline_sequential.py`, `baseline_end_to_end_bandwidth.py`, `optimized_end_to_end_bandwidth.py`", "Pipeline and bandwidth case studies showing how optimizations interact across stages."),
+        ("`baseline_bf16_mlp.py`, `optimized_bf16_mlp.py`, `ai_kernel_generator.py`, `core/optimization/inductor_guard.py`", "Precision-policy workload plus the shared Inductor cudagraph guard used by the compiled end-to-end paths."),
+        ("`baseline_pipeline_sequential.py`, `optimized_pipeline_sequential.py`, `baseline_end_to_end_bandwidth.py`, `optimized_end_to_end_bandwidth.py`", "Pipeline and bandwidth case studies showing how optimizations interact across stages. `pipeline_sequential` currently remains informational after the fairness refresh."),
         ("`baseline_integrated_kv_cache.py`, `optimized_integrated_kv_cache.py`", "Integrated KV-cache demos that merge allocator, overlap, and NVLink pooling tricks."),
         ("`baseline_memory_standard.py`, `optimized_memory_standard.py`", "Memory-focused harness verifying allocator changes at system level."),
         ("`baseline_training_single.py`, `optimized_training_single.py`, `test.cu`, `Makefile`", "Single-device training case study plus CUDA kernels used in the final report."),
@@ -3128,7 +3124,7 @@ ENTRIES["ch20"] = chapter_entry(
     validation=[
         "`python -m ch20.compare` emits per-stage summaries that show each optimized variant meeting or exceeding stored expectations.",
         "`python -m ch20.ai_kernel_generator --emit test.cu` produces CUDA kernels that compile via `nvcc` and integrate into the harness without manual edits.",
-        "`python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive` shows smooth NVTX ranges covering the entire pipeline, demonstrating overlap success.",
+        "`python -m cli.aisp bench run --targets ch20:integrated_kv_cache --profile deep_dive` is the stronger canonical end-to-end overlap proof after the fairness refresh.",
     ],
     notes=[
         "`core/optimization/inductor_guard.py` is the canonical helper for gating Inductor cudagraph features in the compiled chapter 20 paths.",

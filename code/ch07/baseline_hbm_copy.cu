@@ -55,6 +55,7 @@ int main() {
     double bw = (size_bytes * 2 / (avg_ms / 1000.0)) / 1e9;
     
     printf("Scalar copy (baseline): %.2f ms, %.2f GB/s\n", avg_ms, bw);
+    printf("TIME_MS: %.6f\n", avg_ms);
 
 #ifdef VERIFY
     float* h_verify = static_cast<float*>(std::malloc(size_bytes));
@@ -76,6 +77,5 @@ int main() {
     
     return 0;
 }
-
 
 

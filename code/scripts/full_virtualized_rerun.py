@@ -29,6 +29,78 @@ from core.benchmark.expectations import (
 from core.discovery import chapter_slug, discover_all_chapters, discover_benchmarks, get_bench_roots
 from core.harness.validity_checks import detect_execution_environment
 
+TARGET_RENAMES = {
+    "ch03:docker": "ch03:pinned_prefetch_mlp",
+    "ch03:kubernetes": "ch03:double_buffered_batch_provisioning",
+    "ch06:gemm_ilp": "ch06:elementwise_ilp",
+    "ch06:launch_bounds_gmem": "ch06:launch_bounds_cuda",
+    "ch07:float8_vector": "ch07:float4_vector",
+    "ch14:flex_attention": "ch14:attention_eager_sdpa",
+    "ch16:paged_attention": "ch16:dense_attention_flash",
+    "ch16:paged_attention_blackwell": "ch16:dense_attention_flash_blackwell_variant",
+    "ch18:tiny_gemm_pdl": "ch18:tiny_gemm_fused",
+    "ch20:multiple_unoptimized": "ch20:bf16_mlp",
+}
+
+EXAMPLE_RENAMES = {
+    old.split(":", 1)[1]: new.split(":", 1)[1]
+    for old, new in TARGET_RENAMES.items()
+}
+
+FILE_RENAMES = {
+    "baseline_docker.py": "baseline_pinned_prefetch_mlp.py",
+    "optimized_docker.py": "optimized_pinned_prefetch_mlp.py",
+    "baseline_kubernetes.py": "baseline_double_buffered_batch_provisioning.py",
+    "optimized_kubernetes.py": "optimized_double_buffered_batch_provisioning.py",
+    "baseline_gemm_ilp.py": "baseline_elementwise_ilp.py",
+    "optimized_gemm_ilp.py": "optimized_elementwise_ilp.py",
+    "baseline_launch_bounds_gmem.py": "baseline_launch_bounds_cuda.py",
+    "optimized_launch_bounds_gmem.py": "optimized_launch_bounds_cuda.py",
+    "baseline_float8_vector.py": "baseline_float4_vector.py",
+    "optimized_float8_vector.py": "optimized_float4_vector.py",
+    "baseline_flex_attention.py": "baseline_attention_eager_sdpa.py",
+    "optimized_flex_attention.py": "optimized_attention_eager_sdpa.py",
+    "baseline_paged_attention.py": "baseline_dense_attention_flash.py",
+    "optimized_paged_attention.py": "optimized_dense_attention_flash.py",
+    "optimized_paged_attention_blackwell.py": "optimized_dense_attention_flash_blackwell_variant.py",
+    "baseline_tiny_gemm_pdl.py": "baseline_tiny_gemm_fused.py",
+    "optimized_tiny_gemm_pdl.py": "optimized_tiny_gemm_fused.py",
+    "baseline_multiple_unoptimized.py": "baseline_bf16_mlp.py",
+    "optimized_multiple_unoptimized.py": "optimized_bf16_mlp.py",
+}
+
+TECHNIQUE_RENAMES = {
+    old.replace(".py", ""): new.replace(".py", "")
+    for old, new in FILE_RENAMES.items()
+}
+
+EXPECTED_UNSUPPORTED_PORTABLE_REASON = "expected_unsupported_portable_single_gpu"
+EXPECTED_UNSUPPORTED_RUNTIME_REASON = "expected_unsupported_runtime_capability"
+EXPECTED_UNSUPPORTED_PORTABLE_TOKENS = (
+    "requires multiple gpus",
+    "requires at least 2 gpus",
+    "insufficient gpus available",
+)
+EXPECTED_UNSUPPORTED_RUNTIME_TOKENS = (
+    "missing batched_reduce_scatter_hook required for optimized zero-2",
+)
+
+INFORMATIONAL_BENCHMARKS: Dict[str, set[str]] = {
+    "ch04": {"dataparallel_basic"},
+    "ch05": {"ai"},
+    "ch06": {"launch_bounds_cuda"},
+    "ch12": {"graph_cuda", "cuda_graphs_conditional"},
+    "ch13": {"torchao_quantization_compiled", "kv_cache_naive_flash_blockwise"},
+    "ch15": {"inference_placement"},
+    "ch16": {"dense_attention_flash_blackwell_variant", "piece_graphs"},
+    "ch17": {"pipeline_parallelism", "prefill_decode_disagg", "inference_full"},
+    "ch18": {"speculative_decoding_multi_draft", "flexdecoding_graphs"},
+    "ch19": {"nvfp4_training"},
+    "ch20": {"pipeline_sequential"},
+    "dynamic_router": {"dynamic_router", "router_vectorized"},
+    "persistent_decode": {"kv_locality_microbench", "persistent_decode_cuda"},
+}
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -144,6 +216,7 @@ def _queue_paths(queue_root: Path) -> Dict[str, Path]:
         "queue_log": queue_root / "queue.log",
         "worker_log": queue_root / "worker.log",
         "problems": queue_root / "problem_queue.jsonl",
+        "unsupported": queue_root / "expected_unsupported.jsonl",
         "writes": queue_root / "expectation_writes.jsonl",
         "targets": queue_root / "targets.txt",
     }
@@ -171,7 +244,51 @@ def _load_state(state_path: Path) -> Dict[str, Any]:
     payload.setdefault("worker_pid", None)
     payload.setdefault("written_expectation_total", 0)
     payload.setdefault("queued_problem_total", 0)
-    return payload
+    payload.setdefault("expected_unsupported_total", 0)
+    return _canonicalize_state(payload)
+
+
+def _canonicalize_target(target: Optional[str]) -> Optional[str]:
+    if not target:
+        return target
+    return TARGET_RENAMES.get(str(target), str(target))
+
+
+def _canonicalize_identity_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(payload)
+    target = _canonicalize_target(updated.get("target"))
+    if target is not None:
+        updated["target"] = target
+    example = updated.get("example")
+    if example is not None:
+        updated["example"] = EXAMPLE_RENAMES.get(str(example), str(example))
+    best_file = updated.get("best_optimization_file")
+    if best_file is not None:
+        updated["best_optimization_file"] = FILE_RENAMES.get(str(best_file), str(best_file))
+    best_technique = updated.get("best_optimization_technique")
+    if best_technique is not None:
+        updated["best_optimization_technique"] = TECHNIQUE_RENAMES.get(str(best_technique), str(best_technique))
+    return updated
+
+
+def _canonicalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(state)
+    updated["discovered_targets"] = [_canonicalize_target(target) for target in updated.get("discovered_targets", [])]
+    updated["pending_targets"] = [_canonicalize_target(target) for target in updated.get("pending_targets", [])]
+    updated["active_target"] = _canonicalize_target(updated.get("active_target"))
+    target_records = updated.get("target_records") or {}
+    canonical_records: Dict[str, Any] = {}
+    for target, record in target_records.items():
+        canonical_target = _canonicalize_target(target)
+        next_record = dict(record)
+        next_record["target"] = canonical_target
+        next_record["benchmarks"] = [
+            _canonicalize_identity_fields(dict(bench))
+            for bench in list(next_record.get("benchmarks") or [])
+        ]
+        canonical_records[str(canonical_target)] = next_record
+    updated["target_records"] = canonical_records
+    return updated
 
 
 def _save_state(state_path: Path, state: Dict[str, Any]) -> None:
@@ -228,6 +345,7 @@ def _initialize_state(
         "worker_command": None,
         "written_expectation_total": 0,
         "queued_problem_total": 0,
+        "expected_unsupported_total": 0,
     }
 
 
@@ -235,6 +353,7 @@ def _finalize_state_counts(state: Dict[str, Any]) -> None:
     records = state.get("target_records", {})
     state["written_expectation_total"] = sum(int(record.get("written_expectation_count", 0)) for record in records.values())
     state["queued_problem_total"] = sum(int(record.get("queued_problem_count", 0)) for record in records.values())
+    state["expected_unsupported_total"] = sum(int(record.get("expected_unsupported_count", 0)) for record in records.values())
 
 
 def _resolve_targets(repo_root: Path, explicit_targets: List[str], max_targets: Optional[int]) -> List[str]:
@@ -484,6 +603,14 @@ def _score(entry: ExpectationEntry) -> float:
     return float(entry.best_speedup)
 
 
+def _expectation_example_key(bench: Dict[str, Any]) -> str:
+    example_name = str(bench.get("example") or "unknown").strip() or "unknown"
+    bench_type = str(bench.get("type") or "python").strip().lower() or "python"
+    if bench_type == "python":
+        return example_name
+    return f"{example_name}_{bench_type}"
+
+
 def _write_eligible_expectation(
     *,
     repo_root: Path,
@@ -500,7 +627,7 @@ def _write_eligible_expectation(
         accept_regressions=False,
         allow_mixed_provenance=True,
     )
-    example_key = str(bench.get("example") or "unknown")
+    example_key = _expectation_example_key(bench)
     existing_entry = store.get_entry(example_key)
     new_score = _score(entry)
     details: Dict[str, Any] = {
@@ -531,6 +658,26 @@ def _write_eligible_expectation(
         return "queued", reasons, details
     store.save()
     return "written", [], details
+
+
+def _expected_unsupported_portable_reason(bench: Dict[str, Any]) -> Optional[str]:
+    if str(bench.get("status") or "").strip().lower() != "skipped":
+        return None
+    error_text = str(bench.get("error") or "").strip().lower()
+    if not error_text:
+        return None
+    if any(token in error_text for token in EXPECTED_UNSUPPORTED_PORTABLE_TOKENS):
+        return EXPECTED_UNSUPPORTED_PORTABLE_REASON
+    if any(token in error_text for token in EXPECTED_UNSUPPORTED_RUNTIME_TOKENS):
+        return EXPECTED_UNSUPPORTED_RUNTIME_REASON
+    return None
+
+
+def _is_informational_benchmark(chapter_name: str, bench: Dict[str, Any]) -> bool:
+    example = str(bench.get("example") or "").strip()
+    if not example:
+        return False
+    return example in INFORMATIONAL_BENCHMARKS.get(str(chapter_name).strip(), set())
 
 
 def _iter_benchmarks(results_json: Path) -> Iterable[Tuple[str, Dict[str, Any], Dict[str, Any]]]:
@@ -574,7 +721,7 @@ def _summarize_problem(
             }
         )
     payload.update(extra)
-    return payload
+    return _canonicalize_identity_fields(payload)
 
 
 def _parse_problem_targets(problem_path: Path, reasons: List[str]) -> List[str]:
@@ -593,7 +740,7 @@ def _parse_problem_targets(problem_path: Path, reasons: List[str]) -> List[str]:
         queue_reasons = set(payload.get("queue_reasons") or [])
         if wanted and not (queue_reasons & wanted):
             continue
-        target = payload.get("target")
+        target = _canonicalize_target(payload.get("target"))
         if not target or target in seen:
             continue
         seen.add(target)
@@ -761,6 +908,7 @@ def _run_target(
         "finished_at": _utc_now_iso(),
         "benchmarks": [],
         "queued_problem_count": 0,
+        "expected_unsupported_count": 0,
         "written_expectation_count": 0,
     }
     hardware_key = str(state.get("hardware_key") or detect_expectation_key())
@@ -788,6 +936,37 @@ def _run_target(
             "chapter": chapter_name,
             "target_log_path": str(target_log_path),
         }
+        if _is_informational_benchmark(chapter_name, bench):
+            target_record["benchmarks"].append(
+                _canonicalize_identity_fields(
+                    {
+                        "target": target,
+                        "example": bench.get("example"),
+                        "benchmark_status": bench.get("status"),
+                        "optimization_goal": bench.get("optimization_goal"),
+                        "classification": "informational_noncanonical",
+                    }
+                )
+            )
+            continue
+        unsupported_reason = _expected_unsupported_portable_reason(bench)
+        if unsupported_reason:
+            unsupported_payload = _summarize_problem(
+                target=target,
+                run_id=run_id,
+                artifact_root=artifact_root,
+                results_json=results_json,
+                manifest_path=manifest_path if manifest_path.exists() else None,
+                return_code=return_code,
+                bench=bench,
+                reasons=[unsupported_reason],
+                extra={"classification": unsupported_reason, **bench_extra},
+            )
+            _append_jsonl(paths["unsupported"], unsupported_payload)
+            target_record["benchmarks"].append(unsupported_payload)
+            target_record["expected_unsupported_count"] += 1
+            continue
+
         if bench.get("status") != "succeeded":
             bench_reasons.append(str(bench.get("status") or "failed"))
         best_opt = _best_optimization(bench)
@@ -1033,6 +1212,7 @@ def _command_status(args: argparse.Namespace) -> int:
             "completed_targets": len(state.get("target_records", {})),
             "written_expectation_total": state.get("written_expectation_total", 0),
             "queued_problem_total": state.get("queued_problem_total", 0),
+            "expected_unsupported_total": state.get("expected_unsupported_total", 0),
             "profile": state.get("profile"),
             "suite_timeout": state.get("suite_timeout"),
             "hardware_key": state.get("hardware_key"),

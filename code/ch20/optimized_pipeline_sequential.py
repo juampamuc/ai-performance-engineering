@@ -1,24 +1,18 @@
-"""optimized_pipeline_sequential.py - GPU-native pipeline (avoids CPU transfers).
-
-Chapter 20: Productionization and Deployment
-
-The baseline demonstrates an anti-pattern: copying activations to CPU between
-pipeline stages (perhaps for "checkpointing" or legacy code). This adds PCIe
-transfer latency and blocks GPU execution.
-
-The optimized version keeps all data on GPU with direct stage-to-stage execution,
-showing the benefit of avoiding unnecessary device transfers.
-"""
+"""Microbatch pipeline with stream/event overlap across stages."""
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Optional
 
 import torch
 import torch.nn as nn
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+
+resolve_device = partial(require_cuda_device, "CUDA required for ch20")
 
 
 class SimpleStage(nn.Module):
@@ -39,23 +33,20 @@ class SimpleStage(nn.Module):
 
 
 class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: GPU-native pipeline without CPU transfers.
-    
-    Key optimization vs baseline:
-    - All activations stay on GPU (no PCIe round-trips)
-    - Direct stage-to-stage execution 
-    - Single sync at end of pipeline
-    """
+    """Optimized: same microbatch work with stage-stream overlap."""
     
     def __init__(self):
         super().__init__()
+        self.device = resolve_device()
         self.stages: Optional[nn.ModuleList] = None
         self.inputs: Optional[torch.Tensor] = None
+        self.stage_streams: list[torch.cuda.Stream] = []
         self.output = None
         self.batch_size = 512
         self.hidden_dim = 1536
         self.num_stages = 4
         self.repeats = 6
+        self.num_microbatches = 8
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(self.batch_size),
@@ -70,22 +61,50 @@ class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark)
             [SimpleStage(self.hidden_dim).to(self.device).half() for _ in range(self.num_stages)]
         ).eval()
         
-        self.inputs = torch.randn(
-            self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16
-        )
+        self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
+        self.stage_streams = [torch.cuda.Stream(device=self.device) for _ in range(self.num_stages)]
+
+    def _run_pipelined_once(self, microbatches: list[torch.Tensor]) -> list[torch.Tensor]:
+        assert self.stages is not None
+        stage_outputs: list[list[Optional[torch.Tensor]]] = [
+            [None for _ in range(self.num_microbatches)] for _ in range(self.num_stages)
+        ]
+        stage_events = [
+            [torch.cuda.Event() for _ in range(self.num_microbatches)] for _ in range(self.num_stages)
+        ]
+
+        for microbatch_idx, microbatch in enumerate(microbatches):
+            for stage_idx, stage in enumerate(self.stages):
+                stream = self.stage_streams[stage_idx]
+                with torch.cuda.stream(stream):
+                    if stage_idx == 0:
+                        stage_input = microbatch
+                    else:
+                        stream.wait_event(stage_events[stage_idx - 1][microbatch_idx])
+                        stage_input = stage_outputs[stage_idx - 1][microbatch_idx]
+                        if stage_input is None:
+                            raise RuntimeError("Previous stage output missing during pipeline scheduling")
+                    stage_output = stage(stage_input)
+                    stage_outputs[stage_idx][microbatch_idx] = stage_output
+                    stage_events[stage_idx][microbatch_idx].record(stream)
+
+        current_stream = torch.cuda.current_stream(self.device)
+        for stream in self.stage_streams:
+            current_stream.wait_stream(stream)
+
+        final_outputs = stage_outputs[-1]
+        if any(output is None for output in final_outputs):
+            raise RuntimeError("Final pipeline outputs missing")
+        return [output for output in final_outputs if output is not None]
     
     def benchmark_fn(self) -> None:
         assert self.inputs is not None and self.stages is not None
+        microbatches = [chunk.contiguous() for chunk in self.inputs.chunk(self.num_microbatches, dim=0)]
         with self._nvtx_range("pipeline_sequential_optimized"):
             with torch.no_grad():
                 for _ in range(self.repeats):
-                    # GPU-native: all activations stay on GPU
-                    x = self.inputs
-                    for stage in self.stages:
-                        x = stage(x)
-                    # Single sync at end - no per-stage CPU round-trips
-                # Capture output for verification
-                self.output = x.detach()
+                    outputs = self._run_pipelined_once(microbatches)
+                self.output = torch.cat([out.detach() for out in outputs], dim=0)
 
     def capture_verification_payload(self) -> None:
         if self.inputs is None or self.output is None or self.stages is None:
@@ -101,6 +120,7 @@ class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def teardown(self) -> None:
         self.stages = None
         self.inputs = None
+        self.stage_streams = []
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -108,7 +128,6 @@ class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark)
             iterations=50,
             warmup=10,
             enable_memory_tracking=False,
-            enable_profiling=False,
         )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
@@ -128,6 +147,9 @@ class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark)
         if self.stages is None:
             return "Stages not initialized"
         return None
+
+    def get_custom_streams(self) -> list["torch.cuda.Stream"]:
+        return list(self.stage_streams)
 
     def get_verify_output(self) -> torch.Tensor:
         return super().get_verify_output()

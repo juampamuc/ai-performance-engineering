@@ -1,4 +1,4 @@
-// baseline_launch_bounds_gmem.cu -- kernel-only launch-bounds baseline.
+// baseline_launch_bounds_cuda.cu -- kernel-only launch-bounds baseline.
 
 #include <cuda_runtime.h>
 #include <algorithm>

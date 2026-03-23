@@ -1,4 +1,4 @@
-// optimized_launch_bounds_gmem.cu -- kernel-only launch-bounds optimized path.
+// optimized_launch_bounds_cuda.cu -- kernel-only launch-bounds optimized path.
 
 #include <cuda_runtime.h>
 #include <algorithm>

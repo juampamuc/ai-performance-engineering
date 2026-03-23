@@ -1,4 +1,4 @@
-"""optimized_memory_standard.py - Compiled fused pointwise memory transform."""
+"""optimized_memory_standard.py - Fused pointwise memory transform."""
 
 from __future__ import annotations
 
@@ -8,22 +8,18 @@ import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from core.utils.compile_utils import compile_model
 
-
-class _PointwiseTransform(torch.nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * 2.0 + 1.1
 
 
 class OptimizedMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Fused pointwise transform via torch.compile instead of baseline's three explicit passes."""
+    """Fused pointwise transform via a single addcmul kernel."""
     
     def __init__(self):
         super().__init__()
         self.data: Optional[torch.Tensor] = None
         self.result: Optional[torch.Tensor] = None
-        self.transform: Optional[torch.nn.Module] = None
+        self.offset: Optional[torch.Tensor] = None
+        self.scale_tensor: Optional[torch.Tensor] = None
         self.size_mb = 100
         self.num_elements = (self.size_mb * 1024 * 1024) // 4
         bytes_per_iter = self.num_elements * 4 * 2  # read + write
@@ -45,14 +41,15 @@ class OptimizedMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
         self.data = torch.randn(self.num_elements, device=self.device, dtype=torch.float32).contiguous()
         self.result = torch.zeros_like(self.data).contiguous()
-        self.transform = compile_model(_PointwiseTransform().to(self.device), mode="max-autotune")
+        self.offset = torch.full_like(self.data, 1.1)
+        self.scale_tensor = torch.full_like(self.data, 2.0)
         for _ in range(3):
-            _ = self.transform(self.data)
+            torch.addcmul(self.offset, self.data, self.scale_tensor, out=self.result)
     
     def benchmark_fn(self) -> None:
-        assert self.data is not None and self.transform is not None
+        assert self.data is not None and self.offset is not None and self.scale_tensor is not None and self.result is not None
         with self._nvtx_range("memory_standard_optimized"):
-            self.result = self.transform(self.data)
+            torch.addcmul(self.offset, self.data, self.scale_tensor, out=self.result)
         self.output = self.result
 
     def capture_verification_payload(self) -> None:
@@ -69,7 +66,8 @@ class OptimizedMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def teardown(self) -> None:
         self.data = None
         self.result = None
-        self.transform = None
+        self.offset = None
+        self.scale_tensor = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:

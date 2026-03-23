@@ -62,6 +62,7 @@ int main() {
     double bw_tbs = (size_bytes * 2 / (avg_ms / 1000.0)) / 1e12;
     
     printf("HBM (Float8, 256-byte bursts): %.2f ms, %.2f TB/s\n", avg_ms, bw_tbs);
+    printf("TIME_MS: %.6f\n", avg_ms);
 
 #ifdef VERIFY
     float* h_verify = static_cast<float*>(std::malloc(size_bytes));
@@ -83,7 +84,6 @@ int main() {
     
     return 0;
 }
-
 
 
 

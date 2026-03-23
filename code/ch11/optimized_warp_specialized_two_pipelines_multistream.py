@@ -38,7 +38,7 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.num_streams = 4
         # Skip on hardware without DSMEM/cluster support to avoid launch failures.
         ensure_dsmem_supported(description="warp-specialized cluster pipelines")
-        self.ext = _load_optimized_extension()
+        self.ext = None
         self.input_a: torch.Tensor | None = None
         self.input_b: torch.Tensor | None = None
         self.output: torch.Tensor | None = None
@@ -57,6 +57,7 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def setup(self) -> None:
         torch.manual_seed(42)  # Match baseline seed
+        self.ext = _load_optimized_extension()
         total_elems = self.tiles * self.tile_elems
         self.input_a = torch.randn(total_elems, device=self.device, dtype=torch.float32)
         self.input_b = torch.randn(total_elems, device=self.device, dtype=torch.float32)
@@ -69,7 +70,7 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def benchmark_fn(self) -> None:
-        assert self.input_a is not None and self.input_b is not None
+        assert self.input_a is not None and self.input_b is not None and self.ext is not None
         with self._nvtx_range("optimized_dual_pipeline_multistream"):
             result = self.ext.warp_specialized_multistream_forward(
                 self.input_a,
@@ -95,6 +96,7 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def teardown(self) -> None:
+        self.ext = None
         self.input_a = None
         self.input_b = None
         self.output = None

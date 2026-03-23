@@ -54,16 +54,16 @@
       },
       "type": "python"
     },
-    "flex_attention": {
-      "example": "flex_attention",
+    "attention_eager_sdpa": {
+      "example": "attention_eager_sdpa",
       "metadata": {
         "best_memory_savings_pct": 3.5650561827091294,
         "best_memory_savings_ratio": 1.036968509977707,
-        "best_optimization": "optimized_flex_attention",
-        "best_optimization_file": "optimized_flex_attention.py",
+        "best_optimization": "optimized_attention_eager_sdpa",
+        "best_optimization_file": "optimized_attention_eager_sdpa.py",
         "best_optimization_memory_mb": 162.30029296875,
         "best_optimization_speedup": 6.440951638710696,
-        "best_optimization_technique": "optimized_flex_attention",
+        "best_optimization_technique": "optimized_attention_eager_sdpa",
         "best_optimization_time_ms": 0.43051062779767174,
         "optimization_goal": "speed"
       },

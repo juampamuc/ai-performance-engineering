@@ -1,4 +1,4 @@
-"""optimized_end_to_end_bandwidth.py - Compiled sequential end-to-end bandwidth."""
+"""optimized_end_to_end_bandwidth.py - Flattened end-to-end bandwidth path."""
 
 from __future__ import annotations
 
@@ -7,20 +7,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-try:
-    import ch20.arch_config  # noqa: F401 - Apply chapter defaults
-except ImportError:
-    pass
-
-from core.optimization.inductor_guard import (
-    disable_inductor_cudagraph_features,
-    restore_inductor_cudagraph_features,
-    InductorCudagraphState,
-)
-
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from core.utils.compile_utils import compile_model
 
 
 class SimplePipeline(nn.Module):
@@ -39,21 +27,18 @@ class SimplePipeline(nn.Module):
 
 
 class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized end-to-end bandwidth using compile without changing batching semantics."""
+    """Optimized end-to-end bandwidth by flattening the batch stream."""
     
     def __init__(self):
         super().__init__()
         self.model: Optional[nn.Module] = None
         self.inputs: Optional[list[torch.Tensor]] = None
         self.stacked_inputs: Optional[torch.Tensor] = None
-        self.outputs: Optional[list[torch.Tensor]] = None
+        self.flat_inputs: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.batch_size = 32
         self.hidden_dim = 1024
         self.num_batches = 10
-        self._inductor_cfg_state: Optional[InductorCudagraphState] = None
-        self._used_compiled_model = False
-        self._compile_error: Optional[str] = None
         tokens = self.batch_size * self.num_batches
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(tokens),
@@ -61,75 +46,32 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
         )
     
     def setup(self) -> None:
-        self._inductor_cfg_state = disable_inductor_cudagraph_features()
-        try:
-            if torch.cuda.is_available():
-                # Warm the primary context and cuBLAS handle before any heavy ops.
-                torch.cuda.init()
-                warmup_device = self.device
-                if warmup_device.index is None:
-                    warmup_device = torch.device("cuda", torch.cuda.current_device())
-                torch.cuda.set_device(warmup_device)
-                torch.ones((1, 1), device=warmup_device).matmul(torch.ones((1, 1), device=warmup_device))
-
-            torch.manual_seed(42)
-            torch.cuda.manual_seed_all(42)
-            
-            # Keep workload equivalent to baseline (same FP32 inputs and per-batch
-            # sequencing) and isolate compile/runtime overhead removal.
-            eager = SimplePipeline(hidden_dim=self.hidden_dim).to(self.device, dtype=torch.float32).eval()
-            self.model = compile_model(eager, mode="max-autotune")
-            self._used_compiled_model = True
-
-            self.inputs = [
-                torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32).contiguous()
-                for _ in range(self.num_batches)
-            ]
-            self.stacked_inputs = torch.stack(self.inputs, dim=0)
-            self.outputs = []
-            self.output = None
-            
-            for inp in self.inputs[:3]:
-                with torch.no_grad():
-                    _ = self.model(inp)
-        except Exception:
-            restore_inductor_cudagraph_features(self._inductor_cfg_state)
-            self._inductor_cfg_state = None
-            raise
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self.model = SimplePipeline(hidden_dim=self.hidden_dim).to(self.device, dtype=torch.float32).eval()
+        self.inputs = [
+            torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32).contiguous()
+            for _ in range(self.num_batches)
+        ]
+        self.stacked_inputs = torch.stack(self.inputs, dim=0)
+        self.flat_inputs = self.stacked_inputs.view(self.num_batches * self.batch_size, self.hidden_dim).contiguous()
+        self.output = None
+        with torch.no_grad():
+            _ = self.model(self.flat_inputs)
     
     def benchmark_fn(self) -> None:
-        assert self.model is not None and self.inputs is not None
+        assert self.model is not None and self.flat_inputs is not None
         with self._nvtx_range("optimized_end_to_end_bandwidth"):
-            # Match the baseline timed path: execute one compiled forward per batch
-            # and only materialize a stacked tensor once per iteration.
             with torch.no_grad():
-                self.outputs = []
-                for inp in self.inputs:
-                    self.outputs.append(self.model(inp))
-                self.output = torch.stack(self.outputs) if self.outputs else None
-
-    def _build_verification_output(self) -> torch.Tensor:
-        if self.model is None or self.inputs is None:
-            raise RuntimeError("_build_verification_output() requires initialized model and inputs")
-        stable_outputs: list[torch.Tensor] = []
-        with torch.no_grad():
-            for inp in self.inputs:
-                # torch.compile may reuse output storage across calls, so clone only
-                # in the post-timing verification path.
-                stable_outputs.append(self.model(inp).detach().clone())
-        if not stable_outputs:
-            raise RuntimeError("_build_verification_output() requires at least one batch")
-        self.outputs = stable_outputs
-        self.output = torch.stack(stable_outputs)
-        return self.output
+                flat_output = self.model(self.flat_inputs)
+                self.output = flat_output.view(self.num_batches, self.batch_size, self.hidden_dim)
 
     def capture_verification_payload(self) -> None:
         if self.model is None or self.stacked_inputs is None:
             raise RuntimeError("capture_verification_payload() requires completed benchmark run")
-        verification_output = self._build_verification_output()
         self._set_verification_payload(
             inputs={"inputs": self.stacked_inputs.detach()},
-            output=verification_output.detach().clone(),
+            output=self.output.detach().clone(),
             batch_size=int(self.stacked_inputs.shape[0]),
             parameter_count=sum(p.numel() for p in self.model.parameters()),
             output_tolerance=(0.1, 1.0),
@@ -139,10 +81,8 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.model = None
         self.inputs = None
         self.stacked_inputs = None
-        self.outputs = None
+        self.flat_inputs = None
         torch.cuda.empty_cache()
-        restore_inductor_cudagraph_features(self._inductor_cfg_state)
-        self._inductor_cfg_state = None
     
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
@@ -150,8 +90,6 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
             warmup=10,
             enable_memory_tracking=True,
             enable_profiling=False,
-            nsys_timeout_seconds=1200,
-            nsys_preset_override="light",
         )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

@@ -7,9 +7,9 @@ try:
 except ImportError:
     pass
 
-from ch20.optimized_multiple_unoptimized import OptimizedAllTechniquesBenchmark
+from ch20.optimized_bf16_mlp import OptimizedBF16MLPBenchmark
 from core.harness.benchmark_harness import BaseBenchmark
 
 
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedAllTechniquesBenchmark()
+    return OptimizedBF16MLPBenchmark()

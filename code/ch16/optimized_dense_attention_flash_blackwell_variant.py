@@ -1,12 +1,11 @@
-"""Baseline paged attention - Naive O(n²) explicit attention.
+"""Dense attention Flash SDPA variant tagged for Blackwell follow-up.
 
-This baseline uses explicit matmul/softmax/matmul operations which have:
-- O(n²) memory for attention scores matrix
-- Multiple kernel launches (matmul, softmax, matmul)
-- No memory optimization
+This uses scaled_dot_product_attention which leverages Flash Attention for:
+- O(n) memory instead of O(n²)
+- Fused kernel (no intermediate materialization)
+- Hardware-optimized attention computation
 
-Compare with optimized_paged_attention.py which uses Flash Attention
-via scaled_dot_product_attention for O(n) memory and fused kernels.
+Compare with baseline_dense_attention_flash.py which uses naive O(n²) attention.
 """
 
 from __future__ import annotations
@@ -18,114 +17,109 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.harness.benchmark_harness import (
-    BaseBenchmark,
-    BenchmarkConfig,
-    WorkloadMetadata,
-)
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
+from core.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
-class BaselinePagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: Naive O(n²) attention (slow)."""
+class DenseAttentionFlashBlackwellVariantBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Flash SDPA variant kept as an explicit non-canonical hardware variant."""
 
+    story_metadata = {
+        "pair_role": "variant",
+        "chapter_alignment": "canonical",
+        "chapter_native_exemplar": True,
+        "variant_of": "dense_attention_flash",
+        "variant_reason": "Hardware-specific dense-attention SDPA variant exposed separately from the canonical pair.",
+    }
+    
     def __init__(self):
         super().__init__()
-        self.batch_size = 4
-        self.hidden_dim = 1024
-        self.num_heads = 16
-        self.head_dim = self.hidden_dim // self.num_heads
-        self.max_seq_len = 4096  # Longer sequence to show Flash Attention benefit
         self.qkv_proj: Optional[nn.Linear] = None
         self.out_proj: Optional[nn.Linear] = None
         self.inputs: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
+        self.batch_size = 4
+        self.seq_length = 4096
+        self.seq_len = self.seq_length
+        self.hidden_dim = 1024
+        self.num_heads = 16
+        self.head_dim = self.hidden_dim // self.num_heads
         self.dtype = torch.float16
         self._verify_input: Optional[torch.Tensor] = None
-        self._causal_mask: Optional[torch.Tensor] = None
-        
-        tokens = self.batch_size * self.max_seq_len
-        self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.batch_size),
-            tokens_per_iteration=float(tokens),
-        )
-        self.output = None
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
-            tokens_per_iteration=float(tokens),
+            tokens_per_iteration=float(self.batch_size * self.seq_length),
         )
-
+    
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=20, warmup=5)
+    
     def setup(self) -> None:
+        """Initialize Flash Attention model."""
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
+        
+        device = torch.device("cuda")
+        
         self.qkv_proj = nn.Linear(
             self.hidden_dim,
             self.hidden_dim * 3,
             bias=False,
-            device=self.device,
+            device=device,
             dtype=self.dtype,
         )
         self.out_proj = nn.Linear(
             self.hidden_dim,
             self.hidden_dim,
             bias=False,
-            device=self.device,
+            device=device,
             dtype=self.dtype,
         )
         self.inputs = torch.randn(
             self.batch_size,
-            self.max_seq_len,
+            self.seq_length,
             self.hidden_dim,
-            device=self.device,
+            device=device,
             dtype=self.dtype,
-        )
-        self._causal_mask = torch.triu(
-            torch.ones(self.max_seq_len, self.max_seq_len, device=self.device, dtype=torch.bool),
-            diagonal=1,
         )
         self._verify_input = self.inputs.detach().clone()
         
         # Proper warmup
         for _ in range(5):
             with torch.no_grad():
-                self._forward_naive()
-        torch.cuda.synchronize(self.device)
-
-    def _forward_naive(self):
-        """Naive O(n²) attention with explicit matmul."""
+                self._forward_flash()
+    
+    def _forward_flash(self):
+        """Flash Attention via SDPA."""
         qkv = self.qkv_proj(self.inputs)
         q, k, v = torch.chunk(qkv, 3, dim=-1)
         
-        # Reshape for attention
         B, S, _ = q.shape
         q = q.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         
-        # Explicit O(n²) attention - creates full S×S attention matrix
-        scale = 1.0 / (self.head_dim ** 0.5)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+        # Flash Attention
+        output = F.scaled_dot_product_attention(
+            q, k, v, 
+            is_causal=True,
+            dropout_p=0.0,
+        )
         
-        # Causal mask
-        if self._causal_mask is None:
-            raise RuntimeError("Causal mask not initialized")
-        scores = scores.masked_fill(self._causal_mask[:S, :S], float('-inf'))
-        
-        attn = F.softmax(scores, dim=-1)
-        output = torch.matmul(attn, v)
-        
-        # Output projection
         output = output.transpose(1, 2).contiguous().view(B, S, self.hidden_dim)
         return self.out_proj(output)
-
+    
     def benchmark_fn(self) -> None:
-        """Benchmark: Naive attention."""
+        """Benchmark the Flash SDPA forward path for the Blackwell variant."""
         config = self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
-
-        with nvtx_range("baseline_paged_attention", enable=enable_nvtx):
+        with nvtx_range("optimized_dense_attention_flash_blackwell_variant", enable=enable_nvtx):
             with torch.no_grad():
-                self.output = self._forward_naive()
+                self.output = self._forward_flash()
         if self._verify_input is None:
             raise RuntimeError("Verification input missing")
         parameter_count = 0
@@ -150,32 +144,25 @@ class BaselinePagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             },
             output_tolerance=(0.1, 1.0),
         )
-
+    
     def teardown(self) -> None:
+        """Cleanup resources."""
         self.qkv_proj = None
         self.out_proj = None
         self.inputs = None
-        self._causal_mask = None
         torch.cuda.empty_cache()
 
-    def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(
-            iterations=20,
-            warmup=5,
-        )
-
-    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
-        return self._workload
-
     def get_custom_metrics(self) -> Optional[dict]:
-        return None
-
-    def validate_result(self) -> Optional[str]:
-        if self.qkv_proj is None or self.inputs is None:
-            return "Model not initialized"
-        return None
+        return {
+            "story.variant_pair": 1.0,
+            "story.chapter_native_exemplar": 1.0,
+            "dense_attention_flash.blackwell_variant": 1.0,
+            "dense_attention_flash.seq_len": float(self.seq_len),
+            "dense_attention_flash.num_heads": float(self.num_heads),
+            "dense_attention_flash.head_dim": float(self.head_dim),
+        }
 
 
 def get_benchmark() -> BaseBenchmark:
-    return BaselinePagedAttentionBenchmark()
-
+    """Factory function for benchmark harness discovery."""
+    return DenseAttentionFlashBlackwellVariantBenchmark()

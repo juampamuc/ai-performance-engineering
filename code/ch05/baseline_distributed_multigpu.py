@@ -53,8 +53,8 @@ class BaselineDistributedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("baseline_distributed_multigpu"):
             cpu_total = 0.0
             for tensor in self.data:
-                cpu_total += float(tensor.cpu().sum())
-            self.output = torch.tensor(cpu_total, device=f"cuda:{self.device_ids[0]}")
+                cpu_total += float(tensor.sum().cpu())
+            self.output = torch.tensor([cpu_total], device=f"cuda:{self.device_ids[0]}", dtype=torch.float32)
 
     def capture_verification_payload(self) -> None:
         if self.output is None or not self.data:
@@ -63,7 +63,7 @@ class BaselineDistributedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._set_verification_payload(
             inputs={"data_probe": probe},
             output=self.output.detach().clone(),
-            batch_size=int(probe.shape[0]),
+            batch_size=1,
             parameter_count=0,
             precision_flags={
                 "fp16": False,

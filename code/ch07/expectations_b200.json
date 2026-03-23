@@ -270,16 +270,16 @@
       },
       "type": "cuda"
     },
-    "float8_vector_cuda": {
-      "example": "float8_vector",
+    "float4_vector_cuda": {
+      "example": "float4_vector",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_float8_vector",
-        "best_optimization_file": "optimized_float8_vector.py",
+        "best_optimization": "optimized_float4_vector",
+        "best_optimization_file": "optimized_float4_vector.py",
         "best_optimization_memory_mb": 148.125,
         "best_optimization_speedup": 2.269230769230769,
-        "best_optimization_technique": "optimized_float8_vector",
+        "best_optimization_technique": "optimized_float4_vector",
         "best_optimization_time_ms": 0.26,
         "optimization_goal": "speed"
       },

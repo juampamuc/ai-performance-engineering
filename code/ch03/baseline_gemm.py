@@ -29,7 +29,7 @@ class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         ),
         "comparison_axis": "fragmented_vs_amortized_launches",
         "execution_pattern": "fragmented_gemm_launches",
-        "chapter_native_targets": ["pageable_copy", "rack_prep", "docker", "kubernetes"],
+        "chapter_native_targets": ["pageable_copy", "rack_prep", "pinned_prefetch_mlp", "double_buffered_batch_provisioning"],
     }
 
     def __init__(self):

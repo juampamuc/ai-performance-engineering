@@ -19,7 +19,7 @@ from core.harness.benchmark_harness import (  # noqa: E402
 from ch12.cuda_extensions import load_kernel_fusion_extension
 
 
-class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
+class OptimizedKernelFusionReuseStaticTensorBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Fused kernel - single memory round trip (uses CUDA extension)."""
     
     def __init__(self):
@@ -148,4 +148,4 @@ class OptimizedKernelFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
-    return OptimizedKernelFusionBenchmark()
+    return OptimizedKernelFusionReuseStaticTensorBenchmark()

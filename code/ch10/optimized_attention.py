@@ -34,7 +34,9 @@ class OptimizedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.value: Optional[torch.Tensor] = None
         # Larger sizes to show tensor core optimization benefits
         self.batch_size = 16
-        self.seq_len = 1024
+        # Match the longer-context baseline so the Flash/SDPA benchmark shows
+        # the intended memory-efficiency benefit on the same workload.
+        self.seq_len = 1280
         self.hidden_dim = 1024
         self.num_heads = 16
         self.head_dim = self.hidden_dim // self.num_heads

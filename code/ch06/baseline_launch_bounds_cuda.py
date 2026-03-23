@@ -1,4 +1,4 @@
-"""Python harness wrapper for baseline_launch_bounds_gmem.cu."""
+"""Python harness wrapper for baseline_launch_bounds_cuda.cu."""
 
 from __future__ import annotations
 from pathlib import Path
@@ -8,15 +8,15 @@ from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 from core.harness.benchmark_harness import BaseBenchmark
 
 
-class BaselineLaunchBoundsGmemBenchmark(CudaBinaryBenchmark):
+class BaselineLaunchBoundsCudaBenchmark(CudaBinaryBenchmark):
     """Wraps the baseline CUDA binary."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="baseline_launch_bounds_gmem",
-            friendly_name="Baseline Launch Bounds Gmem",
+            binary_name="baseline_launch_bounds_cuda",
+            friendly_name="Baseline Launch Bounds CUDA",
             iterations=5,
             warmup=5,
             timeout_seconds=180,
@@ -32,5 +32,4 @@ class BaselineLaunchBoundsGmemBenchmark(CudaBinaryBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return BaselineLaunchBoundsGmemBenchmark()
-
+    return BaselineLaunchBoundsCudaBenchmark()

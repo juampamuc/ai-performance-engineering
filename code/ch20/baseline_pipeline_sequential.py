@@ -1,10 +1,4 @@
-"""baseline_pipeline_sequential.py - Sequential pipeline baseline (baseline).
-
-Sequential execution of pipeline stages without overlap.
-Each stage waits for the previous to complete.
-
-Implements BaseBenchmark for harness integration.
-"""
+"""Sequential microbatch pipeline baseline without overlap."""
 
 from __future__ import annotations
 
@@ -45,8 +39,6 @@ class SimpleStage(nn.Module):
 
 class BaselinePipelineSequentialBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Sequential pipeline - no overlap."""
-
-    allowed_benchmark_fn_antipatterns = ("host_transfer",)
     
     def __init__(self):
         super().__init__()
@@ -54,11 +46,11 @@ class BaselinePipelineSequentialBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.stages = None
         self.inputs = None
         self.output = None
-        # Larger workload so overlap benefits are measurable against sequential baseline.
         self.batch_size = 512
         self.hidden_dim = 1536
         self.num_stages = 4
         self.repeats = 6
+        self.num_microbatches = 8
         self.register_workload_metadata(requests_per_iteration=float(self.batch_size))
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
@@ -92,26 +84,30 @@ class BaselinePipelineSequentialBenchmark(VerificationPayloadMixin, BaseBenchmar
         
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
     
-    def benchmark_fn(self) -> None:
-        """Function to benchmark - sequential pipeline."""
-        # Use conditional NVTX ranges - only enabled when profiling
+    def _run_pipeline_once(self, microbatches: list[torch.Tensor]) -> list[torch.Tensor]:
+        assert self.stages is not None
+        outputs: list[torch.Tensor] = []
+        for microbatch in microbatches:
+            x = microbatch
+            for stage in self.stages:
+                x = stage(x)
+            outputs.append(x)
+        return outputs
 
+    def benchmark_fn(self) -> None:
+        """Benchmark the GPU-native sequential microbatch pipeline."""
         from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
 
         config = self.get_config()
-
         enable_nvtx = get_nvtx_enabled(config) if config else False
-
+        assert self.inputs is not None and self.stages is not None
+        base_microbatches = [chunk.contiguous() for chunk in self.inputs.chunk(self.num_microbatches, dim=0)]
 
         with nvtx_range("baseline_pipeline_sequential", enable=enable_nvtx):
             with torch.no_grad():
                 for _ in range(self.repeats):
-                    x = self.inputs
-                    for stage in self.stages:
-                        x = stage(x)
-                        host_buffer = x.detach().float().to("cpu", non_blocking=False)
-                        x = host_buffer.to(self.device, non_blocking=False).half()
-                self.output = x.detach()
+                    outputs = self._run_pipeline_once(base_microbatches)
+                self.output = torch.cat([out.detach() for out in outputs], dim=0)
 
     def capture_verification_payload(self) -> None:
         if self.inputs is None or self.output is None or self.stages is None:
@@ -135,7 +131,6 @@ class BaselinePipelineSequentialBenchmark(VerificationPayloadMixin, BaseBenchmar
             iterations=50,
             warmup=10,
             enable_memory_tracking=False,
-            enable_profiling=False,
         )
     
     def validate_result(self) -> Optional[str]:

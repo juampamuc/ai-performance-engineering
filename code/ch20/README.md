@@ -22,18 +22,16 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
 | `integrated_kv_cache` | `456.705 ms` | `67.381 ms` | `6.78x` | integrated KV-cache and overlap path |
-| `pipeline_sequential` | `27.927 ms` | `1.683 ms` | `16.60x` | sequential pipeline replaced by coordinated staged execution |
-| `multiple_unoptimized` | `0.616 ms` | `0.234 ms` | `2.63x` | stacked subsystem cleanup versus the intentionally rough composite baseline |
+| `bf16_mlp` | `0.616 ms` | `0.234 ms` | `2.63x` | BF16 precision policy on the same eager MLP graph |
 
-This chapter is the best place to check whether wins compose. A chapter 20 speedup is more meaningful than a microbench speedup when you want to know what survives in a real end-to-end path.
+This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements.
 
 ## Profiler Evidence
 Use deep-dive harness runs when you want to see how the end-to-end gain breaks down by subsystem:
 
 ```bash
 python -m cli.aisp bench run --targets ch20:integrated_kv_cache --profile deep_dive --single-gpu
-python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive --single-gpu
-python -m cli.aisp bench run --targets ch20:multiple_unoptimized --profile deep_dive --single-gpu
+python -m cli.aisp bench run --targets ch20:bf16_mlp --profile deep_dive --single-gpu
 ```
 
 That is the right place to answer whether the gain came from overlap, memory movement, or simply removing one obvious bottleneck from the baseline.
@@ -43,7 +41,6 @@ That is the right place to answer whether the gain came from overlap, memory mov
 python -m ch20.compare
 python -m cli.aisp bench list-targets --chapter ch20
 python -m cli.aisp bench run --targets ch20 --profile minimal
-python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive --single-gpu
 ```
 
 ## Learning Goals
@@ -55,8 +52,8 @@ python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_d
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `baseline_multiple_unoptimized.py`, `optimized_multiple_unoptimized.py`, `ai_kernel_generator.py`, `core/optimization/inductor_guard.py` | Composite workloads that stack several bottlenecks plus the shared Inductor cudagraph guard used by the compiled end-to-end paths. |
-| `baseline_pipeline_sequential.py`, `optimized_pipeline_sequential.py`, `baseline_end_to_end_bandwidth.py`, `optimized_end_to_end_bandwidth.py` | Pipeline and bandwidth case studies showing how optimizations interact across stages. |
+| `baseline_bf16_mlp.py`, `optimized_bf16_mlp.py`, `ai_kernel_generator.py`, `core/optimization/inductor_guard.py` | Precision-policy workload plus the shared Inductor cudagraph guard used by the compiled end-to-end paths. |
+| `baseline_pipeline_sequential.py`, `optimized_pipeline_sequential.py`, `baseline_end_to_end_bandwidth.py`, `optimized_end_to_end_bandwidth.py` | Pipeline and bandwidth case studies showing how optimizations interact across stages. `pipeline_sequential` currently remains informational after the fairness refresh. |
 | `baseline_integrated_kv_cache.py`, `optimized_integrated_kv_cache.py` | Integrated KV-cache demos that merge allocator, overlap, and NVLink pooling tricks. |
 | `baseline_memory_standard.py`, `optimized_memory_standard.py` | Memory-focused harness verifying allocator changes at system level. |
 | `baseline_training_single.py`, `optimized_training_single.py`, `test.cu`, `Makefile` | Single-device training case study plus CUDA kernels used in the final report. |
@@ -76,7 +73,7 @@ python -m cli.aisp bench run --targets ch20 --profile minimal
 ## Validation Checklist
 - `python -m ch20.compare` emits per-stage summaries that show each optimized variant meeting or exceeding stored expectations.
 - `python -m ch20.ai_kernel_generator --emit test.cu` produces CUDA kernels that compile via `nvcc` and integrate into the harness without manual edits.
-- `python -m cli.aisp bench run --targets ch20:pipeline_sequential --profile deep_dive` shows smooth NVTX ranges covering the entire pipeline, demonstrating overlap success.
+- `python -m cli.aisp bench run --targets ch20:integrated_kv_cache --profile deep_dive` is the stronger canonical end-to-end overlap proof after the fairness refresh.
 
 ## Notes
 - `core/optimization/inductor_guard.py` is the canonical helper for gating Inductor cudagraph features in the compiled chapter 20 paths.

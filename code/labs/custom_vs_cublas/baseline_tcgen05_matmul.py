@@ -84,9 +84,8 @@ class BaselineTcgen05MatmulBenchmark(VerificationPayloadMixin, BaseBenchmark):
         ).to_dict()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=20, warmup=5)
+        return BenchmarkConfig(iterations=20, warmup=5, use_subprocess=False)
 
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineTcgen05MatmulBenchmark()
-

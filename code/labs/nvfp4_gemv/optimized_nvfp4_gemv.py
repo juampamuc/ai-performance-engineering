@@ -116,7 +116,9 @@ class OptimizedNvfp4GemvBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=4, warmup=2)
+        # The optimized submission can wedge when benchmark_fn() executes on the harness worker thread.
+        # Keep this benchmark in a subprocess so CUDA work runs on the child main thread.
+        return BenchmarkConfig(iterations=4, warmup=5, use_subprocess=True)
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
@@ -143,4 +145,3 @@ class OptimizedNvfp4GemvBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedNvfp4GemvBenchmark()
-

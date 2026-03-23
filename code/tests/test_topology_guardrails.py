@@ -21,13 +21,13 @@ RUNTIME_TOPOLOGY_FILES = [
 
 SYSTEM_CONFIG_METRIC_FILES = [
     Path("ch03/baseline_pageable_copy.py"),
-    Path("ch03/baseline_kubernetes.py"),
+    Path("ch03/baseline_double_buffered_batch_provisioning.py"),
     Path("ch03/baseline_gemm.py"),
-    Path("ch03/baseline_docker.py"),
+    Path("ch03/baseline_pinned_prefetch_mlp.py"),
     Path("ch03/optimized_pageable_copy.py"),
-    Path("ch03/optimized_docker.py"),
+    Path("ch03/optimized_pinned_prefetch_mlp.py"),
     Path("ch03/optimized_gemm.py"),
-    Path("ch03/optimized_kubernetes.py"),
+    Path("ch03/optimized_double_buffered_batch_provisioning.py"),
     Path("ch03/optimized_rack_prep.py"),
     Path("core/scripts/update_custom_metrics.py"),
 ]

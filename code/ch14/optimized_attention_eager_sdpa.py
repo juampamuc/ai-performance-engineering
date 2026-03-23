@@ -1,4 +1,4 @@
-"""optimized_flex_attention.py - Optimized flex attention via fused SDPA."""
+"""optimized_attention_eager_sdpa.py - fused SDPA attention benchmark."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ def _flash_sdp_context():
     return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
 
 
-class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: Uses FlexAttention for flexible attention patterns."""
+class OptimizedAttentionEagerSDPABenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Optimized: uses fused scaled-dot-product attention."""
     
     def __init__(self):
         super().__init__()
@@ -79,7 +79,7 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return out
     
     def benchmark_fn(self) -> None:
-        """Benchmark: FlexAttention operations."""
+        """Benchmark: fused SDPA attention operations."""
         # Use conditional NVTX ranges - only enabled when profiling
 
         from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
@@ -89,7 +89,7 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
 
-        with nvtx_range("optimized_flex_attention", enable=enable_nvtx):
+        with nvtx_range("optimized_attention_eager_sdpa", enable=enable_nvtx):
             if self.q is None or self.k is None or self.v is None:
                 raise RuntimeError("Tensors not initialized")
             out = self._attention(self.q, self.k, self.v)
@@ -156,4 +156,4 @@ class OptimizedFlexAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
-    return OptimizedFlexAttentionBenchmark()
+    return OptimizedAttentionEagerSDPABenchmark()

@@ -1,7 +1,7 @@
-"""baseline_precisionfp8.py - FP32 precision baseline (baseline).
+"""baseline_precisionfp8.py - FP16 precision baseline (baseline).
 
-Training with full FP32 precision.
-Higher memory usage and slower computation compared to mixed precision.
+Training with FP16 precision so the optimized variant isolates the additional
+benefit of torchao FP8 kernels instead of conflating FP32->FP16 and FP16->FP8.
 
 Implements BaseBenchmark for harness integration.
 """
@@ -43,7 +43,7 @@ class SimpleModel(nn.Module):
 
 
 class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
-    """FP32 precision - full precision training."""
+    """FP16 precision baseline for the FP8 training comparison."""
 
     signature_equivalence_group = "ch13_precisionfp8_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
@@ -53,12 +53,15 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         self.model = None
         self.inputs = None
         self.targets = None
+        self.inputs_fp16 = None
+        self.targets_fp16 = None
         self.optimizer = None
         self.criterion = None
         self.output = None  # For output verification
         self.batch_size = 8192
         self.hidden_dim = 8192
         self._verify_input: Optional[torch.Tensor] = None
+        self._verify_input_fp16: Optional[torch.Tensor] = None
         self.parameter_count: int = 0
         tokens = self.batch_size * self.hidden_dim
         self._workload = WorkloadMetadata(
@@ -71,17 +74,19 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: Initialize FP32 model and data."""
+        """Setup: Initialize FP16 model and data."""
         # Harness provides seeding - creation order must match optimized
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
 
-        # FP32 model (full precision) - same architecture as optimized
-        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).train()
+        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).half().train()
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self._verify_input = self.inputs.detach().clone()
+        self._verify_input_fp16 = self._verify_input.to(torch.float16)
+        self.inputs_fp16 = self.inputs.to(torch.float16)
+        self.targets_fp16 = self.targets.to(torch.float16)
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
         
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
@@ -98,22 +103,22 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def _train_step(self) -> None:
         assert self.model is not None
-        assert self.inputs is not None and self.targets is not None
+        assert self.inputs_fp16 is not None and self.targets_fp16 is not None
         assert self.optimizer is not None and self.criterion is not None
         self.optimizer.zero_grad(set_to_none=True)
-        outputs = self.model(self.inputs)
-        loss = self.criterion(outputs, self.targets)
+        outputs = self.model(self.inputs_fp16)
+        loss = self.criterion(outputs, self.targets_fp16)
         loss.backward()
         self.optimizer.step()
     
     def benchmark_fn(self) -> None:
-        """Function to benchmark - FP32 precision."""
-        if any(v is None for v in (self.model, self.inputs, self.targets, self.optimizer, self.criterion, self._verify_input)):
+        """Function to benchmark - FP16 precision."""
+        if any(v is None for v in (self.model, self.optimizer, self.criterion, self._verify_input, self._verify_input_fp16)):
             raise RuntimeError("Benchmark not configured")
         with self._nvtx_range("baseline_precisionfp8"):
             self._train_step()
             with torch.no_grad():
-                verify_out = self.model(self._verify_input)
+                verify_out = self.model(self._verify_input_fp16)
                 self.output = verify_out.detach().float().clone()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
@@ -125,7 +130,7 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
             batch_size=self._verify_input.shape[0],
             parameter_count=self.parameter_count,
             precision_flags={
-                "fp16": False,
+                "fp16": True,
                 "bf16": False,
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
@@ -135,7 +140,8 @@ class BaselinePrecisionFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def teardown(self) -> None:
         """Cleanup."""
-        del self.model, self.inputs, self.targets, self.optimizer, self.criterion
+        del self.model, self.inputs, self.targets, self.inputs_fp16, self.targets_fp16, self.optimizer, self.criterion
+        self._verify_input_fp16 = None
         super().teardown()
     
     def get_config(self) -> BenchmarkConfig:

@@ -242,7 +242,7 @@ class TestPythonBenchmarkDiscovery:
                 "cuda_graphs_router",
                 "kernel_fusion_llm_reuse_static_tensor_and_simplify_setup",
             },
-            "ch16": {"paged_attention_blackwell"},
+            "ch16": {"dense_attention_flash_blackwell_variant"},
             "ch18": {"flexdecoding_graphs"},
         }
 

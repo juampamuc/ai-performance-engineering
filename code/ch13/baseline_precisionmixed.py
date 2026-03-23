@@ -47,7 +47,9 @@ class BaselinePrecisionMixedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.optimizer: Optional[Optimizer] = None
         self.criterion: Optional[nn.Module] = None
         self.batch_size = 512
-        self.hidden_dim = 2048
+        # Retuned upward so the FP32-vs-BF16 training comparison spends more
+        # time in GEMM-heavy math where mixed precision should pay off.
+        self.hidden_dim = 3072
         self.micro_steps = 4
         tokens = self.batch_size * self.hidden_dim
         self._workload = WorkloadMetadata(

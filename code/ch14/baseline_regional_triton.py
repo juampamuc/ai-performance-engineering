@@ -94,15 +94,14 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
             mlp_hidden=self.mlp_hidden,
         ).to(self.device, dtype=torch.bfloat16).eval()
 
-        # Full-graph compile with aot_eager (no Triton fusion).
-        # Compiled once in setup() so compilation cost is excluded from
-        # timing — same treatment as the optimized variant.
+        # Full-model compile with Inductor so the comparison isolates compile
+        # scope rather than backend quality.
         self._compiled_model = torch.compile(
             self.model,
-            backend="aot_eager",
+            backend="inductor",
             fullgraph=False,
             dynamic=True,
-            mode="default",
+            mode="max-autotune",
         )
 
         for seq in self.sequence_schedule:
@@ -199,4 +198,3 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineRegionalTritonBenchmark()
-

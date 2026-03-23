@@ -28,6 +28,7 @@ class PagedKVCache:
     def __init__(
         self,
         page_size: int,
+        batch_size: int,
         num_layers: int,
         num_heads: int,
         head_dim: int,
@@ -35,6 +36,7 @@ class PagedKVCache:
         device: torch.device,
     ):
         self.page_size = page_size
+        self.batch_size = batch_size
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -47,7 +49,14 @@ class PagedKVCache:
         if self.buffer_pool[pages]:
             return self.buffer_pool[pages].pop()
         length = pages * self.page_size
-        k_buf = torch.zeros(length, self.num_heads, self.head_dim, dtype=self.dtype, device=self.device)
+        k_buf = torch.zeros(
+            length,
+            self.batch_size,
+            self.num_heads,
+            self.head_dim,
+            dtype=self.dtype,
+            device=self.device,
+        )
         v_buf = torch.zeros_like(k_buf)
         return k_buf, v_buf
     
@@ -117,12 +126,26 @@ class PagedKVCache:
     
     def get(self, request_id: str, layer_idx: int, start: int, end: int) -> tuple[torch.Tensor, torch.Tensor]:
         if request_id not in self.allocations:
-            empty = torch.zeros(0, self.num_heads, self.head_dim, dtype=self.dtype, device=self.device)
+            empty = torch.zeros(
+                0,
+                self.batch_size,
+                self.num_heads,
+                self.head_dim,
+                dtype=self.dtype,
+                device=self.device,
+            )
             return empty, empty
         entry = self.allocations[request_id][layer_idx]
         valid_end = min(end, int(entry["length"]))  # type: ignore[index]
         if start >= valid_end:
-            empty = torch.zeros(0, self.num_heads, self.head_dim, dtype=self.dtype, device=self.device)
+            empty = torch.zeros(
+                0,
+                self.batch_size,
+                self.num_heads,
+                self.head_dim,
+                dtype=self.dtype,
+                device=self.device,
+            )
             return empty, empty
         buffer_k, buffer_v = entry["buffer"]  # type: ignore[assignment]
         return buffer_k[start:valid_end], buffer_v[start:valid_end]
@@ -160,10 +183,10 @@ class PagedAttentionLayer(nn.Module):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         
-        kv_cache.append(request_id, layer_idx, k[0, :, 0, :], v[0, :, 0, :], cache_pos)
+        kv_cache.append(request_id, layer_idx, k[:, :, 0, :], v[:, :, 0, :], cache_pos)
         cached_k, cached_v = kv_cache.get(request_id, layer_idx, 0, cache_pos + 1)
-        cached_k = cached_k.permute(1, 0, 2).unsqueeze(0)
-        cached_v = cached_v.permute(1, 0, 2).unsqueeze(0)
+        cached_k = cached_k.permute(1, 2, 0, 3)
+        cached_v = cached_v.permute(1, 2, 0, 3)
 
         attn_out = F.scaled_dot_product_attention(q, cached_k, cached_v, dropout_p=0.0, is_causal=False)
         attn_out = attn_out.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_dim)
@@ -215,6 +238,7 @@ class OptimizedKVCachePagedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
         self.kv_cache = PagedKVCache(
             page_size=self.page_size,
+            batch_size=self.batch_size,
             num_layers=self.num_layers,
             num_heads=self.num_heads,
             head_dim=self.head_dim,
@@ -299,6 +323,10 @@ class OptimizedKVCachePagedBenchmark(VerificationPayloadMixin, BaseBenchmark):
             reduced_precision_time_ms=getattr(self, '_last_elapsed_ms', None),
             precision_type="fp16",
         )
+
+    def get_optimization_goal(self) -> str:
+        """Paged allocation is kept as a memory benchmark, not a speed benchmark."""
+        return "memory"
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""

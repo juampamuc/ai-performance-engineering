@@ -13,7 +13,9 @@ class OptimizedStreamOrderedKvCacheBenchmark(ConcurrentStreamOptimized):
             "stream_ordered_kv_cache",
             num_elements=18_000_000,
             num_segments=8,
-            num_streams=2,
+            # Three streams consistently reduces idle gaps on B200 while
+            # preserving the same chunked workload and update ordering.
+            num_streams=3,
         )
 
 

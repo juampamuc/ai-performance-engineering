@@ -109,8 +109,11 @@ def _ensure_triton_allocator():
 BLOCK_M = 128
 BLOCK_N = 128
 BLOCK_K = 64
-GROUP_M = 4
-NUM_WARPS = 8
+# Local B200 screening on the canonical 4096^3 workload favored a narrower
+# persistent kernel: fewer warps and a smaller grouped traversal keep the TMA
+# path ahead of the baseline without changing the math or the tile shape.
+GROUP_M = 2
+NUM_WARPS = 4
 NUM_STAGES = 5
 
 @triton.jit

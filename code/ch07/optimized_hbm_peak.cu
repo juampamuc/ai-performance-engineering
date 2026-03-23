@@ -75,6 +75,7 @@ int main() {
     double bandwidth_tbs = (bytes_transferred / elapsed_ms) / 1e9;
     
     printf("HBM peak (Float8): %.2f ms, %.2f TB/s\n", elapsed_ms / iterations, bandwidth_tbs);
+    printf("TIME_MS: %.6f\n", elapsed_ms / iterations);
     printf("Vectorized path reuses the same 512 MB workload with wider loads/stores.\n");
 
 #ifdef VERIFY
@@ -97,6 +98,5 @@ int main() {
     
     return 0;
 }
-
 
 

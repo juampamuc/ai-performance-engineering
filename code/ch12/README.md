@@ -85,4 +85,5 @@ python -m cli.aisp bench run --targets ch12 --profile minimal
 ## Notes
 - `cuda_graphs_workload.cuh` holds reusable graph capture helpers when you want to wrap your own kernels.
 - `helper_*.cu` files contain host/device glue for the dynamic-parallelism case studies-copy them when bootstrapping new experiments.
+- `graph_conditional_runtime` is the canonical conditional-node benchmark. Keep `cuda_graphs_conditional` as a supplementary demo rather than a canonical speedup target.
 - For a smaller supporting lab that keeps Chapter 12's CUDA Graph story primary while adding fused reduction and padding-aware projection examples, see `labs/training_hotpath`.

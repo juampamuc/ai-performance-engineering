@@ -69,7 +69,7 @@ def _init_linear_weights(linear: nn.Module, weight: torch.Tensor, bias: torch.Te
             linear.bias.copy_(bias)
 
 
-class BaselineFP4PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
+class BaselineFP4PerTensorBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline: naive per-tensor FP4 quantization."""
 
     signature_equivalence_group = "ch13_fp4_perchannel"
@@ -163,5 +163,4 @@ class BaselineFP4PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return BaselineFP4PerChannelBenchmark()
-
+    return BaselineFP4PerTensorBenchmark()

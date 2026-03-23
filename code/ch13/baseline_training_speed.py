@@ -96,7 +96,13 @@ class BaselineTrainingSpeedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=30, warmup=10, enable_memory_tracking=True)
+        return BenchmarkConfig(
+            iterations=30,
+            warmup=10,
+            enable_memory_tracking=True,
+            timing_method="wall_clock",
+            full_device_sync=True,
+        )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
@@ -115,5 +121,4 @@ class BaselineTrainingSpeedBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineTrainingSpeedBenchmark()
-
 

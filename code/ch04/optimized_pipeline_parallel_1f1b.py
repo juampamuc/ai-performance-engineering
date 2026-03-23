@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 
+from core.benchmark.gpu_requirements import require_min_gpus
 from core.benchmark.verification import PrecisionFlags
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
@@ -43,25 +44,28 @@ _DEFAULT_MICRO_BATCHES = 8
 def _resolve_world_size() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA required for pipeline-parallel benchmark")
-    return 1
+    world_size = torch.cuda.device_count()
+    if world_size < 2:
+        raise RuntimeError("optimized_pipeline_parallel_1f1b requires >=2 GPUs.")
+    return world_size
 
 
-def _resolve_num_layers(num_layers: Optional[int], world_size: int) -> int:
+def _resolve_num_layers(num_layers: Optional[int], stage_count: int) -> int:
     base = _DEFAULT_LAYERS if num_layers is None else int(num_layers)
-    if base % world_size == 0:
+    if base % stage_count == 0:
         return base
     if num_layers is not None:
-        raise ValueError("num_layers must be divisible by world_size")
-    return world_size * ((base + world_size - 1) // world_size)
+        raise ValueError("num_layers must be divisible by stage_count")
+    return stage_count * ((base + stage_count - 1) // stage_count)
 
 
 def _resolve_batch_config(
     batch_size: Optional[int],
     num_micro_batches: Optional[int],
-    world_size: int,
+    stage_count: int,
 ) -> tuple[int, int]:
     if num_micro_batches is None:
-        micro_batches = max(_DEFAULT_MICRO_BATCHES, world_size)
+        micro_batches = max(_DEFAULT_MICRO_BATCHES, stage_count)
     else:
         micro_batches = int(num_micro_batches)
     batch = _DEFAULT_BATCH if batch_size is None else int(batch_size)
@@ -85,16 +89,28 @@ def _init_distributed() -> tuple[int, int, int]:
     return rank, world_size, local_rank
 
 
-def _build_stage_layers(hidden: int, layers_per_stage: int, device: torch.device):
-    fwd = nn.ModuleList([
-        nn.Linear(hidden, hidden, bias=False)
-        for _ in range(layers_per_stage)
-    ]).to(device).to(torch.bfloat16)
-    bwd = nn.ModuleList([
-        nn.Linear(hidden, hidden, bias=False)
-        for _ in range(layers_per_stage)
-    ]).to(device).to(torch.bfloat16)
-    return fwd, bwd
+def _build_stage_layers(hidden: int, layers_per_stage: int, stage_count: int, device: torch.device):
+    fwd_stages = nn.ModuleList()
+    bwd_stages = nn.ModuleList()
+    for _ in range(stage_count):
+        fwd = nn.ModuleList([
+            nn.Linear(hidden, hidden, bias=False)
+            for _ in range(layers_per_stage)
+        ]).to(device).to(torch.bfloat16)
+        bwd = nn.ModuleList([
+            nn.Linear(hidden, hidden, bias=False)
+            for _ in range(layers_per_stage)
+        ]).to(device).to(torch.bfloat16)
+        fwd_stages.append(fwd)
+        bwd_stages.append(bwd)
+    return fwd_stages, bwd_stages
+
+
+def _run_stage_inplace(stage_layers: nn.ModuleList, x: torch.Tensor) -> torch.Tensor:
+    for layer in stage_layers:
+        x = layer(x)
+        x.relu_()
+    return x
 
 
 def _run_worker(
@@ -106,9 +122,10 @@ def _run_worker(
     num_layers: Optional[int],
     num_micro_batches: Optional[int],
 ) -> None:
+    require_min_gpus(2, "optimized_pipeline_parallel_1f1b.py")
     rank, world_size, local_rank = _init_distributed()
-    if world_size < 1:
-        raise RuntimeError("optimized_pipeline_parallel_1f1b requires >=1 GPU.")
+    if world_size < 2:
+        raise RuntimeError("optimized_pipeline_parallel_1f1b requires >=2 GPUs.")
     num_layers = _resolve_num_layers(num_layers, world_size)
     batch_size, num_micro_batches = _resolve_batch_config(batch_size, num_micro_batches, world_size)
 
@@ -119,7 +136,7 @@ def _run_worker(
     layers_per_stage = num_layers // world_size
     micro_batch_size = batch_size // num_micro_batches
 
-    fwd_layers, bwd_layers = _build_stage_layers(hidden, layers_per_stage, device)
+    fwd_layers, bwd_layers = _build_stage_layers(hidden, layers_per_stage, world_size, device)
 
     if rank == 0:
         inputs = torch.randn(batch_size, seq_length, hidden, device=device, dtype=torch.bfloat16)
@@ -128,15 +145,11 @@ def _run_worker(
 
     def _forward(micro_batch: torch.Tensor) -> torch.Tensor:
         x = micro_batch
-        for layer in fwd_layers:
-            x = torch.relu(layer(x))
-        return x
+        return _run_stage_inplace(fwd_layers[0], x)
 
     def _backward(grad_in: torch.Tensor) -> torch.Tensor:
         x = grad_in
-        for layer in bwd_layers:
-            x = torch.relu(layer(x))
-        return x
+        return _run_stage_inplace(bwd_layers[0], x)
 
     def _run_iteration() -> None:
         activations: deque[torch.Tensor] = deque()
@@ -260,6 +273,7 @@ def main() -> None:
 
 class OptimizedPipelineParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Harness entry that launches this module via torchrun."""
+    multi_gpu_required = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -269,17 +283,24 @@ class OptimizedPipelineParallelBenchmark(VerificationPayloadMixin, BaseBenchmark
         self._bwd_layers: Optional[nn.ModuleList] = None
         self._input: Optional[torch.Tensor] = None
         self._output: Optional[torch.Tensor] = None
-        self._world_size = _resolve_world_size()
+        self._world_size = 1
+        self._num_layers = _DEFAULT_LAYERS
+        self._batch_size = _DEFAULT_BATCH
+        self._micro_batches = _DEFAULT_MICRO_BATCHES
+        self._layers_per_stage = _DEFAULT_LAYERS
+
+    def setup(self) -> None:
+        require_min_gpus(2, "optimized_pipeline_parallel_1f1b.py")
+        self._world_size = torch.cuda.device_count()
         self._num_layers = _resolve_num_layers(None, self._world_size)
         self._batch_size, self._micro_batches = _resolve_batch_config(None, None, self._world_size)
         self._layers_per_stage = self._num_layers // self._world_size
-
-    def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._fwd_layers, self._bwd_layers = _build_stage_layers(
             _DEFAULT_HIDDEN,
             self._layers_per_stage,
+            self._world_size,
             self.device,
         )
         self._input = torch.randn(
@@ -294,14 +315,15 @@ class OptimizedPipelineParallelBenchmark(VerificationPayloadMixin, BaseBenchmark
         if self._input is None or self._fwd_layers is None or self._bwd_layers is None:
             raise RuntimeError("setup() must run before benchmark_fn()")
         micro_batch_size = self._batch_size // self._micro_batches
-        micro_batch = self._input[:micro_batch_size]
-        x = micro_batch
+        x = self._input[:micro_batch_size]
         for _ in range(self._world_size):
             for layer in self._fwd_layers:
-                x = torch.relu(layer(x))
+                x = layer(x)
+                x.relu_()
         for _ in range(self._world_size):
             for layer in self._bwd_layers:
-                x = torch.relu(layer(x))
+                x = layer(x)
+                x.relu_()
         self._output = x
 
     def capture_verification_payload(self) -> None:
@@ -354,10 +376,10 @@ class OptimizedPipelineParallelBenchmark(VerificationPayloadMixin, BaseBenchmark
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=1,
+            nproc_per_node=max(torch.cuda.device_count(), 1),
             iterations=3,
             warmup=5,
-            multi_gpu_required=False,
+            multi_gpu_required=True,
             measurement_timeout_seconds=900,
         )
 
@@ -366,7 +388,7 @@ class OptimizedPipelineParallelBenchmark(VerificationPayloadMixin, BaseBenchmark
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=[],
-            multi_gpu_required=False,
+            multi_gpu_required=True,
             name="optimized_pipeline_parallel_1f1b",
             config_arg_map={
                 "iterations": "--iters",
@@ -377,5 +399,3 @@ class OptimizedPipelineParallelBenchmark(VerificationPayloadMixin, BaseBenchmark
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedPipelineParallelBenchmark()
-
-

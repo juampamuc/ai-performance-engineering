@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 
 from core.harness import run_benchmarks
@@ -110,19 +111,48 @@ def test_is_distributed_benchmark_respects_explicit_single_gpu_torchrun_override
     assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
 
 
-def test_ch04_single_gpu_torchrun_benchmarks_are_not_classified_as_distributed():
+def test_ch04_pipeline_and_tensor_parallel_benchmarks_are_classified_as_distributed():
     repo_root = Path(__file__).resolve().parents[1]
     cases = [
         repo_root / "ch04" / "baseline_pipeline_parallel.py",
         repo_root / "ch04" / "optimized_pipeline_parallel_1f1b.py",
         repo_root / "ch04" / "baseline_tensor_parallel.py",
         repo_root / "ch04" / "optimized_tensor_parallel_async.py",
+    ]
+
+    for benchmark_path in cases:
+        assert run_benchmarks.is_distributed_benchmark(benchmark_path) is True
+
+
+def test_ch04_torchcomms_benchmarks_keep_single_gpu_torchrun_override():
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
         repo_root / "ch04" / "baseline_torchcomms.py",
         repo_root / "ch04" / "optimized_torchcomms.py",
     ]
 
     for benchmark_path in cases:
         assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
+
+
+def test_ch04_pipeline_and_tensor_parallel_benchmarks_require_multi_gpu_in_config():
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
+        repo_root / "ch04" / "baseline_pipeline_parallel.py",
+        repo_root / "ch04" / "optimized_pipeline_parallel_1f1b.py",
+        repo_root / "ch04" / "baseline_tensor_parallel.py",
+        repo_root / "ch04" / "optimized_tensor_parallel_async.py",
+    ]
+
+    for benchmark_path in cases:
+        spec = importlib.util.spec_from_file_location(benchmark_path.stem, benchmark_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        benchmark = module.get_benchmark()
+        config = benchmark.get_config()
+        assert config.launch_via.name == "TORCHRUN"
+        assert config.multi_gpu_required is True
 
 
 def test_append_profile_warning_persists_message_to_stderr_log(tmp_path, monkeypatch):

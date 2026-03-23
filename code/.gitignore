@@ -20,6 +20,7 @@ third_party/wheels/vllm*.whl
 third_party/vllm-src/
 third_party/te_sm100a_env.sh
 .cursor/.plan-and-implement/
+ .plan-and-implement/
 .cursor/plans/
 .env
 .env.local

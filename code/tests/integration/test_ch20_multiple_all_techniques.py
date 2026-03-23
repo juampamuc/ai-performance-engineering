@@ -18,7 +18,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, Benc
 from ch20.optimized_autotuning import OptimizedAutotuningBenchmark
 from ch20.optimized_end_to_end_bandwidth import OptimizedEndToEndBandwidthBenchmark
 from ch20.optimized_moe import OptimizedMoeBenchmark
-from ch20.optimized_multiple_unoptimized import OptimizedAllTechniquesBenchmark
+from ch20.optimized_bf16_mlp import OptimizedBF16MLPBenchmark
 from tests.integration._strict_gpu_env import skip_if_strict_benchmark_env_invalid
 
 pytestmark.append(
@@ -42,7 +42,7 @@ class ShortBenchmarkConfigMixin:
         )
 
 
-class ShortMultipleAllTechniquesBenchmark(ShortBenchmarkConfigMixin, OptimizedAllTechniquesBenchmark):
+class ShortMultipleAllTechniquesBenchmark(ShortBenchmarkConfigMixin, OptimizedBF16MLPBenchmark):
     """Benchmark variant with fewer iterations to keep tests fast."""
 
 

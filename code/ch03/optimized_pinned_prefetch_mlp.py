@@ -1,4 +1,4 @@
-"""Docker optimization: pinned-memory prefetch + compute/copy overlap.
+"""Pinned-prefetch MLP optimization: pinned-memory prefetch + overlap.
 
 This benchmark demonstrates efficient data loading - using pinned memory
 and prefetching with double-buffering. Uses the same model architecture
@@ -56,8 +56,8 @@ class Prefetcher:
         return self.buffers[self.cur_slot], self.target_bufs[self.cur_slot]
 
 
-class OptimizedDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Pinned memory prefetch with same model as baseline for fair comparison."""
+class OptimizedPinnedPrefetchMLPBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Pinned-memory prefetch with the same MLP workload as the baseline."""
 
     def __init__(self):
         super().__init__()
@@ -88,7 +88,7 @@ class OptimizedDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        log_allocator_guidance("ch03/optimized_docker", optimized=True)
+        log_allocator_guidance("ch03/optimized_pinned_prefetch_mlp", optimized=True)
         # Use same model architecture as baseline for fair comparison
         self.model = nn.Sequential(
             nn.Linear(self.input_dim, self.hidden_dim),
@@ -117,7 +117,7 @@ class OptimizedDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
         inputs, targets = self.prefetcher.next()
-        with nvtx_range("optimized_docker", enable=enable_nvtx):
+        with nvtx_range("optimized_pinned_prefetch_mlp", enable=enable_nvtx):
             out = self.model(inputs)
             loss = torch.nn.functional.mse_loss(out, targets)
             self.optimizer.zero_grad(set_to_none=True)
@@ -182,6 +182,5 @@ class OptimizedDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedDockerBenchmark()
-
+    return OptimizedPinnedPrefetchMLPBenchmark()
 

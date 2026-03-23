@@ -324,16 +324,16 @@
       },
       "type": "python"
     },
-    "gemm_ilp": {
-      "example": "gemm_ilp",
+    "elementwise_ilp": {
+      "example": "elementwise_ilp",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_gemm_ilp",
-        "best_optimization_file": "optimized_gemm_ilp.py",
+        "best_optimization": "optimized_elementwise_ilp",
+        "best_optimization_file": "optimized_elementwise_ilp.py",
         "best_optimization_memory_mb": 722.5126953125,
         "best_optimization_speedup": 1.859670809904304,
-        "best_optimization_technique": "optimized_gemm_ilp",
+        "best_optimization_technique": "optimized_elementwise_ilp",
         "best_optimization_time_ms": 0.8696960015831706,
         "optimization_goal": "speed"
       },
@@ -432,16 +432,16 @@
       },
       "type": "python"
     },
-    "launch_bounds_gmem_cuda": {
-      "example": "launch_bounds_gmem",
+    "launch_bounds_cuda": {
+      "example": "launch_bounds_cuda",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_launch_bounds_gmem",
-        "best_optimization_file": "optimized_launch_bounds_gmem.py",
+        "best_optimization": "optimized_launch_bounds_cuda",
+        "best_optimization_file": "optimized_launch_bounds_cuda.py",
         "best_optimization_memory_mb": 150.30029296875,
         "best_optimization_speedup": 1.9104554037187569,
-        "best_optimization_technique": "optimized_launch_bounds_gmem",
+        "best_optimization_technique": "optimized_launch_bounds_cuda",
         "best_optimization_time_ms": 6.2494000000000005,
         "optimization_goal": "speed"
       },

@@ -1,4 +1,4 @@
-"""Kubernetes optimization: overlap data provisioning with training work.
+"""Double-buffered batch provisioning optimization with overlapped copies.
 
 This benchmark demonstrates efficient data provisioning - using pinned memory,
 prefetching, and async H2D copies to overlap data loading with compute.
@@ -18,7 +18,7 @@ from core.harness.benchmark_harness import (
 )
 
 
-class OptimizedKubernetesBenchmark(VerificationPayloadMixin, BaseBenchmark):
+class OptimizedDoubleBufferedBatchProvisioningBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Prefetches device batches on a side stream for overlapped data loading."""
 
     def __init__(self):
@@ -101,7 +101,7 @@ class OptimizedKubernetesBenchmark(VerificationPayloadMixin, BaseBenchmark):
         data = self.device_batches[self.cur_slot]
         target = self.device_targets[self.cur_slot]
         
-        with self._nvtx_range("optimized_kubernetes"):
+        with self._nvtx_range("optimized_double_buffered_batch_provisioning"):
             # Forward (overlapped with next batch prefetch)
             out = self.model(data)
             loss = torch.nn.functional.mse_loss(out, target)
@@ -170,5 +170,4 @@ class OptimizedKubernetesBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedKubernetesBenchmark()
-
+    return OptimizedDoubleBufferedBatchProvisioningBenchmark()

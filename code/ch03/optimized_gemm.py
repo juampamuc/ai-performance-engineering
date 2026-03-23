@@ -36,7 +36,7 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
             'use torch.compile(mode="reduce-overhead") to amortize launch '
             "fragmentation while keeping math fixed"
         ),
-        "chapter_native_targets": ["pageable_copy", "rack_prep", "docker", "kubernetes"],
+        "chapter_native_targets": ["pageable_copy", "rack_prep", "pinned_prefetch_mlp", "double_buffered_batch_provisioning"],
     }
 
     def __init__(self):

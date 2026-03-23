@@ -279,20 +279,20 @@
       },
       "type": "python"
     },
-    "multiple_unoptimized": {
+    "bf16_mlp": {
       "custom_metrics": {
         "ai_opt.code_changes": 0.0,
         "ai_opt.original_ms": 0.23119999468326569
       },
-      "example": "multiple_unoptimized",
+      "example": "bf16_mlp",
       "metadata": {
         "best_memory_savings_pct": 36.08925771980037,
         "best_memory_savings_ratio": 1.5646821869409158,
-        "best_optimization": "optimized_multiple_unoptimized",
-        "best_optimization_file": "optimized_multiple_unoptimized.py",
+        "best_optimization": "optimized_bf16_mlp",
+        "best_optimization_file": "optimized_bf16_mlp.py",
         "best_optimization_memory_mb": 347.16015625,
         "best_optimization_speedup": 1.2005819788035752,
-        "best_optimization_technique": "optimized_multiple_unoptimized",
+        "best_optimization_technique": "optimized_bf16_mlp",
         "best_optimization_time_ms": 0.20806829867078297,
         "optimization_goal": "speed"
       },
@@ -392,67 +392,6 @@
         "iterations": 20,
         "profile_name": "none",
         "timestamp": "2026-03-21T11:31:29+00:00",
-        "validity_profile": "portable",
-        "warmup_iterations": 10
-      },
-      "type": "python"
-    },
-    "pipeline_sequential": {
-      "custom_metrics": {
-        "ai_opt.code_changes": 0.0,
-        "ai_opt.original_ms": 24.113983154296875
-      },
-      "example": "pipeline_sequential",
-      "metadata": {
-        "best_memory_savings_pct": 0.0,
-        "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_pipeline_sequential",
-        "best_optimization_file": "optimized_pipeline_sequential.py",
-        "best_optimization_memory_mb": 231.68359375,
-        "best_optimization_speedup": 14.185278780867558,
-        "best_optimization_technique": "optimized_pipeline_sequential",
-        "best_optimization_time_ms": 1.72624120622311,
-        "optimization_goal": "speed"
-      },
-      "metrics": {
-        "baseline_memory_mb": 231.68359375,
-        "baseline_p75_ms": 24.751264572143555,
-        "baseline_throughput.bytes_per_s": null,
-        "baseline_throughput.custom_unit_name": null,
-        "baseline_throughput.custom_unit_per_s": null,
-        "baseline_throughput.goodput": null,
-        "baseline_throughput.latency_ms": 24.4872127532959,
-        "baseline_throughput.requests_per_s": 20908.872118615724,
-        "baseline_throughput.samples_per_s": 20908.872118615724,
-        "baseline_throughput.schemaVersion": "1.0",
-        "baseline_throughput.tokens_per_s": 20908.872118615724,
-        "baseline_time_ms": 24.4872127532959,
-        "best_memory_savings_pct": 0.0,
-        "best_memory_savings_ratio": 1.0,
-        "best_optimized_memory_mb": 231.68359375,
-        "best_optimized_p75_ms": 1.721119999885559,
-        "best_optimized_speedup": 14.185278780867558,
-        "best_optimized_throughput.bytes_per_s": null,
-        "best_optimized_throughput.custom_unit_name": null,
-        "best_optimized_throughput.custom_unit_per_s": null,
-        "best_optimized_throughput.goodput": null,
-        "best_optimized_throughput.latency_ms": 1.72624120622311,
-        "best_optimized_throughput.requests_per_s": 296598.1799960729,
-        "best_optimized_throughput.samples_per_s": 296598.1799960729,
-        "best_optimized_throughput.schemaVersion": "1.0",
-        "best_optimized_throughput.tokens_per_s": 296598.1799960729,
-        "best_optimized_time_ms": 1.72624120622311,
-        "best_speedup": 14.185278780867558,
-        "is_regression": false
-      },
-      "provenance": {
-        "dmi_product_name": "Standard PC (Q35 + ICH9, 2009)",
-        "execution_environment": "virtualized",
-        "git_commit": "e1af4ba1ac65cde755e836586cdb44cad06a0010",
-        "hardware_key": "b200",
-        "iterations": 50,
-        "profile_name": "none",
-        "timestamp": "2026-03-21T11:32:09+00:00",
         "validity_profile": "portable",
         "warmup_iterations": 10
       },

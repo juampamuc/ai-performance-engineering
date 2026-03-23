@@ -1,4 +1,4 @@
-"""Docker baseline: host batches copied synchronously each iteration.
+"""Pinned-prefetch MLP baseline: synchronous host batches each iteration.
 
 This benchmark demonstrates inefficient data loading - using non-pinned memory
 and blocking H2D copies. The optimized version uses pinned memory and prefetching.
@@ -19,8 +19,8 @@ from core.optimization.allocator_tuning import log_allocator_guidance
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
-class BaselineDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Simulates a non-containerized setup with blocking H2D copies."""
+class BaselinePinnedPrefetchMLPBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Uses blocking host-to-device copies without pinned-memory prefetch."""
 
     def __init__(self):
         super().__init__()
@@ -47,7 +47,7 @@ class BaselineDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        log_allocator_guidance("ch03/baseline_docker", optimized=False)
+        log_allocator_guidance("ch03/baseline_pinned_prefetch_mlp", optimized=False)
         self.model = nn.Sequential(
             nn.Linear(self.input_dim, self.hidden_dim),
             nn.ReLU(),
@@ -73,7 +73,7 @@ class BaselineDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
         host_y = self.targets[idx]
         self.batch_idx += 1
 
-        with nvtx_range("baseline_docker", enable=enable_nvtx):
+        with nvtx_range("baseline_pinned_prefetch_mlp", enable=enable_nvtx):
             x = self.to_device(host_x)  # blocking copy (tensor not pinned)
             y = self.to_device(host_y)
             out = self.model(x)
@@ -132,6 +132,5 @@ class BaselineDockerBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return BaselineDockerBenchmark()
-
+    return BaselinePinnedPrefetchMLPBenchmark()
 

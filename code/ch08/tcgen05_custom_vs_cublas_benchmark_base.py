@@ -55,6 +55,12 @@ class Tcgen05CustomVsCublasBase(VerificationPayloadMixin, BaseBenchmark):
         self.parameter_count = int(self.matrix_a.numel() + self.matrix_b.numel())
         self._synchronize()
 
+    def _run_cublas_reference(self) -> torch.Tensor:
+        if self.matrix_a is None or self.matrix_b is None:
+            raise RuntimeError("Inputs not initialized")
+        with torch.no_grad():
+            return torch.matmul(self.matrix_a, self.matrix_b)
+
     def capture_verification_payload(self) -> None:
         if self.matrix_a is None or self.matrix_b is None or self.output is None:
             raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")

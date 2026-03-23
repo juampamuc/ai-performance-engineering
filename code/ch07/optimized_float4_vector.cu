@@ -1,4 +1,4 @@
-// optimized_float8_vector.cu - Vectorized Loads (Ch7)
+// optimized_float4_vector.cu - Vectorized Loads (Ch7)
 //
 // WHAT: float4 vectorized loads - 4 floats (16 bytes) per memory operation.
 //

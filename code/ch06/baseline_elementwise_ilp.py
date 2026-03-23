@@ -1,4 +1,4 @@
-"""baseline_gemm_ilp.py - Baseline GEMM with low ILP (no tensor cores)."""
+"""baseline_elementwise_ilp.py - Baseline elementwise chain with low ILP."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 from ch06.cuda_extensions import load_ilp_extension
 
 
-class BaselineGEMMILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline ILP workload using sequential CUDA kernel."""
+class BaselineElementwiseILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Baseline elementwise ILP workload using a sequential CUDA kernel."""
     
     def __init__(self):
         super().__init__()
@@ -45,7 +45,7 @@ class BaselineGEMMILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: sequential operations (low ILP)."""
         assert self._extension is not None and self.input is not None and self._buf0 is not None and self._buf1 is not None
-        with self._nvtx_range("gemm_ilp_baseline"):
+        with self._nvtx_range("elementwise_ilp_baseline"):
             src: torch.Tensor = self.input
             buf0: torch.Tensor = self._buf0
             buf1: torch.Tensor = self._buf1
@@ -111,4 +111,4 @@ class BaselineGEMMILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
-    return BaselineGEMMILPBenchmark()
+    return BaselineElementwiseILPBenchmark()
