@@ -4,7 +4,7 @@
 Reference implementation of high-performance PyTorch, CUDA, and Triton workloads for NVIDIA Blackwell platforms.
 The repository packages 20 focused chapters, advanced labs, and the shared benchmarking harness so you can profile baselines, apply optimizations, and capture artifacts that prove performance gains.
 
-Roadmap: [`docs/performance_repo_roadmap.md`](/home/cfregly/ai-performance-engineering/code/docs/performance_repo_roadmap.md) defines the prioritized plan for canonical suites, trend tracking, anti-pattern enforcement, shared benchmark bases, and evidence-first documentation.
+Roadmap: [`docs/performance_repo_roadmap.md`](docs/performance_repo_roadmap.md) defines the prioritized plan for canonical suites, trend tracking, anti-pattern enforcement, shared benchmark bases, and evidence-first documentation.
 
 ## Problem
 Most performance repos are easy to browse and hard to trust. This one is meant to do the opposite:
@@ -26,7 +26,7 @@ That command now writes a stable history package under `artifacts/history/tier1/
 - `trend_snapshot.json`: run-history summary for dashboards and release notes
 - `artifacts/history/tier1/index.json`: suite history index
 
-See [`docs/tier1_benchmark_suite.md`](/home/cfregly/ai-performance-engineering/code/docs/tier1_benchmark_suite.md) for the current target list, artifact contract, and interpretation guidance.
+See [`docs/tier1_benchmark_suite.md`](docs/tier1_benchmark_suite.md) for the current target list, artifact contract, and interpretation guidance.
 
 ## Current Representative Deltas
 These numbers are taken from the latest canonical tier-1 history summary rather than from hand-maintained README text.
@@ -74,12 +74,12 @@ This keeps `labs/parameterized_cuda_graphs` visible without pretending it replac
 This repo now exposes one repeatable benchmarking methodology instead of leaving performance work as a collection of scripts.
 
 Start with:
-- [`docs/benchmark_methodology.md`](/home/cfregly/ai-performance-engineering/code/docs/benchmark_methodology.md) for the three-layer model (`micro`, `component`, `end_to_end`), bottleneck taxonomy, publication-vs-realism policy, and straggler playbook.
-- [`docs/performance_warehouse.md`](/home/cfregly/ai-performance-engineering/code/docs/performance_warehouse.md) for the stable event schema, raw-versus-curated storage split, retention tiers, and telemetry lineage back to raw evidence.
-- [`templates/performance_intake.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_intake.yaml) for KPIs, constraints, and the variable under test.
-- [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_workload_spec.yaml) for the frozen workload definition and measurement policy.
-- [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) for the CRD-aligned declarative `BenchmarkRun` shape the repo would map onto a Kubernetes-native service.
-- [`cluster/docs/kubernetes_benchmark_service.md`](/home/cfregly/ai-performance-engineering/code/cluster/docs/kubernetes_benchmark_service.md) plus [`cluster/configs/benchmarkrun-crd.yaml`](/home/cfregly/ai-performance-engineering/code/cluster/configs/benchmarkrun-crd.yaml) for the cluster-native operator/CRD direction already being sketched in the repo.
+- [`docs/benchmark_methodology.md`](docs/benchmark_methodology.md) for the three-layer model (`micro`, `component`, `end_to_end`), bottleneck taxonomy, publication-vs-realism policy, and straggler playbook.
+- [`docs/performance_warehouse.md`](docs/performance_warehouse.md) for the stable event schema, raw-versus-curated storage split, retention tiers, and telemetry lineage back to raw evidence.
+- [`templates/performance_intake.yaml`](templates/performance_intake.yaml) for KPIs, constraints, and the variable under test.
+- [`templates/benchmark_workload_spec.yaml`](templates/benchmark_workload_spec.yaml) for the frozen workload definition and measurement policy.
+- [`templates/benchmark_run.yaml`](templates/benchmark_run.yaml) for the CRD-aligned declarative `BenchmarkRun` shape the repo would map onto a Kubernetes-native service.
+- [`cluster/docs/kubernetes_benchmark_service.md`](cluster/docs/kubernetes_benchmark_service.md) plus [`cluster/configs/benchmarkrun-crd.yaml`](cluster/configs/benchmarkrun-crd.yaml) for the cluster-native operator/CRD direction already being sketched in the repo.
 
 Thin surfaces for these contracts are also exposed through `python -m cli.aisp tools benchmark-contracts`, dashboard API `GET /api/benchmark/contracts`, and MCP tool `benchmark_contracts`.
 
@@ -98,7 +98,7 @@ cluster/runs/<run_id>/
 ```
 
 Start with:
-- [`cluster/README.md`](/home/cfregly/ai-performance-engineering/code/cluster/README.md) for the current commands and folder contract.
+- [`cluster/README.md`](cluster/README.md) for the current commands and folder contract.
 - `python -m cli.aisp cluster common-eval --preset common-answer-fast ...` for the normal "evaluate this system" ask.
 - `python -m cli.aisp cluster common-eval --preset modern-llm ...` when you need the full canonical package.
 - `python -m cli.aisp cluster common-eval --preset multinode-readiness ...` before first real multi-node workloads.
@@ -276,7 +276,7 @@ Total: 11 categories, 95 validity issues - all protected by the harness.
 | 2022 | ML Benchmark Validity (Berkeley) | Benchmark Overfitting | Small changes in data distribution caused significant performance drops, questioning external validity. | https://www2.eecs.berkeley.edu/Pubs/TechRpts/2022/EECS-2022-180.html |
 | 2021 | ImageNet Label Errors | Invalid Ground Truth | At least 6 percent label errors in ImageNet validation set. | https://arxiv.org/abs/2103.14749 |
 | 2021 | MLPerf Reproducibility | Benchmark Reproducibility | Users could not reproduce MLPerf v0.7 results due to inaccessible datasets and outdated repos. | https://groups.google.com/a/mlcommons.org/g/public/c/T_8UsUPIWFo |
-| 2021 | Epic Sepsis Model External Validation | Benchmark Overfitting | External validation found poor discrimination and calibration for the Epic Sepsis Model, leading to missed cases and alert fatigue. | https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2781307 |
+| 2021 | Epic Sepsis Model External Validation | Benchmark Overfitting | External validation found poor discrimination and calibration for the Epic Sepsis Model, leading to missed cases and alert fatigue. | https://pubmed.ncbi.nlm.nih.gov/34152373/ |
 | 2020 | Underspecification in ML | Benchmark Overfitting | Models with equivalent benchmark performance diverged in deployment behavior. | https://arxiv.org/abs/2011.03395 |
 | 2020 | TF32 Default on Ampere | Precision Policy Drift | TF32-enabled matmul/conv trades precision for speed unless explicitly disabled. | https://pytorch.org/docs/stable/notes/cuda.html#tf32-on-ampere |
 | 2019 | NLI Heuristic Shortcuts (HANS) | Metric Definition Gaming | Models trained on MNLI (GLUE) rely on shallow heuristics and fail on HANS, revealing spurious shortcut behavior. | https://aclanthology.org/P19-1334/ |
