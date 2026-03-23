@@ -2,13 +2,13 @@
 
 This directory is the maintained fabric surface for the repo.
 
-The archived NVIDIA course exports under [nvidia-advanced-networking-for-ai-infra](/home/cfregly/ai-performance-engineering/code/cluster/fabric/nvidia-advanced-networking-for-ai-infra) stay as source material only. The operator-facing entrypoints are:
+The archived NVIDIA course exports under [nvidia-advanced-networking-for-ai-infra](nvidia-advanced-networking-for-ai-infra) stay as source material only. The operator-facing entrypoints are:
 
-- [nvlink.md](/home/cfregly/ai-performance-engineering/code/cluster/fabric/nvlink.md)
-- [infiniband.md](/home/cfregly/ai-performance-engineering/code/cluster/fabric/infiniband.md)
-- [spectrum_x.md](/home/cfregly/ai-performance-engineering/code/cluster/fabric/spectrum_x.md)
-- [cross_fabric.md](/home/cfregly/ai-performance-engineering/code/cluster/fabric/cross_fabric.md)
-- [fabric_command_catalog.json](/home/cfregly/ai-performance-engineering/code/cluster/fabric/fabric_command_catalog.json)
+- [nvlink.md](nvlink.md)
+- [infiniband.md](infiniband.md)
+- [spectrum_x.md](spectrum_x.md)
+- [cross_fabric.md](cross_fabric.md)
+- [fabric_command_catalog.json](fabric_command_catalog.json)
 
 ## Entry Points
 

@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from core.utils.compile_utils import configure_tf32, restore_tf32
 
 
 class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -21,6 +22,7 @@ class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchma
         super().__init__()
         self.model = None
         self.data = None
+        self._tf32_state = (None, None)
         self.batch_size = 8192
         self.in_features = 4096
         self.hidden_features = 4096
@@ -44,6 +46,11 @@ class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchma
             torch.cuda.manual_seed_all(42)
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA required for torchao quantization benchmark")
+        # Measure a true FP32 baseline instead of the default TF32-backed matmul path.
+        self._tf32_state = configure_tf32(
+            matmul_precision="highest",
+            cudnn_precision="highest",
+        )
 
         self.model = nn.Sequential(
             nn.Linear(self.in_features, self.hidden_features),
@@ -80,7 +87,7 @@ class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchma
                 "fp16": False,
                 "bf16": False,
                 "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+                "tf32": False,
             },
             output_tolerance=(1.0, 10.0),
         )
@@ -89,6 +96,8 @@ class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchma
         self.model = None
         self.data = None
         self._verify_input = None
+        restore_tf32(self._tf32_state)
+        self._tf32_state = (None, None)
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:

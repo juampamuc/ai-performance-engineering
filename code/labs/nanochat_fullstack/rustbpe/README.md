@@ -42,10 +42,10 @@ cargo test
 - `cargo test` should keep the component healthy as the NanoChat tree evolves.
 
 ## How It Fits Into NanoChat
-`rustbpe` is the tokenizer-training companion inside the broader [labs/nanochat_fullstack/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README.md) tree.
+`rustbpe` is the tokenizer-training companion inside the broader [labs/nanochat_fullstack/README.md](../README.md) tree.
 
-- Use [labs/nanochat_fullstack/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README.md) for the measured inference-stack story.
-- Use [labs/nanochat_fullstack/README_FAST.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README_FAST.md) for the quicker project walkthrough.
+- Use [labs/nanochat_fullstack/README.md](../README.md) for the measured inference-stack story.
+- Use [labs/nanochat_fullstack/README_FAST.md](../README_FAST.md) for the quicker project walkthrough.
 - Use this component doc when you only need the tokenizer-training piece.
 
 ## Notes

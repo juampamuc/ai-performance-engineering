@@ -62,9 +62,9 @@ class BaselineRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def __init__(self):
         super().__init__()
-        self.hidden = 1024
-        self.num_heads = 8
-        self.mlp_hidden = 4096
+        self.hidden = 1536
+        self.num_heads = 12
+        self.mlp_hidden = 12288
         self.batch_size = 8
         self.sequence_schedule: List[int] = [128, 256, 384, 512]
         self._step = 0

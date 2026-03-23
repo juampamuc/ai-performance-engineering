@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from core.utils.compile_utils import configure_tf32, restore_tf32
 
 try:
     from torchao.quantization import quantize_, Int8DynamicActivationInt8WeightConfig
@@ -30,6 +31,7 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
         super().__init__()
         self.model = None
         self.data = None
+        self._tf32_state = (None, None)
         self.batch_size = 8192
         self.in_features = 4096
         self.hidden_features = 4096
@@ -55,6 +57,11 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
             raise RuntimeError("CUDA required for torchao quantization benchmark")
         if TORCHAO_IMPORT_ERROR is not None or quantize_ is None or Int8DynamicActivationInt8WeightConfig is None:
             raise RuntimeError(f"SKIPPED: torchao is required for torchao quantization benchmark: {TORCHAO_IMPORT_ERROR}")
+        # Keep the comparison isolated to quantization rather than TF32 fallback behavior.
+        self._tf32_state = configure_tf32(
+            matmul_precision="highest",
+            cudnn_precision="highest",
+        )
 
         self.model = nn.Sequential(
             nn.Linear(self.in_features, self.hidden_features),
@@ -97,7 +104,7 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
                 "fp16": False,
                 "bf16": False,
                 "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+                "tf32": False,
             },
             output_tolerance=(1.0, 10.0),
         )
@@ -106,6 +113,8 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
         self.model = None
         self.data = None
         self._verify_input = None
+        restore_tf32(self._tf32_state)
+        self._tf32_state = (None, None)
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:

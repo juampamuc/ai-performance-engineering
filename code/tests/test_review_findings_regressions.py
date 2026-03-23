@@ -236,13 +236,22 @@ def test_reviewed_pair_fixes_remain_applied() -> None:
 
 def test_ch13_pair_remediations_keep_canonical_and_informational_targets_split() -> None:
     canonical_quant = _read("ch13/optimized_torchao_quantization.py")
+    baseline_quant = _read("ch13/baseline_torchao_quantization.py")
     compiled_quant = _read("ch13/optimized_torchao_quantization_compiled.py")
     canonical_kv = _read("ch13/optimized_kv_cache_naive.py")
     flash_kv = _read("ch13/optimized_kv_cache_naive_flash_blockwise.py")
 
+    assert 'configure_tf32(' in baseline_quant
+    assert 'matmul_precision="highest"' in baseline_quant
+    assert "restore_tf32(self._tf32_state)" in baseline_quant
     assert "torch.compile(self.model" not in canonical_quant
+    assert 'configure_tf32(' in canonical_quant
+    assert 'matmul_precision="highest"' in canonical_quant
+    assert "restore_tf32(self._tf32_state)" in canonical_quant
     assert "torch.compile(self.model" in compiled_quant
     assert "torchao_quantization_compiled" in INFORMATIONAL_BENCHMARKS["ch13"]
+    assert '"tf32": False' in baseline_quant
+    assert '"tf32": False' in canonical_quant
 
     assert "for pos in range(seq_len):" in canonical_kv
     assert "range(0, seq_len, self.block_size)" not in canonical_kv
@@ -304,8 +313,16 @@ def test_portable_rerun_uses_typed_expectation_keys_for_cuda_examples() -> None:
 
 
 def test_ch14_optimized_regional_triton_warms_all_sequence_buckets_in_setup() -> None:
+    baseline_text = _read("ch14/baseline_regional_triton.py")
+    optimized_text = _read("ch14/optimized_regional_triton.py")
     setup_section = _setup_section("ch14/optimized_regional_triton.py")
 
+    assert "self.hidden = 1536" in baseline_text
+    assert "self.hidden = 1536" in optimized_text
+    assert "self.num_heads = 12" in baseline_text
+    assert "self.num_heads = 12" in optimized_text
+    assert "self.mlp_hidden = 12288" in baseline_text
+    assert "self.mlp_hidden = 12288" in optimized_text
     assert "for _ in range(3):" in setup_section
     assert "for seq in self.sequence_schedule:" in setup_section
     assert "_ = self._compiled_model(self.inputs[seq])" in setup_section

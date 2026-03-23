@@ -70,9 +70,9 @@ python -m cli.aisp bench run --targets labs/nanochat_fullstack --profile minimal
 ## Project Context
 NanoChat is intentionally bigger than a single benchmark pair. The point of this lab entry is to give the repo one clean performance anchor inside that tree, not to replace the broader NanoChat project documentation.
 
-- Use [README_FAST.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README_FAST.md) for the faster end-to-end project walkthrough.
-- Use [speedrun.sh](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/speedrun.sh) when you want the broader "train and talk to a small model" experience.
-- Use [rustbpe/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/rustbpe/README.md) for the tokenizer-specific component work.
+- Use [README_FAST.md](README_FAST.md) for the faster end-to-end project walkthrough.
+- Use [speedrun.sh](speedrun.sh) when you want the broader "train and talk to a small model" experience.
+- Use [rustbpe/README.md](rustbpe/README.md) for the tokenizer-specific component work.
 
 ## Notes
 - This README focuses on the repo's benchmarked NanoChat story. Use `README_FAST.md` and the project scripts when you want the broader training/serving walkthrough.
