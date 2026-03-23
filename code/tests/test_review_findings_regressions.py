@@ -329,6 +329,46 @@ def test_ch14_optimized_regional_triton_warms_all_sequence_buckets_in_setup() ->
     assert "timed path measures steady" in setup_section
 
 
+def test_ch14_triton_persistent_uses_deeper_batched_gemm_workload() -> None:
+    baseline_text = _read("ch14/baseline_triton_persistent.py")
+    optimized_text = _read("ch14/optimized_triton_persistent.py")
+
+    assert "self.batch_size = 64" in baseline_text
+    assert "self.batch_size = 64" in optimized_text
+
+
+def test_ch17_memory_uses_larger_replayed_transfer_workload() -> None:
+    baseline_text = _read("ch17/baseline_memory.py")
+    optimized_text = _read("ch17/optimized_memory.py")
+
+    for source in (baseline_text, optimized_text):
+        assert "BATCH_SIZE = 1024" in source
+        assert "REPETITIONS = 10" in source
+
+
+def test_ch13_regional_compile_retunes_shared_mlp_heavy_shape() -> None:
+    baseline_text = _read("ch13/baseline_regional_compile.py")
+    optimized_text = _read("ch13/optimized_regional_compile.py")
+
+    for source in (baseline_text, optimized_text):
+        assert "self.hidden = 1536" in source
+        assert "self.num_heads = 12" in source
+        assert "self.mlp_hidden = 12288" in source
+        assert "self.batch_size = 32" in source
+        assert "self.sequence_schedule: List[int] = [256, 512, 1024, 1536]" in source
+
+
+def test_ch13_dataloader_default_uses_heavier_shared_preprocessing_workload() -> None:
+    baseline_text = _read("ch13/baseline_dataloader_default.py")
+    optimized_text = _read("ch13/optimized_dataloader_default.py")
+
+    for source in (baseline_text, optimized_text):
+        assert "self.dataset_size = 4000" in source
+        assert "self.batch_size = 64" in source
+        assert "self.feature_dim = 1024" in source
+        assert "self.preprocess_steps = 16" in source
+
+
 def test_parameterized_graph_verification_capture_uses_fixed_request_slot() -> None:
     source = _read("labs/parameterized_cuda_graphs/parameterized_cuda_graphs_common.py")
     assert "slot_idx = 0" in source

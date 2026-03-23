@@ -61,11 +61,12 @@ class BaselineDataloaderDefaultBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.dataloader = None
         self.optimizer = None
         self.criterion = None
-        # Larger batches to increase input pipeline cost for the baseline.
-        self.dataset_size = 1000
+        # Heavier preprocessing and a larger resident dataset amplify the
+        # difference between synchronous host loading and pinned-worker prefetch.
+        self.dataset_size = 4000
         self.batch_size = 64
         self.feature_dim = 1024
-        self.preprocess_steps = 8
+        self.preprocess_steps = 16
         self._data_iter: Optional[Iterator] = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch_size),

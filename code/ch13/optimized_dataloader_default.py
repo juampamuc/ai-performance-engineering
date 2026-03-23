@@ -60,11 +60,12 @@ class OptimizedDataloaderTunedBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.dataloader: Optional[DataLoader] = None
         self.optimizer = None
         self.criterion = None
-        # Larger dataset/batch to amplify the benefit of pinned workers/prefetch.
-        self.dataset_size = 1000
+        # Heavier preprocessing and a larger resident dataset amplify the
+        # benefit of pinned workers, prefetch, and persistent worker reuse.
+        self.dataset_size = 4000
         self.batch_size = 64
         self.feature_dim = 1024
-        self.preprocess_steps = 8
+        self.preprocess_steps = 16
         self._data_iter: Optional[Iterator] = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch_size),

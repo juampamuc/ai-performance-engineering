@@ -41,7 +41,7 @@ class OptimizedTritonPersistentBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.b = None
         self._output_buffer = None
 
-        self.batch_size = 32
+        self.batch_size = 64
         self.M = 256
         self.N = 256
         self.K = 256
@@ -156,4 +156,3 @@ class OptimizedTritonPersistentBenchmark(VerificationPayloadMixin, BaseBenchmark
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedTritonPersistentBenchmark()
-

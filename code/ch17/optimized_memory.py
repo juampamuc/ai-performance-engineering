@@ -10,10 +10,10 @@ import torch.nn as nn
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
-BATCH_SIZE = 512
+BATCH_SIZE = 1024
 INPUT_DIM = 2048
 HIDDEN_DIM = 2048
-REPETITIONS = 8
+REPETITIONS = 10
 
 
 class OptimizedMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):

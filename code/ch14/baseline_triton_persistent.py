@@ -120,7 +120,7 @@ class BaselineTritonPersistentBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.a = None
         self.b = None
         self._output_buffer = None
-        self.batch_size = 32  # Many small operations
+        self.batch_size = 64  # More small GEMMs amplifies launch overhead
         self.M = 256
         self.N = 256
         self.K = 256
