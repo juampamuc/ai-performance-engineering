@@ -299,6 +299,7 @@ def _canonicalize_identity_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _canonicalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
     updated = dict(state)
+    updated["allow_portable_expectations_update"] = bool(updated.get("allow_portable_expectations_update", False))
     updated["discovered_targets"] = [_canonicalize_target(target) for target in updated.get("discovered_targets", [])]
     updated["pending_targets"] = [_canonicalize_target(target) for target in updated.get("pending_targets", [])]
     updated["active_target"] = _canonicalize_target(updated.get("active_target"))
@@ -490,6 +491,7 @@ def _initialize_state(
     suite_timeout: int,
     gpu_sm_clock_mhz: int,
     gpu_mem_clock_mhz: int,
+    allow_portable_expectations_update: bool,
 ) -> Dict[str, Any]:
     return {
         "created_at": _utc_now_iso(),
@@ -501,6 +503,7 @@ def _initialize_state(
         "tolerance_relative": RELATIVE_TOLERANCE,
         "tolerance_absolute": ABSOLUTE_TOLERANCE,
         "validity_profile": "portable",
+        "allow_portable_expectations_update": bool(allow_portable_expectations_update),
         "gpu_sm_clock_mhz": gpu_sm_clock_mhz,
         "gpu_mem_clock_mhz": gpu_mem_clock_mhz,
         "run_root": str(run_root),
@@ -789,6 +792,7 @@ def _write_eligible_expectation(
     bench: Dict[str, Any],
     entry: ExpectationEntry,
     hardware_key: str,
+    allow_portable_expectations_update: bool,
 ) -> Tuple[str, List[str], Dict[str, Any]]:
     target_root = target.split(":", 1)[0]
     chapter_dir = repo_root / target_root
@@ -805,8 +809,12 @@ def _write_eligible_expectation(
         "expectation_path": str(store.path),
         "new_score": new_score,
         "goal": str(entry.optimization_goal or "speed"),
+        "allow_portable_expectations_update": bool(allow_portable_expectations_update),
     }
     reasons: List[str] = []
+    if not allow_portable_expectations_update:
+        reasons.append("portable_expectation_write_not_allowed")
+        return "queued", reasons, details
     if existing_entry is None:
         reasons.append("missing_expectation")
     else:
@@ -947,6 +955,11 @@ def _parse_args() -> argparse.Namespace:
     def _add_queue_args(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument("--run-root", type=Path, default=None, help="Base directory for per-target run artifacts.")
         subparser.add_argument("--queue-root", type=Path, default=None, help="Directory for queue state/log files.")
+        subparser.add_argument(
+            "--allow-portable-expectations-update",
+            action="store_true",
+            help="Allow this portable rerun queue to write expectation files when eligible.",
+        )
 
     def _add_target_args(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument("--target", dest="targets", action="append", default=[], help="Specific target to queue (repeatable).")
@@ -1194,6 +1207,7 @@ def _run_target(
                 bench=bench,
                 entry=entry,
                 hardware_key=hardware_key,
+                allow_portable_expectations_update=bool(state.get("allow_portable_expectations_update", False)),
             )
             bench_extra.update(details)
             bench_extra["best_optimization_file"] = best_opt.get("file")
@@ -1272,6 +1286,7 @@ def _command_start(args: argparse.Namespace) -> int:
                 suite_timeout=args.suite_timeout,
                 gpu_sm_clock_mhz=args.gpu_sm_clock_mhz,
                 gpu_mem_clock_mhz=args.gpu_mem_clock_mhz,
+                allow_portable_expectations_update=args.allow_portable_expectations_update,
             )
         else:
             state["run_root"] = str(run_root)
@@ -1280,6 +1295,7 @@ def _command_start(args: argparse.Namespace) -> int:
             state["suite_timeout"] = args.suite_timeout
             state["gpu_sm_clock_mhz"] = args.gpu_sm_clock_mhz
             state["gpu_mem_clock_mhz"] = args.gpu_mem_clock_mhz
+        state["allow_portable_expectations_update"] = bool(args.allow_portable_expectations_update)
 
         added = _queue_from_args(repo_root, state, args)
         state["stop_requested"] = False
@@ -1340,7 +1356,9 @@ def _command_enqueue(args: argparse.Namespace) -> int:
                 suite_timeout=0,
                 gpu_sm_clock_mhz=1965,
                 gpu_mem_clock_mhz=3996,
+                allow_portable_expectations_update=args.allow_portable_expectations_update,
             )
+        state["allow_portable_expectations_update"] = bool(args.allow_portable_expectations_update)
         added = _queue_from_args(repo_root, state, args)
         _persist_state(paths, state)
         paths["targets"].write_text("".join(f"{target}\n" for target in state.get("discovered_targets", [])), encoding="utf-8")
@@ -1370,7 +1388,9 @@ def _command_retry_problems(args: argparse.Namespace) -> int:
                 suite_timeout=0,
                 gpu_sm_clock_mhz=1965,
                 gpu_mem_clock_mhz=3996,
+                allow_portable_expectations_update=args.allow_portable_expectations_update,
             )
+        state["allow_portable_expectations_update"] = bool(args.allow_portable_expectations_update)
         added = _enqueue_targets(state, targets, force_rerun=True)
         _persist_state(paths, state)
         pending_count = len(state.get("pending_targets", []))
@@ -1407,6 +1427,7 @@ def _command_status(args: argparse.Namespace) -> int:
             "profile": state.get("profile"),
             "suite_timeout": state.get("suite_timeout"),
             "hardware_key": state.get("hardware_key"),
+            "allow_portable_expectations_update": bool(state.get("allow_portable_expectations_update", False)),
             "updated_at": state.get("updated_at"),
         }
     finally:
@@ -1451,6 +1472,7 @@ def _command_run_worker(args: argparse.Namespace) -> int:
                 suite_timeout=0,
                 gpu_sm_clock_mhz=1965,
                 gpu_mem_clock_mhz=3996,
+                allow_portable_expectations_update=False,
             )
         state["run_root"] = str(run_root)
         state["queue_root"] = str(queue_root)

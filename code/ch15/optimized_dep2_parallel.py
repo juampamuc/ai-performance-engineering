@@ -43,8 +43,10 @@ class OptimizedDep2ParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         try:
             self._compiled_fn = torch.compile(_run, mode="max-autotune")
-        except Exception:
-            self._compiled_fn = _run
+        except Exception as exc:
+            raise RuntimeError(
+                f"FAIL FAST: torch.compile failed for optimized_dep2_parallel ({type(exc).__name__}: {exc})"
+            ) from exc
 
         with torch.inference_mode():
             _ = self._compiled_fn()

@@ -1,7 +1,7 @@
 # Chapter 1 - Performance Fundamentals
 
 ## Summary
-Establishes the baseline benchmarking discipline with a simple training-loop goodput benchmark and a small CUDA GEMM case study. The goal is to ground later optimizations in repeatable measurement, equivalent workloads, and verifiable outputs.
+Establishes the baseline benchmarking discipline with a simple training-loop goodput benchmark and a small CUDA GEMM case study. The goal is to ground later optimizations in repeatable measurement, equivalent workloads, and verifiable outputs. The repo chapter intentionally blends the book's introductory methodology material with an early hands-on kernel case study so the harness contract is concrete from the start.
 
 ## Problem
 Chapter 1 sets the measurement contract for the rest of the repo. The useful question here is not "can I make something faster?" but "can I show a repeatable before/after delta without changing the workload or hiding correctness problems?"

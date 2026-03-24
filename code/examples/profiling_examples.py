@@ -7,6 +7,7 @@ Demonstrates how to use the profiling tools for performance analysis.
 
 import torch
 import torch.nn as nn
+from pathlib import Path
 
 
 # =============================================================================

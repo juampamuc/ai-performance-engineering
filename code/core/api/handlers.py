@@ -652,8 +652,10 @@ def ai_explain(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def ai_tools(_: Dict[str, Any]) -> Dict[str, Any]:
+    from core.api.registry import get_dashboard_mcp_tools
     from mcp.mcp_server import TOOLS
 
+    allowed_tools = set(get_dashboard_mcp_tools())
     categories = {
         "gpu": [],
         "system": [],
@@ -757,6 +759,8 @@ def ai_tools(_: Dict[str, Any]) -> Dict[str, Any]:
 
     tools_list: List[Dict[str, Any]] = []
     for name, tool_def in TOOLS.items():
+        if name not in allowed_tools:
+            continue
         category = tool_to_category.get(name, "other")
         tools_list.append(
             {
@@ -782,8 +786,11 @@ def ai_execute(params: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(tool_params, dict):
         raise ValueError("params must be an object")
 
+    from core.api.registry import get_dashboard_mcp_tools
     from mcp.mcp_server import HANDLERS
 
+    if tool_name not in set(get_dashboard_mcp_tools()):
+        raise ValueError(f"Tool '{tool_name}' is not exposed by the dashboard API")
     if tool_name not in HANDLERS:
         raise ValueError(f"Tool '{tool_name}' not found")
     result = HANDLERS[tool_name](tool_params)

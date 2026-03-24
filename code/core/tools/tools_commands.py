@@ -124,6 +124,12 @@ TOOLS: Dict[str, ToolSpec] = {
         script_path=REPO_ROOT / "ch15" / "moe_validation" / "moe_validation.py",
         description="Sweep MoE routing guardrails and report overflow/Gini/entropy + throughput.",
     ),
+    "ch04-nixl-tier-handoff": ToolSpec(
+        name="ch04-nixl-tier-handoff",
+        script_path=REPO_ROOT / "ch04" / "nixl_tier_handoff_tool.py",
+        module_name="ch04.nixl_tier_handoff_tool",
+        description="Run the Chapter 4 NIXL-style tier-handoff probe/compare utility.",
+    ),
     "kv-cache-math": ToolSpec(
         name="kv-cache-math",
         script_path=REPO_ROOT / "ch15" / "kv_cache_management_math.py",
@@ -154,6 +160,18 @@ TOOLS: Dict[str, ToolSpec] = {
         script_path=REPO_ROOT / "ch19" / "fp8_calibration_free_tool.py",
         description="Run the calibration-free FP8 serving utility (chapter tool; not a benchmark pair).",
     ),
+    "ch19-adaptive-parallelism": ToolSpec(
+        name="ch19-adaptive-parallelism",
+        script_path=REPO_ROOT / "ch19" / "adaptive_parallelism_strategy.py",
+        module_name="ch19.adaptive_parallelism_strategy",
+        description="Run the Chapter 19 adaptive parallelism routing utility.",
+    ),
+    "ch19-dynamic-precision": ToolSpec(
+        name="ch19-dynamic-precision",
+        script_path=REPO_ROOT / "ch19" / "dynamic_precision_switching.py",
+        module_name="ch19.dynamic_precision_switching",
+        description="Run the Chapter 19 dynamic precision switching utility.",
+    ),
     "kernel-verification": ToolSpec(
         name="kernel-verification",
         script_path=REPO_ROOT / "ch20" / "kernel_verification_tool.py",
@@ -183,6 +201,12 @@ TOOLS: Dict[str, ToolSpec] = {
         script_path=REPO_ROOT / "ch20" / "proofwright_verify_tool.py",
         module_name="ch20.proofwright_verify_tool",
         description="Run Chapter 20 ProofWright verification utility (tool; not a benchmark pair).",
+    ),
+    "ch20-ai-kernel-generator": ToolSpec(
+        name="ch20-ai-kernel-generator",
+        script_path=REPO_ROOT / "ch20" / "ai_kernel_generator.py",
+        module_name="ch20.ai_kernel_generator",
+        description="Run the Chapter 20 AI-assisted FlexAttention kernel generator utility.",
     ),
 }
 

@@ -1,10 +1,10 @@
-# Chapter 19 - Low-Precision Training & Memory Systems
+# Chapter 19 - Dynamic & Adaptive Inference Precision/Memory Systems
 
 ## Summary
-Explores NVFP4/FP8 workflows, KV-cache quantization, memory double buffering, and adaptive allocators so low-precision experiments remain numerically safe while squeezing every byte of HBM.
+Explores dynamic precision, KV-cache quantization, memory double buffering, and adaptive allocators so inference-oriented low-precision experiments stay numerically safe while squeezing every byte of HBM.
 
 ## Problem
-Chapter 19 is where low-precision and memory-system ideas have to prove they are more than paper wins. The useful question is not "can we quantize or double-buffer this?" but "which precision and memory changes improve the real workload enough to justify the added complexity?"
+Chapter 19 is where adaptive precision and memory-system ideas have to prove they are more than paper wins. The useful question is not "can we quantize or double-buffer this?" but "which runtime precision and memory changes improve the real workload enough to justify the added complexity?"
 
 ## Baseline Path
 - higher-cost cache, precision, and memory-management paths
@@ -46,6 +46,8 @@ python -m ch19.compare
 python -m cli.aisp bench list-targets --chapter ch19
 python -m cli.aisp bench run --targets ch19 --profile minimal
 python -m cli.aisp bench run --targets ch19:mxfp8_moe --profile deep_dive --single-gpu
+python -m cli.aisp tools ch19-adaptive-parallelism
+python -m cli.aisp tools ch19-dynamic-precision -- --help
 ```
 
 ## Learning Goals

@@ -79,9 +79,12 @@ class NVFP4TRTLLMBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 outputs = self._trt_runner.generate(self.inputs)  # type: ignore[attr-defined]
                 try:
                     first = outputs[0] if isinstance(outputs, (list, tuple)) else outputs
-                    self.output = first if isinstance(first, torch.Tensor) else torch.as_tensor(first)
-                except Exception:
-                    self.output = torch.tensor([float(len(outputs))], device=self.device)
+                    self.output = first if isinstance(first, torch.Tensor) else torch.as_tensor(first, device=self.device)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"FAIL FAST: TRT-LLM generate returned an unsupported output payload "
+                        f"({type(exc).__name__}: {exc})"
+                    ) from exc
             if self.output is None:
                 raise RuntimeError("TRT-LLM generate did not produce output")
             return {}
@@ -94,8 +97,11 @@ class NVFP4TRTLLMBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 from transformer_engine.pytorch import fp8_autocast  # type: ignore
                 with fp8_autocast():
                     self.output = self.linear(self.inputs)
-            except Exception:
-                self.output = self.linear(self.inputs)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"FAIL FAST: Transformer Engine FP8 path failed in nvfp4_trtllm_tool "
+                    f"({type(exc).__name__}: {exc})"
+                ) from exc
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output")
         return {}

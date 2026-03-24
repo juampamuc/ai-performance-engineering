@@ -1,7 +1,7 @@
 # Chapter 12 - CUDA Graphs & Dynamic Workloads
 
 ## Summary
-Covers modern CUDA Graph capabilities-conditional capture, graph memory tuning, dynamic parallelism, and work queues-to keep irregular workloads performant without per-launch overhead.
+Covers modern CUDA Graph capabilities-conditional capture, graph memory tuning, dynamic parallelism, and work queues-to keep irregular workloads performant without per-launch overhead. The current repo chapter emphasizes the single-GPU graph/work-queue side of the manuscript; the larger multi-GPU NCCL/NVSHMEM orchestration arc is only partially represented here.
 
 ## Problem
 Chapter 12 is where launch overhead and dynamic work management have to justify themselves with measured wins. The useful question is not "can we capture a graph?" but "which graph or dynamic-work techniques actually reduce the real runtime once correctness and workload shape stay fixed?"

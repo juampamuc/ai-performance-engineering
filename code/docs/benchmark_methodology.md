@@ -7,12 +7,12 @@ This document is that contract.
 
 Use it with:
 
-- [`templates/performance_intake.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_intake.yaml) for KPIs, constraints, and the variable under test.
-- [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_workload_spec.yaml) for the frozen workload definition and measurement policy.
-- [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) for the declarative `BenchmarkRun` contract.
-- [`docs/performance_warehouse.md`](/home/cfregly/ai-performance-engineering/code/docs/performance_warehouse.md) and [`templates/performance_warehouse_contract.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_warehouse_contract.yaml) for the raw-versus-curated warehouse design, telemetry joins, retention tiers, and lineage policy.
-- [`docs/perf_intake_and_triage.md`](/home/cfregly/ai-performance-engineering/code/docs/perf_intake_and_triage.md) for the fast intake + first-pass collection flow.
-- [`cluster/docs/kubernetes_benchmark_service.md`](/home/cfregly/ai-performance-engineering/code/cluster/docs/kubernetes_benchmark_service.md) and [`cluster/configs/benchmarkrun-crd.yaml`](/home/cfregly/ai-performance-engineering/code/cluster/configs/benchmarkrun-crd.yaml) for the Kubernetes-native service direction already being sketched in this repo.
+- [`templates/performance_intake.yaml`](../templates/performance_intake.yaml) for KPIs, constraints, and the variable under test.
+- [`templates/benchmark_workload_spec.yaml`](../templates/benchmark_workload_spec.yaml) for the frozen workload definition and measurement policy.
+- [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml) for the declarative `BenchmarkRun` contract.
+- [`docs/performance_warehouse.md`](./performance_warehouse.md) and [`templates/performance_warehouse_contract.yaml`](../templates/performance_warehouse_contract.yaml) for the raw-versus-curated warehouse design, telemetry joins, retention tiers, and lineage policy.
+- [`docs/perf_intake_and_triage.md`](./perf_intake_and_triage.md) for the fast intake + first-pass collection flow.
+- [`cluster/docs/kubernetes_benchmark_service.md`](../cluster/docs/kubernetes_benchmark_service.md) and [`cluster/configs/benchmarkrun-crd.yaml`](../cluster/configs/benchmarkrun-crd.yaml) for the Kubernetes-native service direction already being sketched in this repo.
 
 ## The Three-Layer Stack
 Use all three layers together. Do not skip straight to end-to-end numbers and then guess at root cause.
@@ -20,7 +20,7 @@ Use all three layers together. Do not skip straight to end-to-end numbers and th
 | Layer | Goal | Typical repo entrypoints | Questions it answers |
 | --- | --- | --- | --- |
 | Microbenchmarks | Isolate subsystem limits and regressions. | `python -m cli.aisp benchmark memory|cache|roofline|pcie|tc|disk|nccl|p2p|speed`, `cluster/scripts/run_nccl_all_reduce.sh`, `cluster/scripts/run_fio_bench.sh`, `cluster/scripts/run_gemm_bench.sh` | Is the problem compute, communication, storage, or a specific kernel/runtime path? |
-| Component benchmarks | Measure serving, dataloaders, job startup, and scheduler paths with pinned workload semantics. | `python -m cli.aisp bench run --targets ... --profile minimal|deep_dive`, [`core/scripts/profiling/perf_triage_bundle.sh`](/home/cfregly/ai-performance-engineering/code/core/scripts/profiling/perf_triage_bundle.sh), `cluster/scripts/run_vllm_bench.sh`, `cluster/scripts/run_torchrun_transformer_train_step.sh` | Which subsystem regresses the user-visible path? |
+| Component benchmarks | Measure serving, dataloaders, job startup, and scheduler paths with pinned workload semantics. | `python -m cli.aisp bench run --targets ... --profile minimal|deep_dive`, [`core/scripts/profiling/perf_triage_bundle.sh`](../core/scripts/profiling/perf_triage_bundle.sh), `cluster/scripts/run_vllm_bench.sh`, `cluster/scripts/run_torchrun_transformer_train_step.sh` | Which subsystem regresses the user-visible path? |
 | End-to-end benchmarks | Validate realistic workflows after lower layers are understood. | `python -m cli.aisp bench run-tier1 --single-gpu --profile minimal`, `python -m cli.aisp cluster common-eval --preset common-answer-fast|modern-llm`, end-to-end labs under `labs/real_world_models` | What does the user or trainer actually feel after all interactions and queueing are included? |
 
 The methodology program should model all three layers even if a single `BenchmarkRun` only enables a subset.
@@ -36,7 +36,7 @@ Before comparing anything, freeze the workload definition:
 - same dataset or prompt corpus
 - same correctness policy
 
-The human-editable freeze contract lives in [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_workload_spec.yaml). The declarative/operator-facing version lives in [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) and can be checked with [`core/scripts/validate_benchmark_run.py`](/home/cfregly/ai-performance-engineering/code/core/scripts/validate_benchmark_run.py).
+The human-editable freeze contract lives in [`templates/benchmark_workload_spec.yaml`](../templates/benchmark_workload_spec.yaml). The declarative/operator-facing version lives in [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml) and can be checked with [`core/scripts/validate_benchmark_run.py`](../core/scripts/validate_benchmark_run.py).
 
 ## Comparison Rule
 Compare one variable at a time. Valid candidates include:
@@ -181,9 +181,9 @@ Both modes must record enough cluster context to explain outliers later.
 ## Declarative BenchmarkRun
 The repo now exposes a portable `BenchmarkRun` spec:
 
-- Template: [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml)
-- Validator: [`core/scripts/validate_benchmark_run.py`](/home/cfregly/ai-performance-engineering/code/core/scripts/validate_benchmark_run.py)
-- Kubernetes CRD: [`cluster/configs/benchmarkrun-crd.yaml`](/home/cfregly/ai-performance-engineering/code/cluster/configs/benchmarkrun-crd.yaml)
+- Template: [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml)
+- Validator: [`core/scripts/validate_benchmark_run.py`](../core/scripts/validate_benchmark_run.py)
+- Kubernetes CRD: [`cluster/configs/benchmarkrun-crd.yaml`](../cluster/configs/benchmarkrun-crd.yaml)
 
 Validate a spec locally:
 
@@ -212,15 +212,15 @@ Use the declarative spec to choose the right execution path instead of inventing
 | Need | Repo command |
 | --- | --- |
 | Fast benchmark health signal | `python -m cli.aisp bench run-tier1 --single-gpu --profile minimal` |
-| Performance intake + quick instrumentation bundle | follow [`docs/perf_intake_and_triage.md`](/home/cfregly/ai-performance-engineering/code/docs/perf_intake_and_triage.md) |
+| Performance intake + quick instrumentation bundle | follow [`docs/perf_intake_and_triage.md`](./perf_intake_and_triage.md) |
 | Common cluster evaluation | `python -m cli.aisp cluster common-eval --preset common-answer-fast` |
 | Full modern LLM cluster evaluation | `python -m cli.aisp cluster common-eval --preset modern-llm` |
 | Multi-node contract validation before workloads | `python -m cli.aisp cluster common-eval --preset multinode-readiness` |
 
 ## Kubernetes Service Design
-The declarative service design requested in the benchmark methodology lives in [`cluster/docs/kubernetes_benchmark_service.md`](/home/cfregly/ai-performance-engineering/code/cluster/docs/kubernetes_benchmark_service.md).
+The declarative service design requested in the benchmark methodology lives in [`cluster/docs/kubernetes_benchmark_service.md`](../cluster/docs/kubernetes_benchmark_service.md).
 
-The warehouse design that backs those runs lives in [`docs/performance_warehouse.md`](/home/cfregly/ai-performance-engineering/code/docs/performance_warehouse.md).
+The warehouse design that backs those runs lives in [`docs/performance_warehouse.md`](./performance_warehouse.md).
 
 Thin interface surfaces for these contracts are exposed through:
 

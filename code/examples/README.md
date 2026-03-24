@@ -8,6 +8,7 @@ This directory contains example scripts demonstrating the usage of the AI Perfor
 |------|-------------|
 | `optimize_examples.py` | Auto-optimizer usage examples |
 | `profiling_examples.py` | GPU profiling suite examples |
+| `mcp_client_example.py` | MCP client lifecycle and tool-call examples |
 | `optimize_config.yaml` | Sample configuration file |
 
 ## Running Examples
@@ -35,6 +36,13 @@ python examples/profiling_examples.py --example 6  # torch.compile
 
 # Run all examples
 python examples/profiling_examples.py --all
+```
+
+### MCP Client Example
+
+```bash
+# Run the end-to-end MCP client examples
+python examples/mcp_client_example.py
 ```
 
 ## Configuration

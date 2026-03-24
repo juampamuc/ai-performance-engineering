@@ -270,9 +270,11 @@ class LayoutPagedAttnBase(VerificationPayloadMixin, BaseBenchmark):
         _, flex_attention = _require_flex_attention()
         try:
             compiled = torch.compile(flex_attention, mode="max-autotune")
-        except Exception:
-            self._flex_compiled = False
-            return flex_attention
+        except Exception as exc:
+            raise RuntimeError(
+                f"FAIL FAST: torch.compile(flex_attention) failed for paged attention sparse path "
+                f"({type(exc).__name__}: {exc})"
+            ) from exc
         self._flex_compiled = True
         return compiled
 

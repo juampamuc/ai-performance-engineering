@@ -401,8 +401,10 @@
 - Postmortem (parity drift): CLI/MCP/docs/dashboard evolved independently, defaults diverged, and no enforced single-source catalog or regeneration step existed. Prevention: keep a single catalog, regenerate docs, and run parity tests whenever tool surfaces change.
 
 ## Test Realism (CRITICAL)
-- Tests MUST NOT use `precheck_only`, `dry_run`, `estimate_only`, or any other short-circuit/preview mode.
-- Tests MUST NOT use mocks, stubs, `monkeypatch`, or similar; tests must execute real code paths end-to-end.
+- Tests MUST NOT use `precheck_only`, `dry_run`, `estimate_only`, or any other short-circuit/preview mode for benchmark, profiling, or runtime-behavior assertions.
+- Benchmark-truth tests MUST execute real repo code paths end-to-end. Do not use mocks, stubs, `monkeypatch`, or similar to fake successful benchmark execution, profiler captures, verification outcomes, GPU capability, or runtime-validity success.
+- Narrow control-plane/orchestration tests MAY use `monkeypatch`/`patch` for environment variables, subprocess seams, clocks, temp roots, process inspection, or external-tool availability when the assertion is about state transitions, diagnostics, payload shaping, or error handling rather than benchmark truth.
+- When a surface area uses `monkeypatch`/`patch` for orchestration coverage, keep at least one real-path test for that same surface area (subprocess, file-backed, harness, or GPU-backed as appropriate), and prefer the real-path option whenever feasible.
 - Assume CI has real network access, GPUs, and Nsight tools (`nsys`, `ncu`) available; tests should validate real behavior accordingly.
 
 ## Achieve MAXIMUM speedup when benchmarking baseline_ versus optimized_ variants when possible

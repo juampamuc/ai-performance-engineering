@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Dict, List
 
 
+PERPLEXITY_EVAL_MODULE = "ch16.perplexity_eval"
+
+
 def run_perplexity_eval(
     dataset: Path,
     dtype: str,
@@ -29,11 +32,13 @@ def run_perplexity_eval(
     try:
         cmd = [
             sys.executable,
-            "ch16/perplexity_eval.py",
+            "-m",
+            PERPLEXITY_EVAL_MODULE,
             str(dataset),
             "--seq-len", str(seq_len),
             "--stride", str(stride),
             "--dtype", dtype,
+            "--fp8-mode", fp8_mode,
             "--output-json", str(output_json)
         ]
         
@@ -85,7 +90,7 @@ def compare_precisions(
         
         # Map precision to dtype and fp8_mode
         if precision == "fp32":
-            dtype = "float16"  # Will use float32 in model
+            dtype = "float32"
             fp8_mode = "none"
         elif precision == "fp16":
             dtype = "float16"
@@ -95,7 +100,7 @@ def compare_precisions(
             fp8_mode = "none"
         elif precision == "fp8":
             dtype = "float16"
-            fp8_mode = "transformer-engine"
+            fp8_mode = "auto"
         else:
             print(f"  Unknown precision: {precision}, skipping")
             continue

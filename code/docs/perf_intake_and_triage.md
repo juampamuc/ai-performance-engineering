@@ -2,20 +2,20 @@
 
 This repo already collects benchmark artifacts. The missing step for most investigations is turning those artifacts into a repeatable method instead of an ad hoc debug session.
 
-Use this doc with [`docs/benchmark_methodology.md`](/home/cfregly/ai-performance-engineering/code/docs/benchmark_methodology.md). The methodology tells you which benchmark layer to run and what evidence is required. This doc is the fast intake + first-pass collection path.
+Use this doc with [`docs/benchmark_methodology.md`](./benchmark_methodology.md). The methodology tells you which benchmark layer to run and what evidence is required. This doc is the fast intake + first-pass collection path.
 
 ## Quick Actions
-- Fill the intake in [`templates/performance_intake.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_intake.yaml).
-- Freeze the workload in [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_workload_spec.yaml).
-- If the run needs to survive CI, scheduling automation, or external publication review, copy [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) and validate it with `python -m core.scripts.validate_benchmark_run --file <your-file>.yaml`.
+- Fill the intake in [`templates/performance_intake.yaml`](../templates/performance_intake.yaml).
+- Freeze the workload in [`templates/benchmark_workload_spec.yaml`](../templates/benchmark_workload_spec.yaml).
+- If the run needs to survive CI, scheduling automation, or external publication review, copy [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml) and validate it with `python -m core.scripts.validate_benchmark_run --file <your-file>.yaml`.
 - Choose the benchmark layer: `micro`, `component`, or `end_to_end`.
 - Run the triage bundle to gather a clean baseline: `core/scripts/profiling/perf_triage_bundle.sh --output-root ./artifacts/runs --tag baseline -- <your command>`.
 - Pick 2-3 experiments that change one variable at a time and rerun with the same workload spec.
 
 ## One-Page Intake
-Copy [`templates/performance_intake.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_intake.yaml) and fill it for the workload under test. The fields cover KPIs, workload shape, SLOs, benchmark layer, comparison axis, current baseline, and guardrails.
+Copy [`templates/performance_intake.yaml`](../templates/performance_intake.yaml) and fill it for the workload under test. The fields cover KPIs, workload shape, SLOs, benchmark layer, comparison axis, current baseline, and guardrails.
 
-Then copy [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_workload_spec.yaml) and freeze the actual benchmark contract:
+Then copy [`templates/benchmark_workload_spec.yaml`](../templates/benchmark_workload_spec.yaml) and freeze the actual benchmark contract:
 - model and weights source
 - sequence-length mix
 - precision policy
@@ -26,7 +26,7 @@ Then copy [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performanc
 - topology and scheduler path
 - outlier/confidence policy
 
-If the result is going to be scheduled declaratively or cited outside engineering, also copy [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml). That file adds the layer stack, distributed diagnosis policy, provenance requirements, and publication-vs-realism execution mode.
+If the result is going to be scheduled declaratively or cited outside engineering, also copy [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml). That file adds the layer stack, distributed diagnosis policy, provenance requirements, and publication-vs-realism execution mode.
 
 Do not compare runs until the intake and workload spec are filled. Do not publish or automate a run until the `BenchmarkRun` file validates cleanly.
 

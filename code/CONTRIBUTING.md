@@ -364,10 +364,10 @@ python core/scripts/update_custom_metrics.py --validate
 ### Benchmark Comparison
 
 ```bash
-# Compare baseline vs optimized
-python -m cli.aisp bench compare \
-    ch07.baseline_memory_access \
-    ch07.optimized_memory_access
+# Compare two benchmark result JSON files
+python -m cli.aisp bench compare-runs \
+    --baseline artifacts/runs/baseline/benchmark_test_results.json \
+    --candidate artifacts/runs/candidate/benchmark_test_results.json
 ```
 
 ### Profiling

@@ -10,10 +10,10 @@ The warehouse exists to answer two questions quickly and credibly:
 
 Use this with:
 
-- [`docs/benchmark_methodology.md`](/home/cfregly/ai-performance-engineering/code/docs/benchmark_methodology.md) for the run methodology and evidence policy
-- [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) for the declarative run contract
-- [`templates/performance_warehouse_contract.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_warehouse_contract.yaml) for a concrete schema and retention template
-- [`cluster/docs/kubernetes_benchmark_service.md`](/home/cfregly/ai-performance-engineering/code/cluster/docs/kubernetes_benchmark_service.md) for the Kubernetes-native control loop
+- [`docs/benchmark_methodology.md`](./benchmark_methodology.md) for the run methodology and evidence policy
+- [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml) for the declarative run contract
+- [`templates/performance_warehouse_contract.yaml`](../templates/performance_warehouse_contract.yaml) for a concrete schema and retention template
+- [`cluster/docs/kubernetes_benchmark_service.md`](../cluster/docs/kubernetes_benchmark_service.md) for the Kubernetes-native control loop
 
 ## Product Stance
 Performance reporting is split into two separate acts:
@@ -231,10 +231,10 @@ The same evidence should be rendered differently for each audience.
 ## Repo Mapping
 The repo now has the pieces for this contract even if it does not yet ship the full production warehouse:
 
-- [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) carries warehouse sinks and observability joins
-- [`core/scripts/validate_benchmark_run.py`](/home/cfregly/ai-performance-engineering/code/core/scripts/validate_benchmark_run.py) enforces the minimum contract locally and in CI
-- [`cluster/docs/kubernetes_benchmark_service.md`](/home/cfregly/ai-performance-engineering/code/cluster/docs/kubernetes_benchmark_service.md) describes how a future operator would populate the warehouse
-- [`templates/performance_warehouse_contract.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_warehouse_contract.yaml) is the concrete schema and retention template
+- [`templates/benchmark_run.yaml`](../templates/benchmark_run.yaml) carries warehouse sinks and observability joins
+- [`core/scripts/validate_benchmark_run.py`](../core/scripts/validate_benchmark_run.py) enforces the minimum contract locally and in CI
+- [`cluster/docs/kubernetes_benchmark_service.md`](../cluster/docs/kubernetes_benchmark_service.md) describes how a future operator would populate the warehouse
+- [`templates/performance_warehouse_contract.yaml`](../templates/performance_warehouse_contract.yaml) is the concrete schema and retention template
 
 Thin interface surfaces are also exposed now:
 

@@ -1258,28 +1258,6 @@ def get_output_tolerance(benchmark: Any) -> Optional[ToleranceSpec]:
     )
 
 
-def get_equivalence_fn(benchmark: Any) -> Optional[Callable[[torch.Tensor, torch.Tensor], bool]]:
-    """Get custom equivalence function from benchmark.
-    
-    Benchmarks producing semantically equivalent but bitwise different outputs
-    can implement get_equivalence_fn() to provide a custom comparator.
-    
-    Args:
-        benchmark: Benchmark instance
-        
-    Returns:
-        Comparator function if provided, None otherwise
-    """
-    if hasattr(benchmark, "get_equivalence_fn"):
-        try:
-            fn = benchmark.get_equivalence_fn()
-            if callable(fn):
-                return fn
-        except Exception:
-            pass
-    return None
-
-
 def get_verify_output(benchmark: Any) -> Optional[torch.Tensor]:
     """Get verification output from benchmark.
     

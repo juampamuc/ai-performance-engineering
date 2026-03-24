@@ -149,7 +149,7 @@ _DEFAULT_TARGETS: TargetsDict = {
         }
     },
     "ch17": {
-        "description": "Dynamic Routing",
+        "description": "Disaggregated Prefill/Decode and Routing",
         "metrics": {
             # Routing overhead: target < 1.0 ms (book/ch17.md:119)
             "routing_overhead_ms": {"min": 0, "target": 1.0, "unit": "ms", "lower_is_better": True},
@@ -164,18 +164,18 @@ _DEFAULT_TARGETS: TargetsDict = {
         }
     },
     "ch18": {
-        "description": "Attention Mechanisms",
+        "description": "Attention Optimization and Decode Kernels",
         "metrics": {}
     },
     "ch19": {
-        "description": "Advanced Training",
+        "description": "Dynamic and Adaptive Inference",
         "metrics": {
             "fp8_training_speedup": {"min": 1.5, "target": 2.0, "unit": "x"},
             "memory_reduction_percent": {"min": 30, "target": 50, "unit": "%"},
         }
     },
     "ch20": {
-        "description": "AI Kernel Generator",
+        "description": "AI-Assisted Performance Optimization",
         "metrics": {}
     },
 }

@@ -1,7 +1,7 @@
-# Chapter 17 - Dynamic Routing & Hybrid Serving
+# Chapter 17 - Disaggregated Prefill/Decode & Routing
 
 ## Summary
-Blends router design, disaggregated inference, and profiling discipline so Blackwell clusters can route queries between prefill/decode pools, MoE experts, and pipeline stages without sacrificing utilization.
+Centers the chapter on disaggregated prefill/decode serving, then layers routing and scheduling policies on top so Blackwell clusters can hand work between prefill/decode pools, MoE experts, and pipeline stages without sacrificing utilization.
 
 ## Problem
 Chapter 17 is where routing and disaggregation ideas stop being whiteboard architecture and start paying rent. The useful question is not "can we route dynamically?" but "which router, queueing, and handoff changes actually improve TTFT, TPOT, or throughput once the full prefill/decode path is measured?"

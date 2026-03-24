@@ -52,10 +52,10 @@ Create one small, stable, high-signal benchmark set that becomes the repo’s so
 - `tests/test_tier1_suite.py`
 
 ### Existing Files to Update
-- [core/harness/run_benchmarks.py](/home/cfregly/ai-performance-engineering/code/core/harness/run_benchmarks.py)
-- [cli/aisp.py](/home/cfregly/ai-performance-engineering/code/cli/aisp.py)
-- [core/benchmark/run_manifest.py](/home/cfregly/ai-performance-engineering/code/core/benchmark/run_manifest.py)
-- [README.md](/home/cfregly/ai-performance-engineering/code/README.md)
+- [core/harness/run_benchmarks.py](../core/harness/run_benchmarks.py)
+- [cli/aisp.py](../cli/aisp.py)
+- [core/benchmark/run_manifest.py](../core/benchmark/run_manifest.py)
+- [README.md](../README.md)
 
 ### Proposed Tier-1 Targets
 | Category | Candidate targets | Why |
@@ -97,10 +97,10 @@ Turn benchmark runs into a time series so regressions and improvements are visib
 - `tests/test_benchmark_regression_summary.py`
 
 ### Existing Files to Update
-- [core/benchmark/run_manifest.py](/home/cfregly/ai-performance-engineering/code/core/benchmark/run_manifest.py)
-- [core/analysis/reporting/generator.py](/home/cfregly/ai-performance-engineering/code/core/analysis/reporting/generator.py)
-- [core/analysis/report_generator.py](/home/cfregly/ai-performance-engineering/code/core/analysis/report_generator.py)
-- [core/report_export.py](/home/cfregly/ai-performance-engineering/code/core/report_export.py)
+- [core/benchmark/run_manifest.py](../core/benchmark/run_manifest.py)
+- [core/analysis/reporting/generator.py](../core/analysis/reporting/generator.py)
+- [core/analysis/report_generator.py](../core/analysis/report_generator.py)
+- [core/report_export.py](../core/report_export.py)
 
 ### Artifact Contract
 Write canonical history under:
@@ -131,11 +131,11 @@ Extend the current sync-focused enforcement into broader measurement hygiene che
 - `core/benchmark/antipatterns.py`
 
 ### Existing Files to Update
-- [core/benchmark/contract.py](/home/cfregly/ai-performance-engineering/code/core/benchmark/contract.py)
-- [core/harness/validity_checks.py](/home/cfregly/ai-performance-engineering/code/core/harness/validity_checks.py)
-- [core/harness/benchmark_harness.py](/home/cfregly/ai-performance-engineering/code/core/harness/benchmark_harness.py)
-- [core/scripts/linting/check_benchmarks.py](/home/cfregly/ai-performance-engineering/code/core/scripts/linting/check_benchmarks.py)
-- [core/benchmark/defaults.py](/home/cfregly/ai-performance-engineering/code/core/benchmark/defaults.py)
+- [core/benchmark/contract.py](../core/benchmark/contract.py)
+- [core/harness/validity_checks.py](../core/harness/validity_checks.py)
+- [core/harness/benchmark_harness.py](../core/harness/benchmark_harness.py)
+- [core/scripts/linting/check_benchmarks.py](../core/scripts/linting/check_benchmarks.py)
+- [core/benchmark/defaults.py](../core/benchmark/defaults.py)
 
 ### Checks to Add
 | Anti-pattern | Linter | Runtime |
@@ -182,9 +182,9 @@ Refactor high-duplication families first, not the whole repo at once.
 | Distributed comms | `ch04`, selected cluster/fullstack labs | `distributed_pair.py` |
 
 ### Existing Files to Update
-- [templates/benchmark_compliant.py](/home/cfregly/ai-performance-engineering/code/templates/benchmark_compliant.py)
-- [templates/benchmark_template.py](/home/cfregly/ai-performance-engineering/code/templates/benchmark_template.py)
-- [core/benchmark/examples.py](/home/cfregly/ai-performance-engineering/code/core/benchmark/examples.py)
+- [templates/benchmark_compliant.py](../templates/benchmark_compliant.py)
+- [templates/benchmark_template.py](../templates/benchmark_template.py)
+- [core/benchmark/examples.py](../core/benchmark/examples.py)
 
 ### CI Changes
 - add migration smoke tests for each new base
@@ -203,36 +203,36 @@ Make the top chapters and labs readable as performance case studies instead of c
 Rewrite the top-traffic READMEs first.
 
 ### Priority Targets
-- [README.md](/home/cfregly/ai-performance-engineering/code/README.md)
-- [ch10/README.md](/home/cfregly/ai-performance-engineering/code/ch10/README.md)
-- [ch14/README.md](/home/cfregly/ai-performance-engineering/code/ch14/README.md)
-- [ch18/README.md](/home/cfregly/ai-performance-engineering/code/ch18/README.md)
-- [labs/block_scaling/README.md](/home/cfregly/ai-performance-engineering/code/labs/block_scaling/README.md)
-- [labs/async_input_pipeline/README.md](/home/cfregly/ai-performance-engineering/code/labs/async_input_pipeline/README.md)
-- [labs/blackwell_matmul/README.md](/home/cfregly/ai-performance-engineering/code/labs/blackwell_matmul/README.md)
-- [labs/custom_vs_cublas/README.md](/home/cfregly/ai-performance-engineering/code/labs/custom_vs_cublas/README.md)
-- [labs/cudnn_sdpa_bench/README.md](/home/cfregly/ai-performance-engineering/code/labs/cudnn_sdpa_bench/README.md)
-- [labs/decode_optimization/README.md](/home/cfregly/ai-performance-engineering/code/labs/decode_optimization/README.md)
-- [labs/flashattention4/README.md](/home/cfregly/ai-performance-engineering/code/labs/flashattention4/README.md)
-- [labs/flashattention_gluon/README.md](/home/cfregly/ai-performance-engineering/code/labs/flashattention_gluon/README.md)
-- [labs/flashinfer_attention/README.md](/home/cfregly/ai-performance-engineering/code/labs/flashinfer_attention/README.md)
-- [labs/flexattention/README.md](/home/cfregly/ai-performance-engineering/code/labs/flexattention/README.md)
-- [labs/fullstack_cluster/README.md](/home/cfregly/ai-performance-engineering/code/labs/fullstack_cluster/README.md)
-- [labs/kv_cache_compression/README.md](/home/cfregly/ai-performance-engineering/code/labs/kv_cache_compression/README.md)
-- [labs/kv_optimization/README.md](/home/cfregly/ai-performance-engineering/code/labs/kv_optimization/README.md)
-- [labs/moe_cuda/README.md](/home/cfregly/ai-performance-engineering/code/labs/moe_cuda/README.md)
-- [labs/moe_optimization_journey/README.md](/home/cfregly/ai-performance-engineering/code/labs/moe_optimization_journey/README.md)
-- [labs/nanochat_fullstack/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README.md)
-- [labs/nvfp4_dual_gemm/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_dual_gemm/README.md)
-- [labs/nvfp4_gemm/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_gemm/README.md)
-- [labs/nvfp4_gemv/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_gemv/README.md)
-- [labs/nvfp4_group_gemm/README.md](/home/cfregly/ai-performance-engineering/code/labs/nvfp4_group_gemm/README.md)
-- [labs/occupancy_tuning/README.md](/home/cfregly/ai-performance-engineering/code/labs/occupancy_tuning/README.md)
-- [labs/persistent_decode/README.md](/home/cfregly/ai-performance-engineering/code/labs/persistent_decode/README.md)
-- [labs/real_world_models/README.md](/home/cfregly/ai-performance-engineering/code/labs/real_world_models/README.md)
-- [labs/speculative_decode/README.md](/home/cfregly/ai-performance-engineering/code/labs/speculative_decode/README.md)
-- [labs/train_distributed/README.md](/home/cfregly/ai-performance-engineering/code/labs/train_distributed/README.md)
-- [labs/trtllm_phi_3_5_moe/README.md](/home/cfregly/ai-performance-engineering/code/labs/trtllm_phi_3_5_moe/README.md)
+- [README.md](../README.md)
+- [ch10/README.md](../ch10/README.md)
+- [ch14/README.md](../ch14/README.md)
+- [ch18/README.md](../ch18/README.md)
+- [labs/block_scaling/README.md](../labs/block_scaling/README.md)
+- [labs/async_input_pipeline/README.md](../labs/async_input_pipeline/README.md)
+- [labs/blackwell_matmul/README.md](../labs/blackwell_matmul/README.md)
+- [labs/custom_vs_cublas/README.md](../labs/custom_vs_cublas/README.md)
+- [labs/cudnn_sdpa_bench/README.md](../labs/cudnn_sdpa_bench/README.md)
+- [labs/decode_optimization/README.md](../labs/decode_optimization/README.md)
+- [labs/flashattention4/README.md](../labs/flashattention4/README.md)
+- [labs/flashattention_gluon/README.md](../labs/flashattention_gluon/README.md)
+- [labs/flashinfer_attention/README.md](../labs/flashinfer_attention/README.md)
+- [labs/flexattention/README.md](../labs/flexattention/README.md)
+- [labs/fullstack_cluster/README.md](../labs/fullstack_cluster/README.md)
+- [labs/kv_cache_compression/README.md](../labs/kv_cache_compression/README.md)
+- [labs/kv_optimization/README.md](../labs/kv_optimization/README.md)
+- [labs/moe_cuda/README.md](../labs/moe_cuda/README.md)
+- [labs/moe_optimization_journey/README.md](../labs/moe_optimization_journey/README.md)
+- [labs/nanochat_fullstack/README.md](../labs/nanochat_fullstack/README.md)
+- [labs/nvfp4_dual_gemm/README.md](../labs/nvfp4_dual_gemm/README.md)
+- [labs/nvfp4_gemm/README.md](../labs/nvfp4_gemm/README.md)
+- [labs/nvfp4_gemv/README.md](../labs/nvfp4_gemv/README.md)
+- [labs/nvfp4_group_gemm/README.md](../labs/nvfp4_group_gemm/README.md)
+- [labs/occupancy_tuning/README.md](../labs/occupancy_tuning/README.md)
+- [labs/persistent_decode/README.md](../labs/persistent_decode/README.md)
+- [labs/real_world_models/README.md](../labs/real_world_models/README.md)
+- [labs/speculative_decode/README.md](../labs/speculative_decode/README.md)
+- [labs/train_distributed/README.md](../labs/train_distributed/README.md)
+- [labs/trtllm_phi_3_5_moe/README.md](../labs/trtllm_phi_3_5_moe/README.md)
 
 ### README Template
 Each target README should include:

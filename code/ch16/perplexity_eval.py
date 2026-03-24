@@ -9,7 +9,7 @@ from typing import List
 import torch
 import torch.nn.functional as F
 
-from ch16.gpt_large_benchmark import GPTConfig, GPTModel
+from ch16.gpt_large_benchmark import GPTConfig, GPTModel, transformer_engine_available
 
 
 def load_tokens(path: Path) -> List[int]:
@@ -25,7 +25,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("tokens", type=Path, help="Path to tokenized dataset (space-separated integers)")
     parser.add_argument("--seq-len", type=int, default=512, help="Context length for evaluation")
     parser.add_argument("--stride", type=int, default=256, help="Stride between evaluation windows")
-    parser.add_argument("--dtype", choices=["float16", "bfloat16"], default="float16")
+    parser.add_argument("--dtype", choices=["float32", "float16", "bfloat16"], default="float16")
+    parser.add_argument(
+        "--fp8-mode",
+        choices=["none", "weight-only", "transformer-engine", "auto"],
+        default="none",
+        help="Optional FP8 conversion mode for the GPT model.",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--state-dict", type=Path, help="Optional checkpoint to load (torch.load)")
     parser.add_argument("--output-json", type=Path, help="Optional path to write metrics")
@@ -39,7 +45,15 @@ def main() -> None:
         raise SystemExit("Token file too short for requested sequence length.")
 
     device = torch.device(args.device)
-    dtype = torch.float16 if args.dtype == "float16" else torch.bfloat16
+    dtype_map = {
+        "float32": torch.float32,
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }
+    dtype = dtype_map[args.dtype]
+    resolved_fp8_mode = args.fp8_mode
+    if resolved_fp8_mode == "auto":
+        resolved_fp8_mode = "transformer-engine" if transformer_engine_available() else "weight-only"
 
     config = GPTConfig(
         vocab_size=max(tokens) + 1,
@@ -50,7 +64,7 @@ def main() -> None:
         max_seq_len=args.seq_len,
     )
 
-    model = GPTModel(config, devices=[device], dtype=dtype, fp8_mode="none").to(device)
+    model = GPTModel(config, devices=[device], dtype=dtype, fp8_mode=resolved_fp8_mode).to(device)
     model.eval()
 
     if args.state_dict:
@@ -84,6 +98,9 @@ def main() -> None:
         "tokens_evaluated": total_tokens,
         "sequence_length": args.seq_len,
         "stride": args.stride,
+        "dtype": args.dtype,
+        "fp8_mode_requested": args.fp8_mode,
+        "fp8_mode_effective": resolved_fp8_mode,
     }
 
     print("=== Perplexity Evaluation ===")

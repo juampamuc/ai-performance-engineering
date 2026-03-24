@@ -1,7 +1,7 @@
 # Chapter 11 - Streams & Concurrency
 
 ## Summary
-Explains how to overlap compute, memory, and communication on Blackwell using CUDA streams, ordered sequences, Hyper-Q, warp-specialized pipelines, and adaptive scheduling. The README keeps the legacy target names tied to the actual copy+elementwise overlap workload and runtime-adaptive scheduling story instead of pretending every target is a generic multi-stream demo.
+Explains how to overlap compute, memory, and communication on Blackwell using CUDA streams, ordered sequences, Hyper-Q, warp-specialized pipelines, and adaptive scheduling. The README keeps the legacy target names tied to the actual copy+elementwise overlap workload and runtime-adaptive scheduling story instead of pretending every target is a generic multi-stream demo. CUDA Graph capture and graph-level orchestration continue in the manuscript and repo Chapter 12; this chapter’s runnable surface stays focused on stream/concurrency paths.
 
 ## Problem
 Chapter 11 is where concurrency ideas have to prove they are reducing real idle time instead of just making traces look busier. The useful question is not "can we add streams?" but "which ordering and overlap changes actually improve the measured workload?"

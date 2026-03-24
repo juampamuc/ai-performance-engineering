@@ -60,18 +60,20 @@ engine.ai.ask("Why is my attention kernel slow?")
 
 ```bash
 # System info
-aisp system status
-aisp gpu info
+python -m cli.aisp system status
+python -m cli.aisp gpu info
 
 # Optimization recommendations
-aisp optimize recommend --model-size 70 --gpus 8
+python -m cli.aisp optimize recommend --model-size 70 --gpus 8
 
 # AI questions
-aisp ai ask "Why is my kernel slow?"
+python -m cli.aisp ai ask "Why is my kernel slow?"
 
 # Profiling
-aisp profile nsys python train.py
+python -m cli.aisp profile nsys python train.py
 ```
+
+The command tables below use the installed-console shorthand `aisp ...`. When you are running directly from a repo checkout, the equivalent invocation is `python -m cli.aisp ...`.
 
 ### MCP Tools (for AI assistants)
 

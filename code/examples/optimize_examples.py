@@ -6,6 +6,7 @@ Demonstrates how to use the auto-optimizer to improve GPU code performance.
 """
 import torch
 import torch.nn as nn
+from pathlib import Path
 
 
 # =============================================================================

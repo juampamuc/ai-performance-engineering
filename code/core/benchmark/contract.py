@@ -412,7 +412,6 @@ class BenchmarkContract:
     # Optional methods that enhance verification but have sensible defaults
     RECOMMENDED_METHODS: Set[str] = {
         "get_config",
-        "get_equivalence_fn",  # Returns custom comparator function
         "get_workload_metadata",  # Returns WorkloadMetadata for invariant checking
         "get_verify_inputs",  # Returns input tensor(s) for aliasing detection
     }

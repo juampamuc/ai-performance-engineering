@@ -23,8 +23,10 @@ Usage with bench CLI:
     # Run specific level
     python -m cli.aisp bench run --targets labs/moe_optimization_journey/level0_naive
 
-    # Compare levels
-    python -m cli.aisp bench compare labs/moe_optimization_journey/level0_naive labs/moe_optimization_journey/level7_compiled
+    # Compare two benchmark result JSON files
+    python -m cli.aisp bench compare-runs \
+        --baseline artifacts/runs/level0_naive/benchmark_test_results.json \
+        --candidate artifacts/runs/level7_compiled/benchmark_test_results.json
 """
 
 from dataclasses import dataclass

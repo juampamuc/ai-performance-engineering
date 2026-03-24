@@ -1,7 +1,7 @@
 # Chapter 6 - CUDA Programming Fundamentals
 
 ## Summary
-Moves from Python into CUDA C++: write first kernels, reason about occupancy, control memory layouts, and experiment with ILP, launch bounds, and unified memory on Blackwell devices.
+Moves from Python into CUDA C++: write first kernels, reason about occupancy, control memory layouts, and experiment with ILP, launch bounds, and unified memory on Blackwell devices. The manuscript introduces roofline thinking in this chapter; the repo's deeper roofline tooling lives in later utilities while Chapter 6 keeps the runnable benchmark surface focused on kernel fundamentals.
 
 ## Problem
 Chapter 6 is where kernel mechanics stop being theoretical. The real question is which low-level changes register pressure, vector width, launch bounds, ILP, and memory layout actually show up as measured improvement under the harness.

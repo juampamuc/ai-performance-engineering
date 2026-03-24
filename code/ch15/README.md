@@ -1,7 +1,7 @@
 # Chapter 15 - Disaggregated Inference & KV Management
 
 ## Summary
-Addresses large-scale inference concerns: disaggregated compute/storage, KV-cache pooling over NVLink, continuous batching, and mixture-of-experts serving patterns.
+Addresses large-scale inference concerns: disaggregated compute/storage, KV-cache pooling over NVLink, continuous batching, and mixture-of-experts serving patterns. The repo chapter captures the disaggregated serving and KV-management themes directly, while the NIXL-specific connector story from the manuscript is only represented indirectly.
 
 ## Problem
 Chapter 15 is where inference-system ideas have to justify themselves with end-to-end measurements. The useful question is not "can we disaggregate or batch this?" but "which orchestration changes actually reduce latency or increase throughput once KV movement and scheduling overhead are included?"

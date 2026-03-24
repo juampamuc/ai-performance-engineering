@@ -50,3 +50,19 @@ def test_tool_launch_prefers_module_name_when_available(monkeypatch):
         "--help",
     ]
     assert str(tools_commands.REPO_ROOT) in recorded["env"]["PYTHONPATH"].split(os.pathsep)
+
+
+def test_new_chapter_parity_tools_are_registered() -> None:
+    import core.tools.tools_commands as tools_commands
+
+    expected = {
+        "ch04-nixl-tier-handoff": "ch04.nixl_tier_handoff_tool",
+        "ch19-adaptive-parallelism": "ch19.adaptive_parallelism_strategy",
+        "ch19-dynamic-precision": "ch19.dynamic_precision_switching",
+        "ch20-ai-kernel-generator": "ch20.ai_kernel_generator",
+    }
+
+    for tool_name, module_name in expected.items():
+        spec = tools_commands.TOOLS[tool_name]
+        assert spec.module_name == module_name
+        assert spec.script_path.exists()

@@ -1,7 +1,7 @@
 # Chapter 14 - Compiler & Triton Optimization
 
 ## Summary
-Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness.
+Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness. The repo chapter focuses on CUDA/Triton/Inductor paths; the broader XLA backend discussion from the manuscript is not represented as runnable chapter code here.
 
 ## Problem
 Chapter 14 is where compiler claims have to turn into measured wins. The useful question is not "can `torch.compile` or Triton work?" but "which compiler-driven optimizations still deliver real latency and memory reductions on current Blackwell-class hardware?"

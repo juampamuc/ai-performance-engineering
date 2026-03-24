@@ -567,7 +567,7 @@ WALL_OF_SHAME = dedent(
     | 2024 | NaturalCodeBench vs HumanEval | Benchmark Overfitting | Real-user coding tasks in NaturalCodeBench show large performance gaps and weak correlation with HumanEval scores. | https://aclanthology.org/2024.findings-acl.471/ |
     | 2024 | Benchmark Data Contamination Survey | Data Contamination | Survey catalogs contamination pathways across LLM benchmarks and highlights mitigation gaps. | https://arxiv.org/abs/2406.04244 |
     | 2023 | NLP Evaluation Data Contamination | Data Contamination | Position paper warns that LLMs trained on benchmark test splits can inflate reported scores. | https://arxiv.org/abs/2310.18018 |
-    | 2022 | MLPerf Participation Issues | Cherry-picking | MLPerf faced inconsistent vendor participation; selective scenario submissions led to biased performance representations. | http://web.archive.org/web/20250813110435/https://www.nextplatform.com/2022/04/08/the-performance-of-mlperf-as-a-ubiquitous-benchmark-is-lacking/ |
+    | 2022 | MLPerf Participation Issues | Cherry-picking | MLPerf faced inconsistent vendor participation; selective scenario submissions led to biased performance representations. | https://web.archive.org/web/20250813110435/https://www.nextplatform.com/2022/04/08/the-performance-of-mlperf-as-a-ubiquitous-benchmark-is-lacking/ |
     | 2022 | ML Benchmark Validity (Berkeley) | Benchmark Overfitting | Small changes in data distribution caused significant performance drops, questioning external validity. | https://www2.eecs.berkeley.edu/Pubs/TechRpts/2022/EECS-2022-180.html |
     | 2021 | ImageNet Label Errors | Invalid Ground Truth | At least 6 percent label errors in ImageNet validation set. | https://arxiv.org/abs/2103.14749 |
     | 2021 | MLPerf Reproducibility | Benchmark Reproducibility | Users could not reproduce MLPerf v0.7 results due to inaccessible datasets and outdated repos. | https://groups.google.com/a/mlcommons.org/g/public/c/T_8UsUPIWFo |
@@ -643,7 +643,7 @@ ENTRIES["README.md"] = Entry(
         Reference implementation of high-performance PyTorch, CUDA, and Triton workloads for NVIDIA Blackwell platforms.
         The repository packages 20 focused chapters, advanced labs, and the shared benchmarking harness so you can profile baselines, apply optimizations, and capture artifacts that prove performance gains.
 
-        Roadmap: [`docs/performance_repo_roadmap.md`](/home/cfregly/ai-performance-engineering/code/docs/performance_repo_roadmap.md) defines the prioritized plan for canonical suites, trend tracking, anti-pattern enforcement, shared benchmark bases, and evidence-first documentation."""
+        Roadmap: [`docs/performance_repo_roadmap.md`](docs/performance_repo_roadmap.md) defines the prioritized plan for canonical suites, trend tracking, anti-pattern enforcement, shared benchmark bases, and evidence-first documentation."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -673,7 +673,7 @@ ENTRIES["README.md"] = Entry(
                 - `trend_snapshot.json`: run-history summary for dashboards and release notes
                 - `artifacts/history/tier1/index.json`: suite history index
 
-                See [`docs/tier1_benchmark_suite.md`](/home/cfregly/ai-performance-engineering/code/docs/tier1_benchmark_suite.md) for the current target list, artifact contract, and interpretation guidance."""
+                See [`docs/tier1_benchmark_suite.md`](docs/tier1_benchmark_suite.md) for the current target list, artifact contract, and interpretation guidance."""
             ),
         ),
         MarkdownSection(
@@ -721,12 +721,12 @@ ENTRIES["README.md"] = Entry(
                 This repo now exposes one repeatable benchmarking methodology instead of leaving performance work as a collection of scripts.
 
                 Start with:
-                - [`docs/benchmark_methodology.md`](/home/cfregly/ai-performance-engineering/code/docs/benchmark_methodology.md) for the three-layer model (`micro`, `component`, `end_to_end`), bottleneck taxonomy, publication-vs-realism policy, and straggler playbook.
-                - [`docs/performance_warehouse.md`](/home/cfregly/ai-performance-engineering/code/docs/performance_warehouse.md) for the stable event schema, raw-versus-curated storage split, retention tiers, and telemetry lineage back to raw evidence.
-                - [`templates/performance_intake.yaml`](/home/cfregly/ai-performance-engineering/code/templates/performance_intake.yaml) for KPIs, constraints, and the variable under test.
-                - [`templates/benchmark_workload_spec.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_workload_spec.yaml) for the frozen workload definition and measurement policy.
-                - [`templates/benchmark_run.yaml`](/home/cfregly/ai-performance-engineering/code/templates/benchmark_run.yaml) for the CRD-aligned declarative `BenchmarkRun` shape the repo would map onto a Kubernetes-native service.
-                - [`cluster/docs/kubernetes_benchmark_service.md`](/home/cfregly/ai-performance-engineering/code/cluster/docs/kubernetes_benchmark_service.md) plus [`cluster/configs/benchmarkrun-crd.yaml`](/home/cfregly/ai-performance-engineering/code/cluster/configs/benchmarkrun-crd.yaml) for the cluster-native operator/CRD direction already being sketched in the repo.
+                - [`docs/benchmark_methodology.md`](docs/benchmark_methodology.md) for the three-layer model (`micro`, `component`, `end_to_end`), bottleneck taxonomy, publication-vs-realism policy, and straggler playbook.
+                - [`docs/performance_warehouse.md`](docs/performance_warehouse.md) for the stable event schema, raw-versus-curated storage split, retention tiers, and telemetry lineage back to raw evidence.
+                - [`templates/performance_intake.yaml`](templates/performance_intake.yaml) for KPIs, constraints, and the variable under test.
+                - [`templates/benchmark_workload_spec.yaml`](templates/benchmark_workload_spec.yaml) for the frozen workload definition and measurement policy.
+                - [`templates/benchmark_run.yaml`](templates/benchmark_run.yaml) for the CRD-aligned declarative `BenchmarkRun` shape the repo would map onto a Kubernetes-native service.
+                - [`cluster/docs/kubernetes_benchmark_service.md`](cluster/docs/kubernetes_benchmark_service.md) plus [`cluster/configs/benchmarkrun-crd.yaml`](cluster/configs/benchmarkrun-crd.yaml) for the cluster-native operator/CRD direction already being sketched in the repo.
 
                 Thin surfaces for these contracts are also exposed through `python -m cli.aisp tools benchmark-contracts`, dashboard API `GET /api/benchmark/contracts`, and MCP tool `benchmark_contracts`.
 
@@ -749,7 +749,7 @@ ENTRIES["README.md"] = Entry(
                 ```
 
                 Start with:
-                - [`cluster/README.md`](/home/cfregly/ai-performance-engineering/code/cluster/README.md) for the current commands and folder contract.
+                - [`cluster/README.md`](cluster/README.md) for the current commands and folder contract.
                 - `python -m cli.aisp cluster common-eval --preset common-answer-fast ...` for the normal "evaluate this system" ask.
                 - `python -m cli.aisp cluster common-eval --preset modern-llm ...` when you need the full canonical package.
                 - `python -m cli.aisp cluster common-eval --preset multinode-readiness ...` before first real multi-node workloads.
@@ -774,7 +774,7 @@ ENTRIES["README.md"] = Entry(
     ],
     run=RunSection(
         commands=[
-            "cd ai-performance-engineering",
+            "cd ai-performance-engineering/code",
             "python3 -m venv .venv && source .venv/bin/activate",
             "pip install -r requirements_latest.txt",
             "python -m cli.aisp bench list-targets --chapter ch01",
@@ -922,7 +922,7 @@ ENTRIES["ch01"] = chapter_entry(
     title="Chapter 1 - Performance Fundamentals",
     summary=dedent(
         """\
-        Establishes the baseline benchmarking discipline with a simple training-loop goodput benchmark and a small CUDA GEMM case study. The goal is to ground later optimizations in repeatable measurement, equivalent workloads, and verifiable outputs."""
+        Establishes the baseline benchmarking discipline with a simple training-loop goodput benchmark and a small CUDA GEMM case study. The goal is to ground later optimizations in repeatable measurement, equivalent workloads, and verifiable outputs. The repo chapter intentionally blends the book's introductory methodology material with an early hands-on kernel case study so the harness contract is concrete from the start."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -1245,10 +1245,10 @@ ENTRIES["ch03"] = chapter_entry(
 
 ENTRIES["ch04"] = chapter_entry(
     slug="ch04",
-    title="Chapter 4 - Multi-GPU Distribution",
+    title="Chapter 4 - Distributed Communication & Multi-GPU Distribution",
     summary=dedent(
         """\
-        Demonstrates how to scale training and inference across multiple Blackwell GPUs with NVLink/NVSwitch fabric awareness, NCCL tuning, NVSHMEM collectives, and symmetric memory patterns."""
+        Demonstrates how to scale training and inference across multiple Blackwell GPUs with NVLink/NVSwitch fabric awareness, NCCL tuning, NVSHMEM collectives, and symmetric memory patterns. The current repo chapter emphasizes NCCL/NVSHMEM-style communication overlap; the broader Magnum IO + NIXL connector story from the manuscript is only partially represented here."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -1319,6 +1319,7 @@ ENTRIES["ch04"] = chapter_entry(
                 python -m cli.aisp bench list-targets --chapter ch04
                 python -m cli.aisp bench run --targets ch04 --profile minimal
                 python -m cli.aisp bench run --targets ch04:gradient_fusion --profile deep_dive --single-gpu
+                python -m cli.aisp tools ch04-nixl-tier-handoff -- --mode probe --json
                 ```"""
             ),
         ),
@@ -1461,7 +1462,7 @@ ENTRIES["ch06"] = chapter_entry(
     title="Chapter 6 - CUDA Programming Fundamentals",
     summary=dedent(
         """\
-        Moves from Python into CUDA C++: write first kernels, reason about occupancy, control memory layouts, and experiment with ILP, launch bounds, and unified memory on Blackwell devices."""
+        Moves from Python into CUDA C++: write first kernels, reason about occupancy, control memory layouts, and experiment with ILP, launch bounds, and unified memory on Blackwell devices. The manuscript introduces roofline thinking in this chapter; the repo's deeper roofline tooling lives in later utilities while Chapter 6 keeps the runnable benchmark surface focused on kernel fundamentals."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -1993,7 +1994,7 @@ ENTRIES["ch11"] = chapter_entry(
     title="Chapter 11 - Streams & Concurrency",
     summary=dedent(
         """\
-        Explains how to overlap compute, memory, and communication on Blackwell using CUDA streams, ordered sequences, Hyper-Q, warp-specialized pipelines, and adaptive scheduling. The README keeps the legacy target names tied to the actual copy+elementwise overlap workload and runtime-adaptive scheduling story instead of pretending every target is a generic multi-stream demo."""
+        Explains how to overlap compute, memory, and communication on Blackwell using CUDA streams, ordered sequences, Hyper-Q, warp-specialized pipelines, and adaptive scheduling. The README keeps the legacy target names tied to the actual copy+elementwise overlap workload and runtime-adaptive scheduling story instead of pretending every target is a generic multi-stream demo. CUDA Graph capture and graph-level orchestration continue in the manuscript and repo Chapter 12; this chapter’s runnable surface stays focused on stream/concurrency paths."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2098,7 +2099,7 @@ ENTRIES["ch12"] = chapter_entry(
     title="Chapter 12 - CUDA Graphs & Dynamic Workloads",
     summary=dedent(
         """\
-        Covers modern CUDA Graph capabilities-conditional capture, graph memory tuning, dynamic parallelism, and work queues-to keep irregular workloads performant without per-launch overhead."""
+        Covers modern CUDA Graph capabilities-conditional capture, graph memory tuning, dynamic parallelism, and work queues-to keep irregular workloads performant without per-launch overhead. The current repo chapter emphasizes the single-GPU graph/work-queue side of the manuscript; the larger multi-GPU NCCL/NVSHMEM orchestration arc is only partially represented here."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2205,7 +2206,7 @@ ENTRIES["ch13"] = chapter_entry(
     title="Chapter 13 - PyTorch Profiling & Memory Tuning",
     summary=dedent(
         """\
-        Focuses on PyTorch-centric optimizations: compiled autograd, memory profiling, FSDP/context/expert parallelism, and FP8/quantization workflows backed by the same harness infrastructure. The chapter README is fairness-refreshed so canonical pairs stay separate from informational variants such as `torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise`."""
+        Focuses on PyTorch-centric optimizations: compiled autograd, memory profiling, FSDP/context/expert parallelism, and FP8/quantization workflows backed by the same harness infrastructure. The chapter README is fairness-refreshed so canonical pairs stay separate from informational variants such as `torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise`. The manuscript walkthrough uses a fuller Hugging Face/MoE profiling example, while the repo chapter keeps the runnable surface lighter and more harness-native."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2313,7 +2314,7 @@ ENTRIES["ch14"] = chapter_entry(
     title="Chapter 14 - Compiler & Triton Optimization",
     summary=dedent(
         """\
-        Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness."""
+        Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness. The repo chapter focuses on CUDA/Triton/Inductor paths; the broader XLA backend discussion from the manuscript is not represented as runnable chapter code here."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2418,7 +2419,7 @@ ENTRIES["ch15"] = chapter_entry(
     title="Chapter 15 - Disaggregated Inference & KV Management",
     summary=dedent(
         """\
-        Addresses large-scale inference concerns: disaggregated compute/storage, KV-cache pooling over NVLink, continuous batching, and mixture-of-experts serving patterns."""
+        Addresses large-scale inference concerns: disaggregated compute/storage, KV-cache pooling over NVLink, continuous batching, and mixture-of-experts serving patterns. The repo chapter captures the disaggregated serving and KV-management themes directly, while the NIXL-specific connector story from the manuscript is only represented indirectly."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2721,10 +2722,10 @@ ENTRIES["labs/kv_optimization"] = lab_entry(
 
 ENTRIES["ch17"] = chapter_entry(
     slug="ch17",
-    title="Chapter 17 - Dynamic Routing & Hybrid Serving",
+    title="Chapter 17 - Disaggregated Prefill/Decode & Routing",
     summary=dedent(
         """\
-        Blends router design, disaggregated inference, and profiling discipline so Blackwell clusters can route queries between prefill/decode pools, MoE experts, and pipeline stages without sacrificing utilization."""
+        Centers the chapter on disaggregated prefill/decode serving, then layers routing and scheduling policies on top so Blackwell clusters can hand work between prefill/decode pools, MoE experts, and pipeline stages without sacrificing utilization."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2933,17 +2934,17 @@ ENTRIES["ch18"] = chapter_entry(
 
 ENTRIES["ch19"] = chapter_entry(
     slug="ch19",
-    title="Chapter 19 - Low-Precision Training & Memory Systems",
+    title="Chapter 19 - Dynamic & Adaptive Inference Precision/Memory Systems",
     summary=dedent(
         """\
-        Explores NVFP4/FP8 workflows, KV-cache quantization, memory double buffering, and adaptive allocators so low-precision experiments remain numerically safe while squeezing every byte of HBM."""
+        Explores dynamic precision, KV-cache quantization, memory double buffering, and adaptive allocators so inference-oriented low-precision experiments stay numerically safe while squeezing every byte of HBM."""
     ),
     lead_sections=[
         MarkdownSection(
             "Problem",
             dedent(
                 """\
-                Chapter 19 is where low-precision and memory-system ideas have to prove they are more than paper wins. The useful question is not "can we quantize or double-buffer this?" but "which precision and memory changes improve the real workload enough to justify the added complexity?" """
+                Chapter 19 is where adaptive precision and memory-system ideas have to prove they are more than paper wins. The useful question is not "can we quantize or double-buffer this?" but "which runtime precision and memory changes improve the real workload enough to justify the added complexity?" """
             ),
         ),
         MarkdownSection(
@@ -3005,6 +3006,8 @@ ENTRIES["ch19"] = chapter_entry(
                 python -m cli.aisp bench list-targets --chapter ch19
                 python -m cli.aisp bench run --targets ch19 --profile minimal
                 python -m cli.aisp bench run --targets ch19:mxfp8_moe --profile deep_dive --single-gpu
+                python -m cli.aisp tools ch19-adaptive-parallelism
+                python -m cli.aisp tools ch19-dynamic-precision -- --help
                 ```"""
             ),
         ),
@@ -3036,17 +3039,17 @@ ENTRIES["ch19"] = chapter_entry(
 
 ENTRIES["ch20"] = chapter_entry(
     slug="ch20",
-    title="Chapter 20 - End-to-End Case Studies",
+    title="Chapter 20 - AI-Assisted Performance Optimization & Case Studies",
     summary=dedent(
         """\
-        Combines kernel, memory, pipeline, and inference optimizations into holistic case studies: take a baseline pipeline, apply staged improvements, and capture proof-of-benefit artifacts for every major subsystem."""
+        Combines AI-assisted kernel exploration with end-to-end case studies: prototype or verify generated kernels, then test whether memory, pipeline, and inference optimizations still hold up once they are composed into a full workload."""
     ),
     lead_sections=[
         MarkdownSection(
             "Problem",
             dedent(
                 """\
-                Chapter 20 is where isolated wins have to survive contact with the full stack. The useful question is not "did one optimization help in isolation?" but "what still matters after memory, pipeline, and inference optimizations are stacked together in one end-to-end workload?" """
+                Chapter 20 is where AI-generated ideas and isolated wins have to survive contact with the full stack. The useful question is not only "did one optimization help in isolation?" but also "can we validate generated or staged optimizations once memory, pipeline, and inference changes are stacked together in one end-to-end workload?" """
             ),
         ),
         MarkdownSection(
@@ -3078,7 +3081,7 @@ ENTRIES["ch20"] = chapter_entry(
                 | `integrated_kv_cache` | `456.705 ms` | `67.381 ms` | `6.78x` | integrated KV-cache and overlap path |
                 | `bf16_mlp` | `0.616 ms` | `0.234 ms` | `2.63x` | BF16 precision policy on the same eager MLP graph |
 
-                This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements."""
+                This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements. The AI-assisted kernel-generation thread is represented here by `ai_kernel_generator.py` plus the verifier helpers, even though the full manuscript chapter covers a broader RL/AlphaTensor narrative than the current harness surface."""
             ),
         ),
         MarkdownSection(
@@ -3103,6 +3106,7 @@ ENTRIES["ch20"] = chapter_entry(
                 python -m ch20.compare
                 python -m cli.aisp bench list-targets --chapter ch20
                 python -m cli.aisp bench run --targets ch20 --profile minimal
+                python -m cli.aisp tools ch20-ai-kernel-generator -- --device cpu --seqlen 512
                 ```"""
             ),
         ),
@@ -4927,9 +4931,9 @@ ENTRIES["labs/nanochat_fullstack"] = lab_entry(
             ## Project Context
             NanoChat is intentionally bigger than a single benchmark pair. The point of this lab entry is to give the repo one clean performance anchor inside that tree, not to replace the broader NanoChat project documentation.
 
-            - Use [README_FAST.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README_FAST.md) for the faster end-to-end project walkthrough.
-            - Use [speedrun.sh](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/speedrun.sh) when you want the broader "train and talk to a small model" experience.
-            - Use [rustbpe/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/rustbpe/README.md) for the tokenizer-specific component work.
+            - Use [README_FAST.md](README_FAST.md) for the faster end-to-end project walkthrough.
+            - Use [speedrun.sh](speedrun.sh) when you want the broader "train and talk to a small model" experience.
+            - Use [rustbpe/README.md](rustbpe/README.md) for the tokenizer-specific component work.
             """
         ),
     ],
@@ -4999,10 +5003,10 @@ ENTRIES["labs/nanochat_fullstack/rustbpe"] = lab_entry(
         dedent(
             """\
             ## How It Fits Into NanoChat
-            `rustbpe` is the tokenizer-training companion inside the broader [labs/nanochat_fullstack/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README.md) tree.
+            `rustbpe` is the tokenizer-training companion inside the broader [labs/nanochat_fullstack/README.md](../README.md) tree.
 
-            - Use [labs/nanochat_fullstack/README.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README.md) for the measured inference-stack story.
-            - Use [labs/nanochat_fullstack/README_FAST.md](/home/cfregly/ai-performance-engineering/code/labs/nanochat_fullstack/README_FAST.md) for the quicker project walkthrough.
+            - Use [labs/nanochat_fullstack/README.md](../README.md) for the measured inference-stack story.
+            - Use [labs/nanochat_fullstack/README_FAST.md](../README_FAST.md) for the quicker project walkthrough.
             - Use this component doc when you only need the tokenizer-training piece.
             """
         ),

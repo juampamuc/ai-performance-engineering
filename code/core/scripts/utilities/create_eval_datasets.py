@@ -118,6 +118,7 @@ def main():
     
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    random.seed(42)
     
     print("Creating curated evaluation datasets...\n")
     
@@ -169,7 +170,7 @@ Lightweight synthetic corpora used for fast accuracy and perplexity checks witho
 | `arithmetic.txt` | Simple arithmetic expressions encoded as tokens for reasoning sanity tests. |
 
 ## Usage
-- Run perplexity checks: `python ch16/perplexity_eval.py eval_datasets/random_tokens.txt --output-json artifacts/perplexity_random.json`
+- Run perplexity checks: `python -m ch16.perplexity_eval eval_datasets/random_tokens.txt --output-json artifacts/perplexity_random.json`
 - Compare precision/accuracy: `python core/scripts/utilities/compare_precision_accuracy.py --dataset eval_datasets/structured_tokens.txt`
 - Regenerate with custom sizes:
   ```bash
@@ -178,8 +179,8 @@ Lightweight synthetic corpora used for fast accuracy and perplexity checks witho
 
 ## Validation Checklist
 - Regenerating with the command above rewrites all four files and this README in-place.
-- Perplexity eval emits JSON with prompt/decode percentiles and should run without downloads.
-- `core/scripts/utilities/compare_precision_accuracy.py` completes against each file when the harness is installed.
+- Perplexity eval emits JSON with `perplexity`, `avg_loss`, `tokens_evaluated`, `sequence_length`, `stride`, `dtype`, and FP8 mode metadata, and should run without downloads.
+- `core/scripts/utilities/compare_precision_accuracy.py` completes against each file when the chapter 16 GPT benchmark dependencies are installed.
 
 ## Notes
 - Files are kept small to allow quick correctness runs inside CI and notebook environments.

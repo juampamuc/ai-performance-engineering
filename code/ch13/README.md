@@ -1,7 +1,7 @@
 # Chapter 13 - PyTorch Profiling & Memory Tuning
 
 ## Summary
-Focuses on PyTorch-centric optimizations: compiled autograd, memory profiling, FSDP/context/expert parallelism, and FP8/quantization workflows backed by the same harness infrastructure. The chapter README is fairness-refreshed so canonical pairs stay separate from informational variants such as `torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise`.
+Focuses on PyTorch-centric optimizations: compiled autograd, memory profiling, FSDP/context/expert parallelism, and FP8/quantization workflows backed by the same harness infrastructure. The chapter README is fairness-refreshed so canonical pairs stay separate from informational variants such as `torchao_quantization_compiled` and `kv_cache_naive_flash_blockwise`. The manuscript walkthrough uses a fuller Hugging Face/MoE profiling example, while the repo chapter keeps the runnable surface lighter and more harness-native.
 
 ## Problem
 Chapter 13 is where high-level PyTorch optimizations have to prove they are doing more than rearranging framework overhead. The useful question is not "can PyTorch do this optimization?" but "which profiling, compilation, precision, and memory changes actually improve the workload under the shared harness?"

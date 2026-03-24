@@ -14,7 +14,6 @@ speculative decoding algorithms and optimizations, see:
 """
 
 import os
-from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Tuple, Optional
@@ -108,11 +107,8 @@ if HAS_USABLE_CUDA:
 
 
 def get_sdpa_context():
-    """Return an SDPA backend context, falling back gracefully."""
-    try:
-        return sdpa_kernel(list(PREFERRED_SDP_BACKENDS))
-    except Exception:
-        return nullcontext()
+    """Return an SDPA backend context for the configured backend set."""
+    return sdpa_kernel(list(PREFERRED_SDP_BACKENDS))
 
 
 def get_compute_dtype() -> torch.dtype:

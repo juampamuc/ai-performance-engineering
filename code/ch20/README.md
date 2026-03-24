@@ -1,10 +1,10 @@
-# Chapter 20 - End-to-End Case Studies
+# Chapter 20 - AI-Assisted Performance Optimization & Case Studies
 
 ## Summary
-Combines kernel, memory, pipeline, and inference optimizations into holistic case studies: take a baseline pipeline, apply staged improvements, and capture proof-of-benefit artifacts for every major subsystem.
+Combines AI-assisted kernel exploration with end-to-end case studies: prototype or verify generated kernels, then test whether memory, pipeline, and inference optimizations still hold up once they are composed into a full workload.
 
 ## Problem
-Chapter 20 is where isolated wins have to survive contact with the full stack. The useful question is not "did one optimization help in isolation?" but "what still matters after memory, pipeline, and inference optimizations are stacked together in one end-to-end workload?"
+Chapter 20 is where AI-generated ideas and isolated wins have to survive contact with the full stack. The useful question is not only "did one optimization help in isolation?" but also "can we validate generated or staged optimizations once memory, pipeline, and inference changes are stacked together in one end-to-end workload?"
 
 ## Baseline Path
 - sequential or minimally optimized end-to-end execution
@@ -24,7 +24,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 | `integrated_kv_cache` | `456.705 ms` | `67.381 ms` | `6.78x` | integrated KV-cache and overlap path |
 | `bf16_mlp` | `0.616 ms` | `0.234 ms` | `2.63x` | BF16 precision policy on the same eager MLP graph |
 
-This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements.
+This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements. The AI-assisted kernel-generation thread is represented here by `ai_kernel_generator.py` plus the verifier helpers, even though the full manuscript chapter covers a broader RL/AlphaTensor narrative than the current harness surface.
 
 ## Profiler Evidence
 Use deep-dive harness runs when you want to see how the end-to-end gain breaks down by subsystem:
@@ -41,6 +41,7 @@ That is the right place to answer whether the gain came from overlap, memory mov
 python -m ch20.compare
 python -m cli.aisp bench list-targets --chapter ch20
 python -m cli.aisp bench run --targets ch20 --profile minimal
+python -m cli.aisp tools ch20-ai-kernel-generator -- --device cpu --seqlen 512
 ```
 
 ## Learning Goals

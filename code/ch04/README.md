@@ -1,7 +1,7 @@
-# Chapter 4 - Multi-GPU Distribution
+# Chapter 4 - Distributed Communication & Multi-GPU Distribution
 
 ## Summary
-Demonstrates how to scale training and inference across multiple Blackwell GPUs with NVLink/NVSwitch fabric awareness, NCCL tuning, NVSHMEM collectives, and symmetric memory patterns.
+Demonstrates how to scale training and inference across multiple Blackwell GPUs with NVLink/NVSwitch fabric awareness, NCCL tuning, NVSHMEM collectives, and symmetric memory patterns. The current repo chapter emphasizes NCCL/NVSHMEM-style communication overlap; the broader Magnum IO + NIXL connector story from the manuscript is only partially represented here.
 
 ## Problem
 Chapter 4 is where multi-GPU claims have to survive contact with real communication cost. The useful question is not "can this scale?" but "which overlap, fusion, and topology choices actually move the latency or throughput needle under the shared harness?"
@@ -48,6 +48,7 @@ python -m ch04.compare
 python -m cli.aisp bench list-targets --chapter ch04
 python -m cli.aisp bench run --targets ch04 --profile minimal
 python -m cli.aisp bench run --targets ch04:gradient_fusion --profile deep_dive --single-gpu
+python -m cli.aisp tools ch04-nixl-tier-handoff -- --mode probe --json
 ```
 
 ## Learning Goals

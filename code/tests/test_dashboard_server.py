@@ -4,6 +4,8 @@ import pytest
 from typer.testing import CliRunner
 
 import core.engine as engine_module
+from core.api.handlers import ai_execute, ai_tools
+from core.api.registry import get_dashboard_mcp_tools
 from core.perf_core import PerfCore
 from core.engine import get_engine, reset_engine
 from dashboard.api import server
@@ -68,6 +70,18 @@ def test_dashboard_http_compare_route_returns_error_envelope() -> None:
     assert payload["success"] is False
     assert payload["error_type"] == "value_error"
     assert "baseline is required" in payload["error"]
+
+
+def test_ai_tools_only_lists_dashboard_mcp_subset() -> None:
+    payload = ai_tools({})
+    tool_names = {tool["name"] for tool in payload["tools"]}
+
+    assert tool_names == set(get_dashboard_mcp_tools())
+
+
+def test_ai_execute_rejects_tools_outside_dashboard_subset() -> None:
+    with pytest.raises(ValueError, match="not exposed by the dashboard API"):
+        ai_execute({"tool": "recommend", "params": {}})
 
 
 def test_engine_exposes_tier1_history_and_trends(tmp_path, sample_benchmark_results_file):
