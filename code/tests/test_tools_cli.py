@@ -60,6 +60,7 @@ def test_new_chapter_parity_tools_are_registered() -> None:
         "ch19-adaptive-parallelism": "ch19.adaptive_parallelism_strategy",
         "ch19-dynamic-precision": "ch19.dynamic_precision_switching",
         "ch20-ai-kernel-generator": "ch20.ai_kernel_generator",
+        "ch20-ai-kernel-workflow": "ch20.ai_kernel_workflow_tool",
     }
 
     for tool_name, module_name in expected.items():

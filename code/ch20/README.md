@@ -42,6 +42,7 @@ python -m ch20.compare
 python -m cli.aisp bench list-targets --chapter ch20
 python -m cli.aisp bench run --targets ch20 --profile minimal
 python -m cli.aisp tools ch20-ai-kernel-generator -- --device cpu --seqlen 512
+python -m cli.aisp tools ch20-ai-kernel-workflow -- --device cpu --seqlen 512
 ```
 
 ## Learning Goals

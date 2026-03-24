@@ -2,7 +2,9 @@ import subprocess
 import sys
 import json
 import os
+import shutil
 from pathlib import Path
+from uuid import uuid4
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +99,21 @@ def test_cluster_common_eval_rejects_unknown_preset_via_real_cli():
     payload = json.loads(result.stdout)
     assert payload["success"] is False
     assert "Unknown preset" in payload["error"]
+
+
+def test_cluster_eval_suite_smoke_writes_real_manifest_and_meta():
+    run_id = f"test_cli_smoke_eval_suite_{uuid4().hex[:8]}"
+    run_dir = REPO_ROOT / "cluster" / "runs" / run_id
+    try:
+        result = _run_cli(["cluster", "eval-suite", "--mode", "smoke", "--run-id", run_id], timeout=60)
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["success"] is True
+        assert Path(payload["run_dir"]) == run_dir
+        assert Path(payload["manifest_path"]).exists()
+        assert Path(payload["meta_path"]).exists()
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)
 
 
 def test_cluster_promote_run_reports_missing_run_dir_via_real_cli():

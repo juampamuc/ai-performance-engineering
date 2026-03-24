@@ -208,6 +208,12 @@ TOOLS: Dict[str, ToolSpec] = {
         module_name="ch20.ai_kernel_generator",
         description="Run the Chapter 20 AI-assisted FlexAttention kernel generator utility.",
     ),
+    "ch20-ai-kernel-workflow": ToolSpec(
+        name="ch20-ai-kernel-workflow",
+        script_path=REPO_ROOT / "ch20" / "ai_kernel_workflow_tool.py",
+        module_name="ch20.ai_kernel_workflow_tool",
+        description="Run the Chapter 20 generator + verification workflow utility.",
+    ),
 }
 
 
