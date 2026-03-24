@@ -1335,6 +1335,7 @@ ENTRIES["ch04"] = chapter_entry(
         ("`baseline_dataparallel_multigpu.py`, `optimized_dataparallel_multigpu.py`", "Multi-GPU DataParallel vs manual gradient reduction with pre-staged shards."),
         ("`baseline_no_overlap.py`, `optimized_no_overlap.py`", "Strict distributed DDP overlap benchmarks; they now require `torchrun` plus `>=2` GPUs and fail fast with `SKIPPED:` when launched on unsupported hosts."),
         ("`baseline_nvlink.py`, `optimized_nvlink.py`, `baseline_nvlink_topology_aware.py`, `optimized_nvlink_topology_aware.py`, `baseline_nvlink_multigpu.py`, `optimized_nvlink_multigpu.py`, `baseline_nvlink_topology_aware_multigpu.py`, `optimized_nvlink_topology_aware_multigpu.py`", "NVLink exercises for validating peer bandwidth and topology effects (single- and multi-GPU)."),
+        ("`baseline_nixl_tier_handoff.py`, `optimized_nixl_tier_handoff.py`, `nixl_tier_handoff_tool.py`", "Chapter-local NIXL-style memory-tier handoff analogue built on the same selected-block transport workload used by the communication-stack lab, with both benchmark and probe entrypoints."),
         ("`baseline_continuous_batching.py`, `optimized_continuous_batching.py`, `baseline_disaggregated.py`, `optimized_disaggregated.py`, `baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py`, `baseline_disaggregated_multigpu.py`, `optimized_disaggregated_multigpu.py`", "Continuous batching + disaggregated inference demos that showcase pooling and remote KV reuse."),
         ("`baseline_gradient_compression_fp16.py`, `optimized_gradient_compression_fp16.py`, `baseline_gradient_compression_int8.py`, `optimized_gradient_compression_int8.py`, `baseline_gradient_compression_fp16_multigpu.py`, `optimized_gradient_compression_fp16_multigpu.py`, `baseline_gradient_compression_int8_multigpu.py`, `optimized_gradient_compression_int8_multigpu.py`", "Gradient compression all-reduce benchmarks comparing small-bucket vs full-buffer compression (single GPU and multi-GPU FP16/INT8 paths)."),
         ("`baseline_gradient_compression_fp16_comm_only.py`, `optimized_gradient_compression_fp16_comm_only.py`, `baseline_gradient_compression_int8_comm_only.py`, `optimized_gradient_compression_int8_comm_only.py`, `baseline_gradient_compression_fp16_comm_only_multigpu.py`, `optimized_gradient_compression_fp16_comm_only_multigpu.py`, `baseline_gradient_compression_int8_comm_only_multigpu.py`, `optimized_gradient_compression_int8_comm_only_multigpu.py`", "Communication-only gradient compression benchmarks with pre-quantized buffers (single GPU and multi-GPU FP16/INT8 paths)."),
@@ -1345,6 +1346,7 @@ ENTRIES["ch04"] = chapter_entry(
     ],
     validation=[
         "`python compare.py --examples dataparallel_multigpu` shows the optimized pair overlapping compute and communication with lower latency.",
+        "`python -m cli.aisp bench run --targets ch04:nixl_tier_handoff --profile minimal --single-gpu` verifies the Chapter 4 NIXL-style tier handoff analogue on the same selected-block workload.",
         "`python -m cli.aisp bench run --targets ch04:bandwidth_benchmark_suite_multigpu --profile minimal` surfaces >=250 GB/s links on connected GPU pairs and highlights any slow hops on a host with >=2 visible GPUs.",
         "NVSHMEM samples now run only on real multi-GPU symmetric-memory hosts; unsupported environments fail fast with `SKIPPED:` instead of publishing fallback timings.",
     ],
@@ -3005,6 +3007,7 @@ ENTRIES["ch19"] = chapter_entry(
                 python -m ch19.compare
                 python -m cli.aisp bench list-targets --chapter ch19
                 python -m cli.aisp bench run --targets ch19 --profile minimal
+                python -m cli.aisp bench run --targets ch19:dynamic_precision --profile minimal --single-gpu
                 python -m cli.aisp bench run --targets ch19:mxfp8_moe --profile deep_dive --single-gpu
                 python -m cli.aisp tools ch19-adaptive-parallelism
                 python -m cli.aisp tools ch19-dynamic-precision -- --help
@@ -3021,6 +3024,7 @@ ENTRIES["ch19"] = chapter_entry(
     contents=[
         ("`baseline_nvfp4_training.py`, `optimized_nvfp4_training.py`, `native_fp4_quantization.py`, `native_fp6_quantization.py`, `native_fp8_training.py`", "Training and quantization recipes that switch between FP8 and NVFP4 with automatic calibration."),
         ("`baseline_adaptive_parallelism.py`, `optimized_adaptive_parallelism.py`, `adaptive_parallelism_benchmark_common.py`, `adaptive_parallelism_strategy.py`, `adaptive_parallelism_worker_pool.py`", "Chapter-native adaptive parallelism benchmark pair plus the routing helpers that model tensor/pipeline/hybrid/data worker-pool selection on the same synthetic request stream."),
+        ("`baseline_dynamic_precision.py`, `optimized_dynamic_precision.py`, `dynamic_precision_benchmark_common.py`, `dynamic_precision_switching.py`, `token_precision_switching.py`", "Chapter-native dynamic precision benchmark pair plus the confidence-driven precision helpers that keep decode outputs stable while switching precision modes."),
         ("`baseline_memory_double_buffering.py`, `optimized_memory_double_buffering.py`, `memory_allocator_with_monitoring.py`, `dynamic_memory_allocator.py`, `_allocator_worker.py`", "Memory-management helpers covering double buffering, instrumentation, and adaptive worker pools."),
         ("`baseline_kv_prefetch_overlap.cu`, `optimized_kv_prefetch_overlap.cu`, `kv_prefetch_overlap_sm121` binaries", "CUDA kernels proving that quantized KV prefetch can overlap with compute when using cp.async pipelines."),
         ("`baseline_dynamic_quantized_cache.py`, `optimized_dynamic_quantized_cache.py`, `dynamic_quantized_cache.py`, `token_precision_switching.py`, `dynamic_precision_switching.py`", "Cache-refresh experiments comparing full-precision FP32 maintenance against adaptive-bitwidth quantized refresh on the same KV footprint."),
@@ -3030,6 +3034,7 @@ ENTRIES["ch19"] = chapter_entry(
     validation=[
         "`python -m ch19.compare` runs the chapter baseline/optimized sweep through the shared harness.",
         "`python -m cli.aisp bench run --targets ch19:adaptive_parallelism --profile minimal` keeps the baseline Python routing loop and the optimized vectorized routing path output-equivalent on the same request stream.",
+        "`python -m cli.aisp bench run --targets ch19:dynamic_precision --profile minimal --single-gpu` keeps the fixed-precision and dynamic-precision decode outputs token-equivalent on the same prompt stream.",
         "`python -m cli.aisp bench run --targets ch19:dynamic_quantized_cache --profile minimal` validates the adaptive-bitwidth quantized refresh against the same full-cache FP32 baseline while tracking bounded error.",
         "`nvcc -o optimized_kv_prefetch_overlap_sm121 optimized_kv_prefetch_overlap.cu` plus the baseline binary show measurable overlap improvements in Nsight Compute.",
     ],

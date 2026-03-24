@@ -170,6 +170,8 @@ _DEFAULT_TARGETS: TargetsDict = {
     "ch19": {
         "description": "Dynamic and Adaptive Inference",
         "metrics": {
+            "adaptive_parallelism_speedup": {"min": 1.05, "target": 1.25, "unit": "x"},
+            "dynamic_precision_speedup": {"min": 1.05, "target": 1.20, "unit": "x"},
             "fp8_training_speedup": {"min": 1.5, "target": 2.0, "unit": "x"},
             "memory_reduction_percent": {"min": 30, "target": 50, "unit": "%"},
         }

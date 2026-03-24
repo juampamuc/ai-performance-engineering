@@ -77,6 +77,13 @@ def test_ch02_cublas_benchmark_fn_uses_shared_nvtx_helper_symmetrically() -> Non
     assert "get_nvtx_enabled" not in optimized_bench
 
 
+def test_ch01_performance_workload_stays_on_retuned_hidden_dim() -> None:
+    workload_text = _read("ch01/workload_config.py")
+
+    assert "performance_microbatches: int = 128" in workload_text
+    assert "performance_hidden_dim: int = 16384" in workload_text
+
+
 def test_ch06_attention_ilp_pair_keeps_math_fixed_and_only_changes_ilp_schedule() -> None:
     baseline_text = _read("ch06/baseline_attention_ilp.py")
     optimized_text = _read("ch06/optimized_attention_ilp.py")
