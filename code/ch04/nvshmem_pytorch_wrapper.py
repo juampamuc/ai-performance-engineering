@@ -42,20 +42,12 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 from core.optimization.symmetric_memory_patch import (
     SymmetricMemoryHandle,
     maybe_create_symmetric_memory_handle,
     symmetric_memory_available,
 )
-
-def setup_single_gpu_env() -> None:
-    """Setup environment for single-GPU testing."""
-    if "RANK" not in os.environ:
-        os.environ.setdefault("RANK", "0")
-        os.environ.setdefault("WORLD_SIZE", "1")
-        os.environ.setdefault("MASTER_ADDR", "localhost")
-        os.environ.setdefault("MASTER_PORT", "29500")
-        os.environ.setdefault("LOCAL_RANK", "0")
 
 
 def check_nvshmem_availability() -> bool:
@@ -95,12 +87,12 @@ class SymmetricMemoryBuffer:
         self.local_tensor = tensor
         
         self.sym_mem: Optional[SymmetricMemoryHandle] = None
-        self.backend = "fallback"
-        
-        if NVSHMEM_AVAILABLE:
-            self.sym_mem = maybe_create_symmetric_memory_handle(tensor, group=group)
-            if self.sym_mem is not None:
-                self.backend = "symmetric_memory"
+        self.backend = "symmetric_memory"
+        if not NVSHMEM_AVAILABLE:
+            raise RuntimeError("SKIPPED: nvshmem_pytorch_wrapper requires NVSHMEM or SymmetricMemory support")
+        self.sym_mem = maybe_create_symmetric_memory_handle(tensor, group=group)
+        if self.sym_mem is None:
+            raise RuntimeError("SKIPPED: nvshmem_pytorch_wrapper requires NVSHMEM or SymmetricMemory support")
     
     def put(self, data: torch.Tensor, target_rank: int) -> None:
         """
@@ -110,11 +102,10 @@ class SymmetricMemoryBuffer:
             data: Data to write
             target_rank: Target GPU rank
         """
-        if self.backend == "symmetric_memory" and self.sym_mem is not None:
-            remote_buffer = self.sym_mem.get_buffer(target_rank)
-            remote_buffer.copy_(data)
-        elif self.rank != target_rank:
-            dist.send(data, dst=target_rank)
+        if self.sym_mem is None:
+            raise RuntimeError("SKIPPED: nvshmem_pytorch_wrapper requires NVSHMEM or SymmetricMemory support")
+        remote_buffer = self.sym_mem.get_buffer(target_rank)
+        remote_buffer.copy_(data)
     
     def get(self, source_rank: int) -> torch.Tensor:
         """
@@ -128,13 +119,10 @@ class SymmetricMemoryBuffer:
         """
         result = torch.empty_like(self.local_tensor)
         
-        if self.backend == "symmetric_memory" and self.sym_mem is not None:
-            remote_buffer = self.sym_mem.get_buffer(source_rank)
-            result.copy_(remote_buffer)
-        elif self.rank != source_rank:
-            dist.recv(result, src=source_rank)
-        else:
-            result.copy_(self.local_tensor)
+        if self.sym_mem is None:
+            raise RuntimeError("SKIPPED: nvshmem_pytorch_wrapper requires NVSHMEM or SymmetricMemory support")
+        remote_buffer = self.sym_mem.get_buffer(source_rank)
+        result.copy_(remote_buffer)
         
         return result
     
@@ -213,7 +201,9 @@ def print_performance_guide() -> None:
 def main() -> None:
     """Main demonstration."""
     if not dist.is_initialized():
-        setup_single_gpu_env()
+        setup_single_gpu_env("nvshmem_pytorch_wrapper", min_world_size=2)
+        if not NVSHMEM_AVAILABLE:
+            raise RuntimeError("SKIPPED: nvshmem_pytorch_wrapper requires NVSHMEM or SymmetricMemory support")
         local_rank = resolve_local_rank()
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl", device_id=local_rank)
@@ -235,4 +225,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

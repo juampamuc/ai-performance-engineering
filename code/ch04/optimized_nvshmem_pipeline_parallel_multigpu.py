@@ -12,12 +12,14 @@ import sys
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from ch04.nccl_blackwell_config import (
     configure_nccl_for_blackwell,
     configure_nccl_for_gb200_gb300,
     configure_nccl_for_multigpu,
     detect_b200_multigpu_topology,
 )
+from ch04.distributed_helper import run_main_with_skip_status
 from core.optimization.symmetric_memory_patch import symmetric_memory_available
 from ch04.nvshmem_pipeline_parallel_multigpu import main as nvshmem_main
 from core.harness.benchmark_harness import (
@@ -60,7 +62,9 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires >=2 GPUs")
-        # NCCL tuning helps both symmetric-memory and NCCL P2P fallback paths.
+        if not symmetric_memory_available():
+            raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires NVSHMEM or SymmetricMemory support")
+        # NCCL tuning helps the real symmetric-memory pipeline path on supported hosts.
         _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
@@ -71,10 +75,10 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
         original_disable = os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE")
         original_async = os.environ.get("AISP_SYMMEM_PIPELINE_ASYNC")
         try:
-            enable_symmem = os.environ.get("AISP_ENABLE_SYMMEM_PIPELINE_BENCH", "").strip().lower() in {"1", "true", "yes", "on"}
-            use_symmem = enable_symmem and _enable_symmem_pipeline()
-            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0" if use_symmem else "1"
-            # Default to async send/recv for the NCCL fallback path.
+            use_symmem = _enable_symmem_pipeline()
+            if not use_symmem:
+                raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires NVSHMEM or SymmetricMemory support")
+            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0"
             os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = "1"
             sys.argv = [
                 original_argv[0],
@@ -100,6 +104,11 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
                 os.environ.pop("AISP_SYMMEM_PIPELINE_ASYNC", None)
             else:
                 os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = original_async
+
+    def teardown(self) -> None:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        torch.cuda.empty_cache()
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:
@@ -137,22 +146,12 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
             measurement_timeout_seconds=300,
         )
 
-    def _prepare_verification_payload(self) -> None:
-        if hasattr(self, "_subprocess_verify_output"):
-            return
-        self.capture_verification_payload()
-        self._subprocess_verify_output = self.get_verify_output()
-        self._subprocess_output_tolerance = self.get_output_tolerance()
-        self._subprocess_input_signature = self.get_input_signature()
-
     def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
-        self._prepare_verification_payload()
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=[],
             multi_gpu_required=True,
             name="optimized_nvshmem_pipeline_parallel_multigpu",
-            config_arg_map={"iterations": "--iterations", "warmup": "--warmup"},
         )
 
 
@@ -169,3 +168,14 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedNVSHMEMPipelineParallelMultiGPU()
 
 
+def main() -> None:
+    bench = OptimizedNVSHMEMPipelineParallelMultiGPU()
+    bench.setup()
+    try:
+        bench.benchmark_fn()
+    finally:
+        bench.teardown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_main_with_skip_status(main))

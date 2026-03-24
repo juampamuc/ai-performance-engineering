@@ -198,7 +198,7 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.kv_cache = None
         self.inputs = None
         self.page_size = 128
-        self.num_layers = 1
+        self.num_layers = 2
         self.num_heads = 2
         self.head_dim = 32
         self.hidden_dim = self.num_heads * self.head_dim

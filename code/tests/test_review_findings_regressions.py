@@ -1,18 +1,31 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import torch
 
+from core.discovery import chapter_slug, discover_all_chapters, discover_benchmarks
 from ch08.tcgen05_custom_vs_cublas_benchmark_base import Tcgen05CustomVsCublasBase
 from ch08.threshold_tma_benchmark_base import ThresholdBenchmarkBaseTMA
 from ch08.tiling_benchmark_base import TilingBenchmarkBase
 from core.harness.run_benchmarks import INFORMATIONAL_BENCHMARKS
+from scripts.canonical_queue_batches import (
+    CAPABILITY_VALIDATION_BATCH,
+    CHAPTER_DRIFT_TRIAGE,
+    CHAPTER_EXPECTATION_BATCH,
+    LAB_FAMILY_BATCHES,
+)
 from scripts.full_virtualized_rerun import (
+    EXPECTED_UNSUPPORTED_PORTABLE_REASON,
     EXPECTED_UNSUPPORTED_RUNTIME_REASON,
+    _backfill_written_expectation_total,
+    _canonicalize_state,
     _expectation_example_key,
     _expected_unsupported_portable_reason,
     _is_informational_benchmark,
+    _persist_state,
+    _queue_paths,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +43,15 @@ def _setup_section(rel_path: str) -> str:
 def _benchmark_section(rel_path: str) -> str:
     text = _read(rel_path)
     return text.split("def benchmark_fn", 1)[1].split("def capture_verification_payload", 1)[0]
+
+
+def _registered_targets() -> set[str]:
+    targets: set[str] = set()
+    for chapter_dir in discover_all_chapters(REPO_ROOT, bench_roots=[REPO_ROOT]):
+        chapter_id = chapter_slug(chapter_dir, REPO_ROOT, bench_root=REPO_ROOT)
+        for _, _, example in discover_benchmarks(chapter_dir):
+            targets.add(f"{chapter_id}:{example}")
+    return targets
 
 
 def test_ch02_cublas_setup_keeps_warmup_symmetric() -> None:
@@ -58,6 +80,7 @@ def test_ch02_cublas_benchmark_fn_uses_shared_nvtx_helper_symmetrically() -> Non
 def test_ch06_attention_ilp_pair_keeps_math_fixed_and_only_changes_ilp_schedule() -> None:
     baseline_text = _read("ch06/baseline_attention_ilp.py")
     optimized_text = _read("ch06/optimized_attention_ilp.py")
+    workload_text = _read("ch06/workload_config.py")
     readme_text = _read("ch06/README.md")
 
     for source in (baseline_text, optimized_text):
@@ -72,6 +95,10 @@ def test_ch06_attention_ilp_pair_keeps_math_fixed_and_only_changes_ilp_schedule(
     assert "self._extension.unrolled_ilp(dst, src)" in optimized_text
     assert '"attention_ilp.independent_chains_per_thread": 1.0' in baseline_text
     assert '"attention_ilp.independent_chains_per_thread": 4.0' in optimized_text
+    assert "attention_batch: int = 8" in workload_text
+    assert "attention_embed_dim: int = 1024" in workload_text
+    assert "attention_heads: int = 16" in workload_text
+    assert "attention_tokens: int = 2048" in workload_text
     assert "keep the math fixed while changing independent chains per thread" in readme_text
 
 
@@ -126,6 +153,12 @@ def test_ch08_bridge_control_pairs_are_explicitly_marked_in_structured_metrics()
         assert '"story.bridge_to_ch09": 1.0' in source
 
 
+def test_ch08_threshold_tma_bridge_workload_uses_larger_row_count() -> None:
+    threshold_base_text = _read("ch08/threshold_benchmark_base.py")
+
+    assert "rows: int = 1 << 26" in threshold_base_text
+
+
 def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -> None:
     readme_text = _read("ch08/README.md")
     baseline_tcgen05_text = _read("ch08/baseline_tcgen05_custom_vs_cublas.py")
@@ -158,6 +191,15 @@ def test_ch15_split_moe_targets_isolate_dispatch_from_routing() -> None:
     assert "baseline_moe_routing_simple.py" not in readme_text
     assert "baseline_moe_dispatch.py" in readme_text
     assert "baseline_moe_routing_topology_aware.py" in readme_text
+
+
+def test_ch15_guided_decoding_defaults_stay_on_heavier_mask_reuse_workload() -> None:
+    common_text = _read("ch15/guided_decoding_common.py")
+
+    assert "batch_size: int = 32" in common_text
+    assert "steps: int = 96" in common_text
+    assert "vocab_size: int = 65536" in common_text
+    assert "allowed_count: int = 8192" in common_text
 
 
 def test_ch18_split_paged_attention_targets_isolate_backend_from_layout() -> None:
@@ -234,6 +276,42 @@ def test_reviewed_pair_fixes_remain_applied() -> None:
     assert "with torch.no_grad():" in baseline_pipeline_bench
 
 
+def test_ch04_torchrun_wrappers_keep_entrypoints_and_side_effect_free_specs() -> None:
+    self_target_wrappers = [
+        "ch04/ddp_no_overlap.py",
+        "ch04/ddp_overlap.py",
+        "ch04/baseline_nvshmem_training_example_multigpu.py",
+        "ch04/optimized_nvshmem_training_example_multigpu.py",
+        "ch04/baseline_nvshmem_training_patterns_multigpu.py",
+        "ch04/optimized_nvshmem_training_patterns_multigpu.py",
+        "ch04/baseline_nvshmem_pipeline_parallel_multigpu.py",
+        "ch04/optimized_nvshmem_pipeline_parallel_multigpu.py",
+        "ch04/baseline_nvshmem_vs_nccl_benchmark_multigpu.py",
+        "ch04/optimized_nvshmem_vs_nccl_benchmark_multigpu.py",
+    ]
+    side_effect_free_specs = self_target_wrappers + [
+        "ch04/baseline_symmetric_memory_multigpu.py",
+        "ch04/optimized_symmetric_memory_multigpu.py",
+    ]
+
+    for rel_path in self_target_wrappers:
+        text = _read(rel_path)
+        assert 'if __name__ == "__main__":' in text
+        assert "run_main_with_skip_status(main)" in text
+
+    for rel_path in side_effect_free_specs:
+        text = _read(rel_path)
+        spec_section = text.split("def get_torchrun_spec", 1)[1].split("def get_custom_metrics", 1)[0]
+        assert "_prepare_verification_payload" not in spec_section
+
+    for rel_path in (
+        "ch04/baseline_nvshmem_pipeline_parallel_multigpu.py",
+        "ch04/optimized_nvshmem_pipeline_parallel_multigpu.py",
+    ):
+        spec_section = _read(rel_path).split("def get_torchrun_spec", 1)[1].split("def get_custom_metrics", 1)[0]
+        assert "config_arg_map" not in spec_section
+
+
 def test_ch13_pair_remediations_keep_canonical_and_informational_targets_split() -> None:
     canonical_quant = _read("ch13/optimized_torchao_quantization.py")
     baseline_quant = _read("ch13/baseline_torchao_quantization.py")
@@ -258,6 +336,111 @@ def test_ch13_pair_remediations_keep_canonical_and_informational_targets_split()
     assert 'return "memory"' in canonical_kv
     assert "range(0, seq_len, self.block_size)" in flash_kv
     assert "kv_cache_naive_flash_blockwise" in INFORMATIONAL_BENCHMARKS["ch13"]
+
+
+def test_ch02_grace_coherent_memory_requires_grace_and_never_advertises_fallback() -> None:
+    baseline_source = _read("ch02/baseline_grace_coherent_memory.py")
+    optimized_source = _read("ch02/optimized_grace_coherent_memory.py")
+    readme_text = _read("ch02/README.md")
+    refresh_text = _read("core/scripts/refresh_readmes.py")
+    rerun_text = _read("scripts/full_virtualized_rerun.py")
+
+    for source in (baseline_source, optimized_source):
+        assert "SKIPPED: grace_coherent_memory requires Grace-Blackwell coherent memory support" in source
+        assert "using fallback path" not in source
+
+    assert "falls back to a host/device transfer-strategy comparison" not in readme_text
+    assert "fallback transfer path" not in readme_text
+    assert "fails fast with `SKIPPED:`" in readme_text
+
+    assert "falls back to a host/device transfer-strategy comparison" not in refresh_text
+    assert "fallback transfer path" not in refresh_text
+    assert "fails fast with `SKIPPED:`" in refresh_text
+
+    assert "requires grace-blackwell coherent memory support" in rerun_text
+
+
+def test_ch04_no_overlap_and_nvshmem_surfaces_do_not_advertise_single_gpu_fallbacks() -> None:
+    ddp_no_overlap = _read("ch04/ddp_no_overlap.py")
+    ddp_overlap = _read("ch04/ddp_overlap.py")
+    baseline_no_overlap = _read("ch04/baseline_no_overlap.py")
+    readme_text = _read("ch04/README.md")
+    example_wrapper = _read("ch04/baseline_nvshmem_training_example.py")
+    patterns_wrapper = _read("ch04/baseline_nvshmem_training_patterns.py")
+    pipeline_wrapper = _read("ch04/baseline_nvshmem_pipeline_parallel.py")
+    bandwidth_wrapper = _read("ch04/baseline_bandwidth_benchmark_suite.py")
+    symmem_wrapper = _read("ch04/baseline_symmetric_memory.py")
+    nvshmem_vs_nccl_wrapper = _read("ch04/baseline_nvshmem_vs_nccl_benchmark.py")
+
+    assert "Single-GPU simulation" not in ddp_no_overlap
+    assert "stand-in for" not in ddp_no_overlap
+    assert "stand-in for" not in ddp_overlap
+    assert "stand-in for" not in baseline_no_overlap
+    assert 'if __name__ == "__main__":' in ddp_no_overlap
+    assert 'if __name__ == "__main__":' in ddp_overlap
+    assert "setup_single_gpu_env(\n            \"ddp_no_overlap\"" in ddp_no_overlap
+    assert "setup_single_gpu_env(\n            \"ddp_overlap\"" in ddp_overlap
+    ddp_no_overlap_spec = ddp_no_overlap.split("def get_torchrun_spec", 1)[1].split("def get_benchmark", 1)[0]
+    ddp_overlap_spec = ddp_overlap.split("def get_torchrun_spec", 1)[1].split("def get_benchmark", 1)[0]
+    assert "_prepare_verification_payload()" not in ddp_no_overlap_spec
+    assert "_prepare_verification_payload()" not in ddp_overlap_spec
+    assert '"iterations": "--iterations"' in ddp_no_overlap_spec
+    assert '"warmup": "--warmup"' in ddp_no_overlap_spec
+    assert '"iterations": "--iterations"' in ddp_overlap_spec
+    assert '"warmup": "--warmup"' in ddp_overlap_spec
+    assert "SingleGPUTransferBenchmark" not in example_wrapper
+    assert "SingleGPUTransferBenchmark" not in patterns_wrapper
+    assert "SingleGPUTransferBenchmark" not in pipeline_wrapper
+    assert "SingleGPUTransferBenchmark" not in bandwidth_wrapper
+    assert "SingleGPUTransferBenchmark" not in symmem_wrapper
+    assert "SingleGPUTransferBenchmark" not in nvshmem_vs_nccl_wrapper
+    assert "host-buffer round-trip" not in readme_text
+    assert "require `torchrun` plus `>=2` GPUs" in readme_text
+
+
+def test_ch04_nvshmem_vs_nccl_wrapper_keeps_collective_metadata_aligned_to_mode() -> None:
+    baseline_source = _read("ch04/baseline_nvshmem_vs_nccl_benchmark_multigpu.py")
+    optimized_source = _read("ch04/optimized_nvshmem_vs_nccl_benchmark_multigpu.py")
+
+    assert 'mode="nccl"' in baseline_source
+    assert '"collective_type": "nccl"' in baseline_source
+    assert 'mode="nvshmem"' in optimized_source
+    assert '"collective_type": "nvshmem"' in optimized_source
+
+
+def test_ch05_gds_probe_and_ch07_tma_copy_never_advertise_fallback_paths() -> None:
+    gds_source = _read("ch05/gds_cufile_minimal.py")
+    gds_readme = _read("ch05/README.md")
+    refresh_text = _read("core/scripts/refresh_readmes.py")
+    tma_cuda = _read("ch07/optimized_tma_copy.cu")
+    tma_readme = _read("ch07/README.md")
+
+    assert "standard I/O fallback" not in gds_source
+    assert "publish host-mediated fallback numbers" in gds_readme
+    assert "publish host-mediated fallback numbers" in refresh_text
+    assert "Async-pipeline 2D copy fallback" not in tma_cuda
+    assert "legacy async-neighbor demo" not in tma_readme
+    assert "strict tensor-map/TMA-capable run only" in tma_readme
+
+
+def test_ch01_training_loop_targets_keep_combined_and_fusion_only_stories_separate() -> None:
+    performance = _read("ch01/optimized_performance.py")
+    performance_fusion = _read("ch01/optimized_performance_fusion.py")
+    workload_config = _read("ch01/workload_config.py")
+    readme_text = _read("ch01/README.md")
+
+    assert "self.model = self.model.half()" in performance
+    assert "dtype = torch.float16" in performance
+    assert 'with self._nvtx_range("optimized_performance"):' in performance
+    assert '"fp16": model_dtype == torch.float16' in performance
+
+    assert "self.model = self.model.half()" not in performance_fusion
+    assert "dtype=torch.float32" in performance_fusion
+    assert 'with self._nvtx_range("optimized_performance_fusion"):' in performance_fusion
+    assert "performance_microbatches: int = 128" in workload_config
+
+    assert "| `performance` | FP16 math + fused microbatches | the combined goodput story |" in readme_text
+    assert "| `performance_fusion` | fused microbatches only | what launch amortization buys you without changing math precision |" in readme_text
 
 
 def test_ch05_and_ch20_noncanonical_pairs_are_marked_informational() -> None:
@@ -303,6 +486,151 @@ def test_portable_rerun_classifies_runtime_capability_skips_separately() -> None
         }
     )
     assert reason == EXPECTED_UNSUPPORTED_RUNTIME_REASON
+    rerun_text = _read("scripts/full_virtualized_rerun.py")
+    assert "requires torchrun/distributed launch context" in rerun_text
+    assert "requires usable cufile/gds support" in rerun_text
+    assert "requires usable tensor-map/tma support" in rerun_text
+    assert "requires sm90 hopper hardware" in rerun_text
+
+
+def test_portable_rerun_reclassifies_hopper_only_cutlass_fp8_as_expected_unsupported() -> None:
+    state = _canonicalize_state(
+        {
+            "target_records": {
+                "ch09:cutlass_gemm_fp8": {
+                    "target": "ch09:cutlass_gemm_fp8",
+                    "benchmarks": [
+                        {
+                            "target": "ch09:cutlass_gemm_fp8",
+                            "benchmark_status": "skipped",
+                            "error": "HARDWARE/SOFTWARE LIMITATION: baseline_cutlass_gemm_fp8 requires SM90 Hopper hardware.",
+                            "queue_reasons": ["skipped", "missing_successful_optimization"],
+                        }
+                    ],
+                    "queued_problem_count": 1,
+                    "expected_unsupported_count": 0,
+                    "written_expectation_count": 0,
+                }
+            }
+        }
+    )
+    record = state["target_records"]["ch09:cutlass_gemm_fp8"]
+    bench = record["benchmarks"][0]
+
+    assert bench["classification"] == EXPECTED_UNSUPPORTED_RUNTIME_REASON
+    assert bench["queue_reasons"] == [EXPECTED_UNSUPPORTED_RUNTIME_REASON]
+    assert record["queued_problem_count"] == 0
+    assert record["expected_unsupported_count"] == 1
+
+
+def test_portable_rerun_reclassifies_multi_gpu_skip_records_on_load() -> None:
+    state = _canonicalize_state(
+        {
+            "target_records": {
+                "ch04:no_overlap": {
+                    "target": "ch04:no_overlap",
+                    "benchmarks": [
+                        {
+                            "target": "ch04:no_overlap",
+                            "benchmark_status": "skipped",
+                            "error": "HARDWARE/SOFTWARE LIMITATION: Distributed benchmark requires multiple GPUs (insufficient GPUs available)",
+                            "queue_reasons": ["missing_expectation"],
+                        }
+                    ],
+                    "queued_problem_count": 1,
+                    "expected_unsupported_count": 0,
+                    "written_expectation_count": 0,
+                }
+            }
+        }
+    )
+    record = state["target_records"]["ch04:no_overlap"]
+    bench = record["benchmarks"][0]
+
+    assert bench["classification"] == EXPECTED_UNSUPPORTED_PORTABLE_REASON
+    assert bench["queue_reasons"] == [EXPECTED_UNSUPPORTED_PORTABLE_REASON]
+    assert record["queued_problem_count"] == 0
+    assert record["expected_unsupported_count"] == 1
+
+
+def test_portable_rerun_reclassifies_nested_optimization_capability_skips(tmp_path: Path) -> None:
+    results_json = tmp_path / "results.json"
+    results_json.write_text(
+        '{"results":[{"chapter":"ch09","benchmarks":[{"example":"cublaslt_gemm_fp4","status":"succeeded","optimizations":[{"file":"optimized_cublaslt_gemm_fp4.py","status":"skipped","error":"SKIPPED: cuBLASLt NVFP4 algorithm unavailable on this driver/toolchain. Block-scaled VEC16_UE4M3 requires a native cuBLASLt heuristic for this exact benchmark."}]}]}]}',
+        encoding="utf-8",
+    )
+    state = _canonicalize_state(
+        {
+            "target_records": {
+                "ch09:cublaslt_gemm_fp4": {
+                    "target": "ch09:cublaslt_gemm_fp4",
+                    "benchmarks": [
+                        {
+                            "target": "ch09:cublaslt_gemm_fp4",
+                            "example": "cublaslt_gemm_fp4",
+                            "benchmark_status": "succeeded",
+                            "queue_reasons": ["missing_successful_optimization"],
+                            "results_json": str(results_json),
+                        }
+                    ],
+                    "queued_problem_count": 1,
+                    "expected_unsupported_count": 0,
+                    "written_expectation_count": 0,
+                }
+            }
+        }
+    )
+    record = state["target_records"]["ch09:cublaslt_gemm_fp4"]
+    bench = record["benchmarks"][0]
+
+    assert bench["classification"] == EXPECTED_UNSUPPORTED_RUNTIME_REASON
+    assert bench["queue_reasons"] == [EXPECTED_UNSUPPORTED_RUNTIME_REASON]
+    assert "algorithm unavailable on this driver/toolchain" in bench["error"]
+    assert record["queued_problem_count"] == 0
+    assert record["expected_unsupported_count"] == 1
+
+
+def test_portable_rerun_backfills_cumulative_expectation_writes_from_worker_log(tmp_path: Path) -> None:
+    worker_log = tmp_path / "worker.log"
+    worker_log.write_text(
+        "\n".join(
+            [
+                "[2026-03-21T07:19:07+00:00] finished target ch01:nvfp4_mlp: rc=0 written_expectations=1 queued_problems=0",
+                "[2026-03-21T07:19:48+00:00] finished target ch01:performance: rc=0 written_expectations=0 queued_problems=1",
+                "[2026-03-21T07:20:33+00:00] finished target ch01:performance_fp16: rc=0 written_expectations=1 queued_problems=0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = {"written_expectation_total": 0}
+
+    _backfill_written_expectation_total(worker_log, state)
+
+    assert state["written_expectation_total"] == 2
+
+
+def test_portable_rerun_persist_state_keeps_written_totals_without_worker_log(tmp_path: Path) -> None:
+    paths = _queue_paths(tmp_path)
+    state = {
+        "target_records": {
+            "ch01:performance": {
+                "target": "ch01:performance",
+                "benchmarks": [],
+                "written_expectation_count": 2,
+                "queued_problem_count": 0,
+                "expected_unsupported_count": 0,
+            }
+        },
+        "written_expectation_total": 0,
+        "queued_problem_total": 0,
+        "expected_unsupported_total": 0,
+    }
+
+    _persist_state(paths, state)
+
+    persisted = json.loads(paths["state"].read_text(encoding="utf-8"))
+    assert persisted["written_expectation_total"] == 2
+    assert persisted["target_records"]["ch01:performance"]["written_expectation_count"] == 2
 
 
 def test_portable_rerun_uses_typed_expectation_keys_for_cuda_examples() -> None:
@@ -310,6 +638,31 @@ def test_portable_rerun_uses_typed_expectation_keys_for_cuda_examples() -> None:
         "cuda_graphs_conditional_enhanced_cuda"
     )
     assert _expectation_example_key({"example": "regional_triton", "type": "python"}) == "regional_triton"
+
+
+def test_canonical_queue_batch_helper_tracks_planned_chapter_targets() -> None:
+    helper = _read("scripts/canonical_queue_batches.py")
+    registered_targets = _registered_targets()
+    queued_targets = [
+        target
+        for group in CHAPTER_EXPECTATION_BATCH.values()
+        for target in group
+    ] + list(CHAPTER_DRIFT_TRIAGE) + [
+        target
+        for group in CAPABILITY_VALIDATION_BATCH.values()
+        for target in group
+    ] + [
+        target
+        for group in LAB_FAMILY_BATCHES.values()
+        for target in group
+    ]
+
+    assert '"ch07:tma_bulk_tensor_2d"' in helper
+    assert '"ch10:dsmem_reduction"' in helper
+    assert '"ch13:regional_compile"' in helper
+    assert '"ch09:cutlass_gemm_fp8"' in helper
+    assert '"labs/train_distributed:ddp"' in helper
+    assert sorted(set(queued_targets) - registered_targets) == []
 
 
 def test_ch14_optimized_regional_triton_warms_all_sequence_buckets_in_setup() -> None:
@@ -329,12 +682,32 @@ def test_ch14_optimized_regional_triton_warms_all_sequence_buckets_in_setup() ->
     assert "timed path measures steady" in setup_section
 
 
+def test_ch13_regional_compile_uses_heavier_bf16_block_shape_in_both_variants() -> None:
+    baseline_text = _read("ch13/baseline_regional_compile.py")
+    optimized_text = _read("ch13/optimized_regional_compile.py")
+
+    for source in (baseline_text, optimized_text):
+        assert "self.hidden = 2048" in source
+        assert "self.num_heads = 16" in source
+        assert "self.mlp_hidden = 16384" in source
+        assert "self.batch_size = 16" in source
+
+
 def test_ch14_triton_persistent_uses_deeper_batched_gemm_workload() -> None:
     baseline_text = _read("ch14/baseline_triton_persistent.py")
     optimized_text = _read("ch14/optimized_triton_persistent.py")
 
     assert "self.batch_size = 64" in baseline_text
     assert "self.batch_size = 64" in optimized_text
+
+
+def test_ch14_flex_attention_sparse_uses_longer_and_sparser_window() -> None:
+    baseline_text = _read("ch14/baseline_flex_attention_sparse.py")
+    optimized_text = _read("ch14/optimized_flex_attention_sparse.py")
+
+    for source in (baseline_text, optimized_text):
+        assert "self.seq_len = 4096" in source
+        assert "self.window_size = 128" in source
 
 
 def test_ch17_memory_uses_larger_replayed_transfer_workload() -> None:
@@ -351,10 +724,10 @@ def test_ch13_regional_compile_retunes_shared_mlp_heavy_shape() -> None:
     optimized_text = _read("ch13/optimized_regional_compile.py")
 
     for source in (baseline_text, optimized_text):
-        assert "self.hidden = 1536" in source
-        assert "self.num_heads = 12" in source
-        assert "self.mlp_hidden = 12288" in source
-        assert "self.batch_size = 32" in source
+        assert "self.hidden = 2048" in source
+        assert "self.num_heads = 16" in source
+        assert "self.mlp_hidden = 16384" in source
+        assert "self.batch_size = 16" in source
         assert "self.sequence_schedule: List[int] = [256, 512, 1024, 1536]" in source
 
 
@@ -461,3 +834,11 @@ def test_ch20_bf16_mlp_no_longer_claims_fused_ops() -> None:
 
     assert "does not implement a fused MLP kernel today" in source
     assert '"ch20.uses_fused_ops": 0.0' in source
+
+
+def test_ch20_integrated_kv_cache_uses_two_layers_in_both_variants() -> None:
+    baseline_text = _read("ch20/baseline_integrated_kv_cache.py")
+    optimized_text = _read("ch20/optimized_integrated_kv_cache.py")
+
+    assert "self.num_layers = 2" in baseline_text
+    assert "self.num_layers = 2" in optimized_text

@@ -25,7 +25,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 | `lookup` | `0.397 ms` | `0.009 ms` | `45.41x` | locality-aware lookup path |
 | `matmul` | `1.165 ms` | `0.367 ms` | `3.18x` | shared-memory tiled matmul instead of the naive layout |
 
-This chapter has some intentionally dramatic wins because memory access mistakes are expensive. For the real descriptor-backed TMA story, use `tma_bulk_tensor_2d`; the older `tma_copy` pair remains as a legacy async-neighbor demo and is not the canonical TMA comparison.
+This chapter has some intentionally dramatic wins because memory access mistakes are expensive. `tma_copy` now means a strict tensor-map/TMA-capable run only, and unsupported hosts fail fast with `SKIPPED:` instead of publishing an async-pipeline fallback under the TMA name.
 
 ## Profiler Evidence
 Use deep-dive harness runs when you want to see whether the win came from less memory traffic, better staging, or fewer expensive accesses:
@@ -38,7 +38,7 @@ python -m cli.aisp bench run --targets ch07:matmul --profile deep_dive --single-
 
 These targets answer different chapter-level questions:
 - `tma_bulk_tensor_2d`: descriptor-backed TMA vs manual 2D staging
-- `tma_copy`: legacy async-neighbor transfer path without tensor maps
+- `tma_copy`: scalar baseline vs strict descriptor-backed tensor-map/TMA path
 - `lookup`: cache/locality sensitivity
 - `matmul`: memory-layout and tile-reuse payoff
 

@@ -22,6 +22,13 @@
 - Treat silent fallback removal as incomplete unless the failure or degraded state is visible in structured outputs, logs, reports, or tests.
 - Record the exact verification commands and outcomes in the task summary so the next reviewer can reproduce the evidence trail quickly.
 
+## Required Capability Gating (CRITICAL)
+- If a benchmark, profiler path, or runtime flow requires specific hardware, software, driver, toolkit, or service support, fail fast when that support is unavailable.
+- Use explicit `SKIPPED:` or equivalent hard diagnostics for unsupported capability checks; do not continue with a degraded fallback under the same benchmark name.
+- Never substitute CPU emulation, reduced-feature code paths, alternate runtimes, or host/device fallback behavior for a required capability unless the target is renamed and documented as a different benchmark.
+- Do not publish, compare, or store performance numbers from unsupported fallback paths as if they were valid results for the required benchmark contract.
+- Keep expected-unsupported classification explicit in structured outputs, logs, tests, and queue ledgers so unsupported environments cannot be mistaken for valid benchmark data.
+
 ## Cluster Field Report Mode (ONLY when working in `code/cluster*` or writing the cluster field report)
 - This section adds constraints specific to cluster evaluation work; all other rules in this file still apply.
 - Discovery/inventory may use `nvidia-smi` and related commands. Benchmarks/profiling must still lock clocks via the harness (`lock_gpu_clocks`); do not manually lock clocks via `nvidia-smi`.

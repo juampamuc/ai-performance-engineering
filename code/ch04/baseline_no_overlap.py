@@ -1,11 +1,7 @@
-"""Baseline wrapper for the no-overlap DDP demo.
+"""Baseline wrapper for the strict no-overlap DDP benchmark.
 
-This module exists to match the chapter text and expectations file.  It
-simply re-exports the BaselineNoOverlapBenchmark defined in
-`ddp_no_overlap.py`, which performs a single-GPU simulation of the
-no-overlap pattern. The host-buffer round-trip is a stand-in for
-all-reduce latency; the real collective version lives in the
-`*_multigpu.py` benchmarks.
+This public target now requires a real torchrun launch with >=2 GPUs. It no
+longer publishes substitute single-GPU collectives under the DDP overlap name.
 """
 
 from __future__ import annotations
@@ -16,4 +12,3 @@ from ch04.ddp_no_overlap import BaselineNoOverlapBenchmark
 def get_benchmark() -> BaselineNoOverlapBenchmark:
     """Factory used by the harness."""
     return BaselineNoOverlapBenchmark()
-

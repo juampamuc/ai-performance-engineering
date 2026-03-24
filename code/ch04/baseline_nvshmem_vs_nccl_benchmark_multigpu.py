@@ -11,6 +11,7 @@ import argparse
 import torch
 import torch.distributed as dist
 
+from ch04.distributed_helper import run_main_with_skip_status
 from ch04.nvshmem_vs_nccl_benchmark import benchmark, init_distributed
 from core.harness.benchmark_harness import (
     BaseBenchmark,
@@ -18,6 +19,7 @@ from core.harness.benchmark_harness import (
     LaunchVia,
     TorchrunLaunchSpec,
 )
+from core.optimization.symmetric_memory_patch import symmetric_memory_available
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
@@ -32,6 +34,8 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_vs_nccl_benchmark requires >=2 GPUs")
+        if not symmetric_memory_available():
+            raise RuntimeError("SKIPPED: nvshmem_vs_nccl_benchmark requires NVSHMEM or SymmetricMemory support")
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
@@ -49,9 +53,10 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         original_compute = os.environ.get("AISP_BROADCAST_COMPUTE_PASSES")
         init_distributed()
         try:
-            os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "1"
+            os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "0"
             os.environ["AISP_BROADCAST_OVERLAP"] = "0"
             os.environ["AISP_BROADCAST_COMPUTE_PASSES"] = "8"
+            args.mode = "nccl"
             benchmark(args)
         finally:
             if dist.is_initialized():
@@ -89,7 +94,7 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
             output_tolerance=(0.1, 1.0),
             signature_overrides={
                 "world_size": torch.cuda.device_count(),
-                "collective_type": "nvshmem",
+                "collective_type": "nccl",
             },
         )
     def get_config(self) -> BenchmarkConfig:
@@ -108,16 +113,7 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
 
-    def _prepare_verification_payload(self) -> None:
-        if hasattr(self, "_subprocess_verify_output"):
-            return
-        self.capture_verification_payload()
-        self._subprocess_verify_output = self.get_verify_output()
-        self._subprocess_output_tolerance = self.get_output_tolerance()
-        self._subprocess_input_signature = self.get_input_signature()
-
     def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
-        self._prepare_verification_payload()
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=[],
@@ -139,3 +135,14 @@ def get_benchmark() -> BaseBenchmark:
     return NVSHMEMVsNCCLBenchmarkMultiGPU()
 
 
+def main() -> None:
+    bench = NVSHMEMVsNCCLBenchmarkMultiGPU()
+    bench.setup()
+    try:
+        bench.benchmark_fn()
+    finally:
+        bench.teardown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_main_with_skip_status(main))

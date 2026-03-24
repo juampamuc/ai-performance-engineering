@@ -25,7 +25,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 | `memory_transfer` | `18.901 ms` | `3.637 ms` | `5.20x` | optimized transfer path fits the actual link behavior |
 | `cublas` | `0.590 ms` | `0.114 ms` | `5.17x` | tuned cuBLAS settings match the hardware better |
 
-On true Grace-Blackwell hosts, `grace_coherent_memory` is the coherency-placement story from the book. On PCIe-only Blackwell hosts, the same pair intentionally falls back to a host/device transfer-strategy comparison instead of pretending unified Grace memory is present.
+`grace_coherent_memory` is only valid on Grace-Blackwell coherent-memory hosts. On PCIe-only Blackwell or other non-Grace systems, the target fails fast with `SKIPPED:` instead of emitting fallback transfer numbers under the wrong benchmark name.
 
 This chapter is the hardware sanity anchor for later claims: if these numbers drift, everything that depends on them deserves scrutiny.
 
@@ -41,7 +41,7 @@ python -m cli.aisp bench run --targets ch02:grace_coherent_memory --profile deep
 The expected story is:
 - `cublas`: better math-mode and launch configuration behavior
 - `memory_transfer`: less time lost to the wrong host/device path
-- `grace_coherent_memory`: on GB200/GB300 the placement choice dominates runtime; on other hosts the fallback transfer strategy should still beat the generic path
+- `grace_coherent_memory`: on GB200/GB300 the placement choice dominates runtime; on non-Grace hosts the benchmark should fail fast with `SKIPPED:`
 
 ## Repro Commands
 ```bash
@@ -80,8 +80,8 @@ python -m cli.aisp bench run --targets ch02 --profile minimal
 ## Validation Checklist
 - `python -m ch02.hardware_info` records the correct device name, SM count, and HBM size for every GPU in the system.
 - `python -m ch02.nvlink_c2c_bandwidth_benchmark` reports the host↔device and bidirectional bandwidth table for the active topology.
-- Running the coherency sample on GB200/GB300 shows zero-copy benefiting sub-MB transfers while large transfers favor explicit H2D copies; on non-Grace hosts the benchmark should log that it is using the fallback transfer path instead of true coherency.
+- Running the coherency sample on GB200/GB300 shows zero-copy benefiting sub-MB transfers while large transfers favor explicit H2D copies; on non-Grace hosts the benchmark should stop immediately with a `SKIPPED:` capability diagnostic.
 
 ## Notes
-- Grace-only coherency tests require GB200/GB300 nodes; on PCIe-only or discrete-GPU Blackwell hosts the Python benchmark pair falls back to a transfer-strategy comparison and logs that downgrade explicitly.
+- Grace-only coherency tests require GB200/GB300 nodes; on PCIe-only or discrete-GPU Blackwell hosts the Python benchmark pair fails fast with an explicit unsupported-capability diagnostic.
 - `Makefile` builds both CUDA and CPU tools so results can be compared without leaving the chapter.

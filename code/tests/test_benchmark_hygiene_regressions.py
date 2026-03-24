@@ -103,17 +103,19 @@ def test_ch07_and_ch08_sources_do_not_ship_artificial_baseline_penalties() -> No
     assert "expensive_transform(-value" not in threshold_source
 
 
-def test_ch07_tma_copy_surfaces_neighbor_copy_plus_descriptor_tma_story() -> None:
+def test_ch07_tma_copy_surfaces_scalar_vs_strict_descriptor_tma_story() -> None:
     optimized_wrapper = (REPO_ROOT / "ch07" / "optimized_tma_copy.py").read_text(encoding="utf-8")
     optimized_cuda = (REPO_ROOT / "ch07" / "optimized_tma_copy.cu").read_text(encoding="utf-8")
     readme = (REPO_ROOT / "ch07" / "README.md").read_text(encoding="utf-8")
 
     assert "Pipeline + Tensor-Map Neighbor Copy" in optimized_wrapper
+    assert "strict `tma_copy` path" in optimized_wrapper
     assert "dst[global_row * N + global_col] = combine_values(" in optimized_cuda
     assert "output_tile[local_row][local_col] = combine_values(" in optimized_cuda
     assert "output_tile" in optimized_cuda
-    assert "tma_bulk_tensor_2d" in readme
-    assert "legacy async-neighbor demo" in readme
+    assert "usable tensor-map/TMA support" in optimized_cuda
+    assert "legacy async-neighbor demo" not in readme
+    assert "strict tensor-map/TMA-capable run only" in readme
 
 
 def test_occupancy_tuning_variants_match_their_filenames() -> None:

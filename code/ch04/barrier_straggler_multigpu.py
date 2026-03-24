@@ -12,16 +12,7 @@ import time
 import torch
 import torch.distributed as dist
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 from core.benchmark.gpu_requirements import require_min_gpus
 
@@ -31,7 +22,7 @@ def init_distributed() -> tuple[int, int, torch.device]:
         raise RuntimeError("CUDA devices required for straggler demo.")
 
     if not dist.is_initialized():
-        setup_single_gpu_env()  # Auto-setup for single-GPU mode
+        setup_single_gpu_env("barrier_straggler_multigpu", min_world_size=2)
         local_rank = resolve_local_rank()
         torch.cuda.set_device(local_rank)
         # Use GLOO backend since monitored_barrier is only implemented for GLOO
@@ -70,4 +61,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

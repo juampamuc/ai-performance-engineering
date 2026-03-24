@@ -1,21 +1,12 @@
-"""Baseline bandwidth benchmark suite (single GPU)."""
+"""Baseline bandwidth benchmark suite via the strict multi-GPU wrapper."""
 
 from __future__ import annotations
 
 from core.harness.benchmark_harness import BaseBenchmark
 
-from ch04.single_gpu_transfer_common import SingleGPUTransferBenchmark, attach_benchmark_metadata
+from ch04.baseline_bandwidth_benchmark_suite_multigpu import BandwidthSuiteMultiGPU
 
 
 def get_benchmark() -> BaseBenchmark:
-    bench = SingleGPUTransferBenchmark(
-        size_mb=256,
-        inner_iterations=20,
-        num_chunks=8,
-        use_streams=False,
-        sync_per_chunk=True,
-        collective_type="bandwidth_suite",
-    )
-    return attach_benchmark_metadata(bench, __file__)
-
+    return BandwidthSuiteMultiGPU()
 

@@ -58,8 +58,8 @@ class BaselineFlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchma
         self.batch_size = 1
         self.num_heads = 16
         self.head_dim = 64
-        self.seq_len = 2048
-        self.window_size = 256
+        self.seq_len = 4096
+        self.window_size = 128
         self.embed_dim = self.num_heads * self.head_dim
         self.dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
@@ -149,5 +149,4 @@ class BaselineFlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchma
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineFlexAttentionSparseBenchmark()
-
 

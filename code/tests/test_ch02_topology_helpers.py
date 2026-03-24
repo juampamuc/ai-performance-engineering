@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ch02.baseline_grace_coherent_memory as baseline_grace_coherent_memory
 import ch02.cpu_gpu_topology_aware as cpu_gpu_topology_aware
 import ch02.optimized_grace_coherent_memory as optimized_grace_coherent_memory
 
@@ -108,3 +109,37 @@ def test_optimized_grace_coherent_memory_reads_negative_sysfs_numa_as_unknown(
     monkeypatch.setattr(optimized_grace_coherent_memory, "Path", _FakePath)
 
     assert optimized_grace_coherent_memory._gpu_numa_node_from_sysfs(0) is None
+
+
+def test_grace_coherent_memory_baseline_fails_fast_without_grace_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import platform
+
+    monkeypatch.setattr(baseline_grace_coherent_memory.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        baseline_grace_coherent_memory.torch.cuda,
+        "get_device_properties",
+        lambda idx: SimpleNamespace(major=12, minor=1),
+    )
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+
+    with pytest.raises(RuntimeError, match="SKIPPED: grace_coherent_memory requires Grace-Blackwell coherent memory support"):
+        baseline_grace_coherent_memory.BaselineGraceCoherentMemory()
+
+
+def test_grace_coherent_memory_optimized_fails_fast_without_grace_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import platform
+
+    monkeypatch.setattr(optimized_grace_coherent_memory.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        optimized_grace_coherent_memory.torch.cuda,
+        "get_device_properties",
+        lambda idx: SimpleNamespace(major=12, minor=1),
+    )
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+
+    with pytest.raises(RuntimeError, match="SKIPPED: grace_coherent_memory requires Grace-Blackwell coherent memory support"):
+        optimized_grace_coherent_memory.OptimizedGraceCoherentMemory()

@@ -19,13 +19,19 @@ from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_CUDA_SKIP_REASON = "SKIPPED: grace_coherent_memory requires CUDA"
+_GRACE_SKIP_REASON = (
+    "SKIPPED: grace_coherent_memory requires Grace-Blackwell coherent memory support "
+    "(GB200/GB300 on Grace CPU hosts)."
+)
+
 
 class BaselineGraceCoherentMemory:
     """Baseline coherent memory access without optimization."""
     
     def __init__(self, size_mb: int = 256, iterations: int = 100):
         if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for Grace coherent memory benchmark")
+            raise RuntimeError(_CUDA_SKIP_REASON)
         self.size_mb = size_mb
         self.iterations = iterations
         self.device = torch.device("cuda")
@@ -33,7 +39,7 @@ class BaselineGraceCoherentMemory:
         # Check if we're on Grace-Blackwell
         self.is_grace_blackwell = self._detect_grace_blackwell()
         if not self.is_grace_blackwell:
-            logger.warning("Not running on Grace-Blackwell; using fallback path")
+            raise RuntimeError(_GRACE_SKIP_REASON)
     
     def _detect_grace_blackwell(self) -> bool:
         """Detect if running on Grace-Blackwell platform."""

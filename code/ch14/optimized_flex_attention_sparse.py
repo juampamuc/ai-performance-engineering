@@ -260,8 +260,8 @@ class FlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.num_heads = 16
         self.head_dim = 64
         self.hidden_dim = self.num_heads * self.head_dim
-        self.seq_len = 2048
-        self.window_size = 256
+        self.seq_len = 4096
+        self.window_size = 128
         self._last = 0.0
         self.parameter_count: int = 0
         self._verification_payload = None

@@ -9,7 +9,9 @@ import sys
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 
+from ch04.distributed_helper import run_main_with_skip_status
 from ch04.nvshmem_pipeline_parallel_multigpu import main as nvshmem_main
 from core.harness.benchmark_harness import (
     BaseBenchmark,
@@ -17,6 +19,7 @@ from core.harness.benchmark_harness import (
     LaunchVia,
     TorchrunLaunchSpec,
 )
+from core.optimization.symmetric_memory_patch import symmetric_memory_available
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
@@ -32,6 +35,8 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires >=2 GPUs")
+        if not symmetric_memory_available():
+            raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires NVSHMEM or SymmetricMemory support")
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
@@ -41,8 +46,8 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         original_disable = os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE")
         original_async = os.environ.get("AISP_SYMMEM_PIPELINE_ASYNC")
         try:
-            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "1"
-            os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = "1"
+            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0"
+            os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = "0"
             sys.argv = [
                 original_argv[0],
                 "--schedule",
@@ -67,6 +72,11 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
                 os.environ.pop("AISP_SYMMEM_PIPELINE_ASYNC", None)
             else:
                 os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = original_async
+
+    def teardown(self) -> None:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        torch.cuda.empty_cache()
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:
@@ -104,22 +114,12 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
             measurement_timeout_seconds=300,
         )
 
-    def _prepare_verification_payload(self) -> None:
-        if hasattr(self, "_subprocess_verify_output"):
-            return
-        self.capture_verification_payload()
-        self._subprocess_verify_output = self.get_verify_output()
-        self._subprocess_output_tolerance = self.get_output_tolerance()
-        self._subprocess_input_signature = self.get_input_signature()
-
     def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
-        self._prepare_verification_payload()
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=[],
             multi_gpu_required=True,
             name="baseline_nvshmem_pipeline_parallel_multigpu",
-            config_arg_map={"iterations": "--iterations", "warmup": "--warmup"},
         )
 
 
@@ -136,3 +136,14 @@ def get_benchmark() -> BaseBenchmark:
     return NVSHMEMPipelineParallelMultiGPU()
 
 
+def main() -> None:
+    bench = NVSHMEMPipelineParallelMultiGPU()
+    bench.setup()
+    try:
+        bench.benchmark_fn()
+    finally:
+        bench.teardown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_main_with_skip_status(main))

@@ -1,9 +1,8 @@
-"""Harness wrapper for the optimized `tma_copy` neighbor-copy path.
+"""Harness wrapper for the optimized strict `tma_copy` path.
 
-The cleanest descriptor-backed TMA benchmark in the chapter remains
-`tma_bulk_tensor_2d`. This wrapper now surfaces the upgraded neighbor-copy demo,
-which prefers a real 2D tensor-map descriptor path when the local CUDA runtime
-supports it and otherwise falls back to the async-pipeline implementation.
+`tma_copy` now means a real tensor-map/TMA-capable run only. Unsupported
+hosts skip instead of publishing an async-pipeline fallback under the same
+benchmark name.
 """
 
 from __future__ import annotations
@@ -15,10 +14,11 @@ import torch
 
 from core.harness.benchmark_harness import BaseBenchmark
 from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
+from core.harness.hardware_capabilities import ensure_tma_box_supported
 
 
 class OptimizedTMACopyBenchmark(CudaBinaryBenchmark):
-    """Wrap the staged neighbor-copy binary with optional descriptor-backed TMA."""
+    """Wrap the descriptor-backed TMA neighbor-copy binary."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -44,6 +44,10 @@ class OptimizedTMACopyBenchmark(CudaBinaryBenchmark):
             bytes_per_iteration=float(n_elems * bytes_per_element),
         )
 
+    def setup(self) -> None:
+        ensure_tma_box_supported((64, 64), description="tma_copy")
+        super().setup()
+
     def get_custom_metrics(self) -> Optional[dict]:
         """Return memory access metrics."""
         cuda_version = torch.version.cuda or "0.0"
@@ -52,10 +56,10 @@ class OptimizedTMACopyBenchmark(CudaBinaryBenchmark):
             "copy.async_pipeline_1d": 1.0,
             "copy.tensor_map_2d_requested": 1.0,
             "copy.tensor_map_2d_runtime_candidate": 1.0 if cuda_major >= 13 else 0.0,
+            "copy.tensor_map_2d_required": 1.0,
         }
 
 def get_benchmark() -> BaseBenchmark:
     """Factory for discover_benchmarks()."""
     return OptimizedTMACopyBenchmark()
-
 

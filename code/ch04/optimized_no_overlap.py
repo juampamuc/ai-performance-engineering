@@ -1,10 +1,7 @@
-"""Optimized wrapper for the overlap-enabled DDP demo.
+"""Optimized wrapper for the strict overlap-enabled DDP benchmark.
 
-This matches the chapter narrative and expectations by exposing the
-overlapped training path as `optimized_no_overlap.py`, reusing the
-implementation from `ddp_overlap.py`. On single-GPU hosts this remains a
-simulation of overlap using a host-buffer round-trip stand-in; the real
-multi-GPU collective benchmark lives in the `*_multigpu.py` variants.
+This public target now requires a real torchrun launch with >=2 GPUs. It no
+longer publishes a single-GPU overlap simulation.
 """
 
 from __future__ import annotations
@@ -15,4 +12,3 @@ from ch04.ddp_overlap import OptimizedOverlapDdpBenchmark
 def get_benchmark() -> OptimizedOverlapDdpBenchmark:
     """Factory used by the harness."""
     return OptimizedOverlapDdpBenchmark()
-

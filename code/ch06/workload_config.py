@@ -9,9 +9,9 @@ from dataclasses import dataclass
 class Chapter6Workload:
     """Knobs that scale the ILP-focused benchmarks in Chapter 6."""
 
-    attention_batch: int = 4
-    attention_embed_dim: int = 512
-    attention_heads: int = 8
+    attention_batch: int = 8
+    attention_embed_dim: int = 1024
+    attention_heads: int = 16
     attention_tokens: int = 2048
     attention_chunk_tokens: int = 4
 

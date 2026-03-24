@@ -1,21 +1,14 @@
-"""Optimized NVSHMEM vs NCCL benchmark analogue (single GPU)."""
+"""Optimized NVSHMEM vs NCCL benchmark via the strict multi-GPU wrapper."""
 
 from __future__ import annotations
 
 from core.harness.benchmark_harness import BaseBenchmark
 
-from ch04.single_gpu_transfer_common import SingleGPUTransferBenchmark, attach_benchmark_metadata
+from ch04.optimized_nvshmem_vs_nccl_benchmark_multigpu import (
+    OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU,
+)
 
 
 def get_benchmark() -> BaseBenchmark:
-    bench = SingleGPUTransferBenchmark(
-        size_mb=256,
-        inner_iterations=36,
-        num_chunks=8,
-        use_streams=True,
-        sync_per_chunk=False,
-        collective_type="nvshmem_vs_nccl",
-    )
-    return attach_benchmark_metadata(bench, __file__)
-
+    return OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU()
 

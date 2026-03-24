@@ -78,16 +78,7 @@ from core.optimization.symmetric_memory_patch import (
     symmetric_memory_available,
 )
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import argparse
@@ -109,7 +100,9 @@ import torch.nn as nn
 
 def init_distributed() -> Tuple[int, int, int]:
     """Initialize distributed process group."""
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    setup_single_gpu_env("symmetric_memory_data_structures", min_world_size=2)
+    if not symmetric_memory_available():
+        raise RuntimeError("SKIPPED: symmetric_memory_data_structures requires SymmetricMemory support")
     
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
@@ -789,4 +782,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

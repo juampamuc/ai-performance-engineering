@@ -5,15 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 
 import os
+import sys
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from ch04.nccl_blackwell_config import (
     configure_nccl_for_blackwell,
     configure_nccl_for_gb200_gb300,
     configure_nccl_for_multigpu,
     detect_b200_multigpu_topology,
 )
+from ch04.distributed_helper import run_main_with_skip_status
 from ch04.nvshmem_training_patterns import main as nvshmem_train_patterns_main
 from core.harness.benchmark_harness import (
     BaseBenchmark,
@@ -50,31 +53,31 @@ class OptimizedNVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBen
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_training_patterns requires >=2 GPUs")
-        if symmetric_memory_available():
-            _configure_blackwell_nccl()
+        if not symmetric_memory_available():
+            raise RuntimeError("SKIPPED: nvshmem_training_patterns requires NVSHMEM or SymmetricMemory support")
+        _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
 
     def benchmark_fn(self) -> None:
         original_argv = sys.argv[:]
-        original_disable = os.environ.get("AISP_DISABLE_SYMMETRIC_MEMORY")
         original_grad = os.environ.get("AISP_GRAD_SYNC_NAIVE")
         try:
-            os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "0" if symmetric_memory_available() else "1"
             os.environ["AISP_GRAD_SYNC_NAIVE"] = "0"
             sys.argv = [original_argv[0], "--pattern", "gradient", "--benchmark"]
             nvshmem_train_patterns_main()
         finally:
             sys.argv = original_argv
-            if original_disable is None:
-                os.environ.pop("AISP_DISABLE_SYMMETRIC_MEMORY", None)
-            else:
-                os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = original_disable
             if original_grad is None:
                 os.environ.pop("AISP_GRAD_SYNC_NAIVE", None)
             else:
                 os.environ["AISP_GRAD_SYNC_NAIVE"] = original_grad
+
+    def teardown(self) -> None:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        torch.cuda.empty_cache()
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:
@@ -112,16 +115,7 @@ class OptimizedNVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBen
             measurement_timeout_seconds=300,
         )
 
-    def _prepare_verification_payload(self) -> None:
-        if hasattr(self, "_subprocess_verify_output"):
-            return
-        self.capture_verification_payload()
-        self._subprocess_verify_output = self.get_verify_output()
-        self._subprocess_output_tolerance = self.get_output_tolerance()
-        self._subprocess_input_signature = self.get_input_signature()
-
     def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
-        self._prepare_verification_payload()
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=[],
@@ -143,3 +137,14 @@ def get_benchmark() -> BaseBenchmark:
     return OptimizedNVSHMEMTrainingPatternsMultiGPU()
 
 
+def main() -> None:
+    bench = OptimizedNVSHMEMTrainingPatternsMultiGPU()
+    bench.setup()
+    try:
+        bench.benchmark_fn()
+    finally:
+        bench.teardown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_main_with_skip_status(main))

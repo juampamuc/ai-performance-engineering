@@ -39,8 +39,8 @@ Usage:
     # ZeRO-style sharding
     torchrun --nproc_per_node=<num_gpus> symmetric_memory_training_advanced.py --demo zero
 
-All patterns gracefully degrade to NCCL-based fallbacks when symmetric memory
-is unavailable, allowing development on non-B200 hardware.
+All patterns now fail fast with `SKIPPED:` when the required multi-GPU launch
+or symmetric-memory support is unavailable.
 
 Educational Notes:
 ------------------
@@ -66,16 +66,7 @@ import os
 
 from core.common.device_utils import resolve_local_rank
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import argparse
@@ -112,9 +103,12 @@ def symmetric_memory_available() -> bool:
 
 def init_distributed(allow_single_gpu: bool = False) -> Tuple[int, int, int]:
     """Initialize distributed process group."""
-    if torch.cuda.device_count() < 2 and not allow_single_gpu:
-        require_min_gpus(2, script_name="symmetric_memory_training_advanced.py")
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    if allow_single_gpu:
+        raise RuntimeError("SKIPPED: symmetric_memory_training_advanced requires >=2 GPUs")
+    require_min_gpus(2, script_name="symmetric_memory_training_advanced.py")
+    setup_single_gpu_env("symmetric_memory_training_advanced", min_world_size=2)
+    if not symmetric_memory_available():
+        raise RuntimeError("SKIPPED: symmetric_memory_training_advanced requires SymmetricMemory support")
     
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
@@ -626,7 +620,7 @@ class SymmetricMemoryOptimizer:
 
     def synchronize_parameters(self, rank: int) -> None:
         """
-        Synchronize parameters across ranks (only needed for fallback).
+        Synchronize parameters across ranks after local optimizer updates.
         
         With symmetric memory, this is a no-op since parameters are already shared.
         Without symmetric memory, we need explicit broadcast.
@@ -831,12 +825,12 @@ def main() -> None:
     parser.add_argument(
         "--disable-symmetric",
         action="store_true",
-        help="Force disable symmetric memory and use fallback paths (baseline comparison).",
+        help="Force-disable symmetric memory to validate strict capability gating.",
     )
     parser.add_argument(
         "--allow-single-gpu",
         action="store_true",
-        help="Allow running on a single GPU (uses fallback paths when symmetric memory is unavailable).",
+        help="Request the removed single-GPU mode; the script now exits with `SKIPPED:`.",
     )
     parser.add_argument("--steps", type=int, default=20, help="Training steps per demo.")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for optimizer demo.")
@@ -885,4 +879,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

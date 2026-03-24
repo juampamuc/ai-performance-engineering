@@ -98,10 +98,10 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
     def __init__(self):
         super().__init__()
         # Larger workload to amortize compile overhead and show benefits
-        self.hidden = 1536
-        self.num_heads = 12
-        self.mlp_hidden = 12288
-        self.batch_size = 32
+        self.hidden = 2048
+        self.num_heads = 16
+        self.mlp_hidden = 16384
+        self.batch_size = 16
         self.sequence_schedule: List[int] = [256, 512, 1024, 1536]
         self._step = 0
 

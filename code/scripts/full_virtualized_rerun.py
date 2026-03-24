@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -79,10 +80,26 @@ EXPECTED_UNSUPPORTED_RUNTIME_REASON = "expected_unsupported_runtime_capability"
 EXPECTED_UNSUPPORTED_PORTABLE_TOKENS = (
     "requires multiple gpus",
     "requires at least 2 gpus",
+    "requires >=2 gpus",
+    "requires >= 2 gpus",
     "insufficient gpus available",
 )
 EXPECTED_UNSUPPORTED_RUNTIME_TOKENS = (
     "missing batched_reduce_scatter_hook required for optimized zero-2",
+    "requires grace-blackwell coherent memory support",
+    "requires torchrun/distributed launch context",
+    "requires nvshmem or symmetricmemory support",
+    "requires nvshmem or symmetric memory support",
+    "requires symmetricmemory support",
+    "requires symmetric memory support",
+    "requires usable cufile/gds support",
+    "requires usable tensor-map/tma support",
+    "requires symmetric-memory pipeline support",
+    "requires grace cpu support",
+    "requires sm90 hopper hardware",
+    "requires cuda 12.0+ and sm90+",
+    "algorithm unavailable on this driver/toolchain",
+    "requires a native cublaslt heuristic for this exact benchmark",
 )
 
 INFORMATIONAL_BENCHMARKS: Dict[str, set[str]] = {
@@ -121,6 +138,15 @@ def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _write_jsonl_atomic(path: Path, payloads: Iterable[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        for payload in payloads:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    tmp_path.replace(path)
 
 
 def _slugify_target(target: str, *, max_len: int = 96) -> str:
@@ -282,10 +308,24 @@ def _canonicalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
         canonical_target = _canonicalize_target(target)
         next_record = dict(record)
         next_record["target"] = canonical_target
-        next_record["benchmarks"] = [
-            _canonicalize_identity_fields(dict(bench))
+        normalized_benchmarks = [
+            _normalize_target_benchmark_entry(bench)
             for bench in list(next_record.get("benchmarks") or [])
         ]
+        next_record["benchmarks"] = normalized_benchmarks
+        queued_problem_count = 0
+        expected_unsupported_count = 0
+        written_expectation_count = 0
+        for bench in normalized_benchmarks:
+            if _is_expected_unsupported_entry(bench):
+                expected_unsupported_count += 1
+            elif str(bench.get("action") or "").strip().lower() == "written":
+                written_expectation_count += 1
+            elif list(bench.get("queue_reasons") or []):
+                queued_problem_count += 1
+        next_record["queued_problem_count"] = queued_problem_count
+        next_record["expected_unsupported_count"] = expected_unsupported_count
+        next_record["written_expectation_count"] = written_expectation_count
         canonical_records[str(canonical_target)] = next_record
     updated["target_records"] = canonical_records
     return updated
@@ -294,6 +334,137 @@ def _canonicalize_state(state: Dict[str, Any]) -> Dict[str, Any]:
 def _save_state(state_path: Path, state: Dict[str, Any]) -> None:
     state["updated_at"] = _utc_now_iso()
     _atomic_write_json(state_path, state)
+
+
+def _normalize_target_benchmark_entry(payload: Dict[str, Any]) -> Dict[str, Any]:
+    updated = _canonicalize_identity_fields(dict(payload))
+    benchmark_status = str(updated.get("benchmark_status") or updated.get("status") or "").strip()
+    if benchmark_status:
+        updated["benchmark_status"] = benchmark_status
+    unsupported_reason, unsupported_detail = _expected_unsupported_reason_for_summary(updated)
+    if unsupported_reason:
+        updated["classification"] = unsupported_reason
+        updated["queue_reasons"] = [unsupported_reason]
+        if unsupported_detail:
+            updated["error"] = unsupported_detail
+    return updated
+
+
+def _is_expected_unsupported_entry(payload: Dict[str, Any]) -> bool:
+    classification = str(payload.get("classification") or "").strip()
+    if classification in {EXPECTED_UNSUPPORTED_PORTABLE_REASON, EXPECTED_UNSUPPORTED_RUNTIME_REASON}:
+        return True
+    queue_reasons = set(str(reason).strip() for reason in (payload.get("queue_reasons") or []))
+    return bool(queue_reasons & {EXPECTED_UNSUPPORTED_PORTABLE_REASON, EXPECTED_UNSUPPORTED_RUNTIME_REASON})
+
+
+def _expected_unsupported_from_optimization_skips(bench: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    optimizations = list(bench.get("optimizations") or [])
+    if not optimizations or any(str(opt.get("status") or "").strip().lower() == "succeeded" for opt in optimizations):
+        return None, None
+    matched_reasons: List[str] = []
+    matched_details: List[str] = []
+    for opt in optimizations:
+        if str(opt.get("status") or "").strip().lower() != "skipped":
+            return None, None
+        detail = str(opt.get("error") or opt.get("skip_reason") or "").strip()
+        reason = _expected_unsupported_portable_reason({"status": "skipped", "error": detail})
+        if not reason:
+            return None, None
+        matched_reasons.append(reason)
+        if detail:
+            matched_details.append(detail)
+    if EXPECTED_UNSUPPORTED_RUNTIME_REASON in matched_reasons:
+        return EXPECTED_UNSUPPORTED_RUNTIME_REASON, matched_details[0] if matched_details else None
+    if EXPECTED_UNSUPPORTED_PORTABLE_REASON in matched_reasons:
+        return EXPECTED_UNSUPPORTED_PORTABLE_REASON, matched_details[0] if matched_details else None
+    return None, None
+
+
+def _load_matching_benchmark_from_results_json(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    results_json = payload.get("results_json")
+    example = str(payload.get("example") or "").strip()
+    if not results_json or not example:
+        return None
+    path = Path(str(results_json))
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    for chapter_result in data.get("results") or []:
+        for bench in chapter_result.get("benchmarks") or []:
+            if str(bench.get("example") or "").strip() == example:
+                return bench
+    return None
+
+
+def _expected_unsupported_reason_for_summary(payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    benchmark_status = str(payload.get("benchmark_status") or payload.get("status") or "").strip()
+    detail = str(payload.get("error") or "").strip()
+    top_level_reason = _expected_unsupported_portable_reason({"status": benchmark_status, "error": detail})
+    if top_level_reason:
+        return top_level_reason, detail or None
+    queue_reasons = set(str(reason).strip() for reason in (payload.get("queue_reasons") or []))
+    if "missing_successful_optimization" not in queue_reasons:
+        return None, None
+    bench = _load_matching_benchmark_from_results_json(payload)
+    if not bench:
+        return None, None
+    return _expected_unsupported_from_optimization_skips(bench)
+
+
+def _record_sort_key(record: Dict[str, Any]) -> Tuple[str, str, str]:
+    return (
+        str(record.get("finished_at") or record.get("started_at") or ""),
+        str(record.get("target") or ""),
+        str(record.get("run_id") or ""),
+    )
+
+
+def _rewrite_queue_ledgers_from_state(paths: Dict[str, Path], state: Dict[str, Any]) -> None:
+    problems: List[Dict[str, Any]] = []
+    unsupported: List[Dict[str, Any]] = []
+    target_records = state.get("target_records") or {}
+    records = sorted(target_records.values(), key=_record_sort_key)
+    for record in records:
+        for bench in list(record.get("benchmarks") or []):
+            normalized = _normalize_target_benchmark_entry(bench)
+            if _is_expected_unsupported_entry(normalized):
+                unsupported.append(normalized)
+            elif list(normalized.get("queue_reasons") or []):
+                problems.append(normalized)
+    _write_jsonl_atomic(paths["problems"], problems)
+    _write_jsonl_atomic(paths["unsupported"], unsupported)
+
+
+_WORKER_LOG_LINE = re.compile(
+    r"^\[(?P<timestamp>[^\]]+)\] finished target (?P<target>[^:]+:[^:]+): "
+    r"rc=(?P<rc>\d+) written_expectations=(?P<written>\d+) queued_problems=(?P<queued>\d+)$"
+)
+
+
+def _backfill_written_expectation_total(worker_log_path: Path, state: Dict[str, Any]) -> None:
+    if not worker_log_path.exists():
+        return
+    total = 0
+    try:
+        for line in worker_log_path.read_text(encoding="utf-8").splitlines():
+            match = _WORKER_LOG_LINE.match(line.strip())
+            if not match:
+                continue
+            total += int(match.group("written"))
+    except OSError:
+        return
+    state["written_expectation_total"] = max(int(state.get("written_expectation_total", 0)), total)
+
+
+def _persist_state(paths: Dict[str, Path], state: Dict[str, Any]) -> None:
+    _finalize_state_counts(state)
+    _backfill_written_expectation_total(paths["worker_log"], state)
+    _save_state(paths["state"], state)
+    _rewrite_queue_ledgers_from_state(paths, state)
 
 
 def _lock_queue(queue_root: Path):
@@ -966,6 +1137,27 @@ def _run_target(
             target_record["benchmarks"].append(unsupported_payload)
             target_record["expected_unsupported_count"] += 1
             continue
+        optimization_unsupported_reason, optimization_unsupported_detail = _expected_unsupported_from_optimization_skips(bench)
+        if optimization_unsupported_reason:
+            unsupported_payload = _summarize_problem(
+                target=target,
+                run_id=run_id,
+                artifact_root=artifact_root,
+                results_json=results_json,
+                manifest_path=manifest_path if manifest_path.exists() else None,
+                return_code=return_code,
+                bench=bench,
+                reasons=[optimization_unsupported_reason],
+                extra={
+                    "classification": optimization_unsupported_reason,
+                    "error": optimization_unsupported_detail,
+                    **bench_extra,
+                },
+            )
+            _append_jsonl(paths["unsupported"], unsupported_payload)
+            target_record["benchmarks"].append(unsupported_payload)
+            target_record["expected_unsupported_count"] += 1
+            continue
 
         if bench.get("status") != "succeeded":
             bench_reasons.append(str(bench.get("status") or "failed"))
@@ -1031,6 +1223,7 @@ def _run_target(
                     extra={"action": "written", **bench_extra},
                 )
                 _append_jsonl(paths["writes"], write_payload)
+                target_record["benchmarks"].append(write_payload)
                 target_record["written_expectation_count"] += 1
             else:
                 bench_reasons.extend(reasons)
@@ -1090,8 +1283,7 @@ def _command_start(args: argparse.Namespace) -> int:
 
         added = _queue_from_args(repo_root, state, args)
         state["stop_requested"] = False
-        _finalize_state_counts(state)
-        _save_state(paths["state"], state)
+        _persist_state(paths, state)
         paths["targets"].write_text("".join(f"{target}\n" for target in state.get("discovered_targets", [])), encoding="utf-8")
 
         worker_pid = int(state.get("worker_pid") or 0)
@@ -1114,7 +1306,7 @@ def _command_start(args: argparse.Namespace) -> int:
                 "--run-root",
                 str(run_root),
             ]
-            _save_state(paths["state"], state)
+            _persist_state(paths, state)
     finally:
         _unlock_queue(lock_handle)
 
@@ -1150,8 +1342,7 @@ def _command_enqueue(args: argparse.Namespace) -> int:
                 gpu_mem_clock_mhz=3996,
             )
         added = _queue_from_args(repo_root, state, args)
-        _finalize_state_counts(state)
-        _save_state(paths["state"], state)
+        _persist_state(paths, state)
         paths["targets"].write_text("".join(f"{target}\n" for target in state.get("discovered_targets", [])), encoding="utf-8")
         pending_count = len(state.get("pending_targets", []))
     finally:
@@ -1181,8 +1372,7 @@ def _command_retry_problems(args: argparse.Namespace) -> int:
                 gpu_mem_clock_mhz=3996,
             )
         added = _enqueue_targets(state, targets, force_rerun=True)
-        _finalize_state_counts(state)
-        _save_state(paths["state"], state)
+        _persist_state(paths, state)
         pending_count = len(state.get("pending_targets", []))
     finally:
         _unlock_queue(lock_handle)
@@ -1201,6 +1391,7 @@ def _command_status(args: argparse.Namespace) -> int:
         if not state:
             print("queue_state=missing")
             return 0
+        _persist_state(paths, state)
         worker_pid = int(state.get("worker_pid") or 0)
         payload = {
             "queue_root": str(queue_root),
@@ -1235,7 +1426,7 @@ def _command_stop(args: argparse.Namespace) -> int:
             print("queue_state=missing")
             return 0
         state["stop_requested"] = True
-        _save_state(paths["state"], state)
+        _persist_state(paths, state)
     finally:
         _unlock_queue(lock_handle)
     _log_message(paths["queue_log"], "graceful stop requested")
@@ -1265,7 +1456,7 @@ def _command_run_worker(args: argparse.Namespace) -> int:
         state["queue_root"] = str(queue_root)
         state["worker_pid"] = os.getpid()
         state["worker_started_at"] = state.get("worker_started_at") or _utc_now_iso()
-        _save_state(paths["state"], state)
+        _persist_state(paths, state)
     finally:
         _unlock_queue(lock_handle)
     _log_message(paths["queue_log"], f"worker loop entered pid={os.getpid()}")
@@ -1283,8 +1474,7 @@ def _command_run_worker(args: argparse.Namespace) -> int:
                 state["active_target"] = None
                 state["active_target_started_at"] = None
                 state["worker_pid"] = None
-                _finalize_state_counts(state)
-                _save_state(paths["state"], state)
+                _persist_state(paths, state)
                 target = None
                 exit_reason = "graceful"
             else:
@@ -1293,8 +1483,7 @@ def _command_run_worker(args: argparse.Namespace) -> int:
                     state["active_target"] = None
                     state["active_target_started_at"] = None
                     state["worker_pid"] = None
-                    _finalize_state_counts(state)
-                    _save_state(paths["state"], state)
+                    _persist_state(paths, state)
                     target = None
                     exit_reason = "empty"
                 else:
@@ -1302,7 +1491,7 @@ def _command_run_worker(args: argparse.Namespace) -> int:
                     state["pending_targets"] = pending_targets
                     state["active_target"] = target
                     state["active_target_started_at"] = _utc_now_iso()
-                    _save_state(paths["state"], state)
+                    _persist_state(paths, state)
                     exit_reason = None
         finally:
             _unlock_queue(lock_handle)
@@ -1332,8 +1521,7 @@ def _command_run_worker(args: argparse.Namespace) -> int:
             latest_state.setdefault("target_records", {})[target] = target_record
             latest_state["active_target"] = None
             latest_state["active_target_started_at"] = None
-            _finalize_state_counts(latest_state)
-            _save_state(paths["state"], latest_state)
+            _persist_state(paths, latest_state)
         finally:
             _unlock_queue(lock_handle)
 

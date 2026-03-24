@@ -61,7 +61,7 @@ python -m ch05.gds_cufile_minimal /tmp/gds_test_file.bin 1073741824 --generate
 | `baseline_ai.py`, `optimized_ai.py`, `storage_io_optimization.py` | LLM-style token pipelines showcasing overlapping compute with streaming reads and prefetch. `ai` is kept as an informational overlap/control demo. |
 | `baseline_host_staged_reduction.py`, `optimized_host_staged_reduction.py` | Single-GPU host-staged reduction vs on-device reduction. |
 | `baseline_distributed_multigpu.py`, `optimized_distributed_multigpu.py` | Actual multi-GPU reduction baseline (CPU staging) vs GPU-side reduce_add. |
-| `gds_cufile_minimal.py`, `gpudirect_storage_example.py` | GPUDirect Storage samples for verifying cuFile setup, buffer alignment, and throughput. |
+| `gds_cufile_minimal.py`, `gpudirect_storage_example.py` | GPUDirect Storage utilities that verify real cuFile/GDS capability; unsupported hosts fail fast with `SKIPPED:` instead of publishing host-staged fallback throughput. |
 | `compare.py`, `requirements.txt`, `expectations_{hardware_key}.json` | Harness entrypoint plus expectation baselines for spotting regressions. |
 
 ## Running the Benchmarks
@@ -77,9 +77,9 @@ python -m cli.aisp bench run --targets ch05 --profile minimal
 
 ## Validation Checklist
 - `python baseline_storage_cpu.py --inspect` exposes CPU wait time > GPU time; `optimized_storage_cpu.py` reverses the ratio with >=80% GPU utilization.
-- `python -m ch05.gds_cufile_minimal /tmp/gds_test_file.bin 1073741824 --generate` sustains multi-GB/s throughput when `/etc/cufile.json` is configured and NVMe advertises GPUDirect support.
+- `python -m ch05.gds_cufile_minimal /tmp/gds_test_file.bin 1073741824 --generate` now acts as a strict capability probe: it either confirms usable cuFile/GDS support or exits with `SKIPPED:`.
 - `python -m ch05.compare` remains useful for inspecting the `ai` overlap/control demo, but canonical chapter claims should come from `vectorization` and `storage_cpu`.
 
 ## Notes
-- GPUDirect scripts fall back to host-mediated reads when `libcufile.so` is unavailable, making it safe to run on dev laptops.
+- GPUDirect scripts no longer publish host-mediated fallback numbers under the cuFile/GDS names; unsupported hosts receive explicit `SKIPPED:` diagnostics instead.
 - `requirements.txt` captures the limited extra deps (like `lmdb`) needed for the dataset shims.

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-"""
-Safe GDS example that falls back to standard I/O if cufile fails.
+"""Minimal cuFile/GDS capability probe.
 
-This script demonstrates GPU Direct Storage (GDS) using PyTorch's
-high-level API rather than low-level cufile bindings, which can
-be hardware-sensitive.
+This script no longer publishes host-mediated throughput under a GPUDirect
+Storage name. It either confirms that usable cuFile/GDS support is present or
+fails fast with `SKIPPED:`.
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ import sys
 
 import argparse
 import os
-import time
 from pathlib import Path
 
 import torch
@@ -30,58 +28,30 @@ def _ensure_test_file(path: Path, size: int) -> None:
     print(f"[OK] Generated test file: {path} ({size} bytes)")
 
 
-def run_gds_read(path: Path, num_bytes: int) -> None:
-    """Read file directly to GPU memory using GDS or standard I/O."""
+def _require_gds_support() -> str:
     if not torch.cuda.is_available():
-        print("WARNING: CUDA device not available. Skipping GDS read.")
-        return
-
-    print(f"\n📖 Reading {num_bytes} bytes from {path}")
-    
-    # Method 1: Try memory-mapped I/O with direct GPU transfer
+        raise RuntimeError("SKIPPED: gds_cufile_minimal requires CUDA")
     try:
-        # Read file to pinned memory first
-        start = time.perf_counter()
-        
-        with open(path, "rb") as f:
-            # Use memory-mapped file for efficiency
-            import mmap
-            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                # Read data
-                data = mm.read(num_bytes)
-        
-        # Transfer to GPU
-        cpu_tensor = torch.frombuffer(data, dtype=torch.uint8)
-        # Use pinned memory for faster transfer
-        pinned_tensor = cpu_tensor.pin_memory()
-        gpu_tensor = pinned_tensor.to('cuda', non_blocking=True)
-        torch.cuda.synchronize()
-        
-        elapsed = time.perf_counter() - start
-        throughput_gbps = (num_bytes / elapsed) / 1e9
-        
-        print(f"[OK] Read {num_bytes} bytes in {elapsed * 1000:.2f} ms "
-              f"({throughput_gbps:.2f} GB/s)")
-        print(f"   Method: Memory-mapped I/O + GPU transfer")
-        
-        # Show preview
-        preview = gpu_tensor[:16].cpu().tolist()
-        preview_str = " ".join(f"{byte:02x}" for byte in preview)
-        print(f"   Buffer preview: {preview_str}")
-        
-        # Try to use GDS if available (experimental)
-        try:
-            from cuda.bindings import cufile
-            print(f"   ℹ️  cufile bindings available (version: {cufile.get_version()})")
-            print(f"   WARNING: Using standard I/O due to cufile compatibility issues")
-        except (ImportError, OSError):
-            print(f"   ℹ️  cufile bindings not available, using standard I/O")
-            
-    except Exception as exc:
-        print(f"ERROR: Error: {exc}")
-        import traceback
-        traceback.print_exc()
-        return
+        from cuda.bindings import cufile  # type: ignore
+    except (ImportError, OSError) as exc:
+        raise RuntimeError("SKIPPED: gds_cufile_minimal requires usable cuFile/GDS support") from exc
+
+    try:
+        version = str(cufile.get_version())
+    except Exception as exc:  # pragma: no cover - driver/library specific
+        raise RuntimeError("SKIPPED: gds_cufile_minimal requires usable cuFile/GDS support") from exc
+
+    if not Path("/etc/cufile.json").exists():
+        raise RuntimeError("SKIPPED: gds_cufile_minimal requires usable cuFile/GDS support")
+    return version
+
+
+def run_gds_probe(path: Path, num_bytes: int) -> None:
+    """Verify that cuFile/GDS prerequisites are present for the target file."""
+    version = _require_gds_support()
+    print(f"[OK] cuFile bindings detected (version: {version})")
+    print(f"[OK] GDS probe target: {path} ({num_bytes} bytes requested)")
+    print("[OK] Capability probe passed; use a real cuFile benchmark on a supported host for throughput numbers.")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -129,13 +99,17 @@ def main(argv: list[str] | None = None) -> int:
         if need_generate:
             _ensure_test_file(path, args.num_bytes)
     except OSError as exc:
-        print(f"WARNING: Unable to prepare file '{path}': {exc}")
-        return 0
+        print(f"SKIPPED: Unable to prepare file '{path}': {exc}")
+        return 3
 
     try:
-        run_gds_read(path, args.num_bytes)
-    except Exception as exc:
-        print(f"WARNING: Read failed: {exc}")
+        run_gds_probe(path, args.num_bytes)
+    except RuntimeError as exc:
+        message = str(exc).strip()
+        if message.startswith("SKIPPED:"):
+            print(message)
+            return 3
+        raise
     return 0
 
 

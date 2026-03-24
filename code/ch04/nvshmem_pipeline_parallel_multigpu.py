@@ -79,16 +79,7 @@ def symmem_pipeline_disabled() -> bool:
 def symmem_pipeline_async_enabled() -> bool:
     return os.environ.get("AISP_SYMMEM_PIPELINE_ASYNC", "").lower() in {"1", "true", "yes"}
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 from core.benchmark.gpu_requirements import require_min_gpus, warn_optimal_gpu_count
 
@@ -117,7 +108,11 @@ def init_distributed() -> Tuple[int, int, int]:
     if gpu_count < 2:
         require_min_gpus(2, script_name="nvshmem_pipeline_parallel_multigpu.py")
 
-    setup_single_gpu_env()
+    setup_single_gpu_env("nvshmem_pipeline_parallel_multigpu", min_world_size=2)
+    if symmem_pipeline_disabled():
+        raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires symmetric-memory pipeline support")
+    if not symmetric_memory_available():
+        raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires NVSHMEM or SymmetricMemory support")
 
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", max(1, gpu_count)))
@@ -805,4 +800,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

@@ -13,9 +13,9 @@
 //     cuda::pipeline overlaps global-memory fetch with the neighbor combine step
 //     Shared-memory staging reduces redundant reads and amortizes latency
 //
-// The 1D path stays focused on async pipeline staging. The 2D path uses real
-// CUtensorMap descriptors when the local runtime supports them and falls back
-// to the async-pipeline copy otherwise.
+// The 1D path stays focused on async pipeline staging. The 2D path now requires
+// real CUtensorMap descriptor support and fails fast if tensor maps are not
+// usable on the current runtime.
 
 #include <cooperative_groups.h>
 #include <cuda/pipeline>
@@ -395,8 +395,13 @@ float checksum(const std::vector<float>& data) {
 
 }  // namespace
 
-void benchmark_tma_2d(cudaDeviceProp& prop) {
+bool benchmark_tma_2d(cudaDeviceProp& prop) {
     std::printf("\n--- 2D Copy Benchmark ---\n");
+#if !TMA_CUDA13_AVAILABLE
+    (void)prop;
+    std::fprintf(stderr, "SKIPPED: optimized_tma_copy requires usable tensor-map/TMA support\n");
+    return false;
+#endif
     
     const int M = 4096;  // Matrix rows
     const int N = 4096;  // Matrix cols  
@@ -419,7 +424,6 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
                 (M + kTile2D_M - 1) / kTile2D_M);
 
     bool use_tensor_map = false;
-#if TMA_CUDA13_AVAILABLE
     CUtensorMap in_desc{};
     CUtensorMap out_desc{};
     auto encode = cuda_tma::load_cuTensorMapEncodeTiled();
@@ -447,13 +451,13 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
             kTile2D_M,
             CU_TENSOR_MAP_SWIZZLE_NONE);
 
-    if (use_tensor_map) {
-        descriptor_tma_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(in_desc, out_desc, M, N);
-    } else
-#endif
-    {
-        async_pipeline_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(d_mat_src, d_mat_dst, M, N);
+    if (!use_tensor_map) {
+        std::fprintf(stderr, "SKIPPED: optimized_tma_copy requires usable tensor-map/TMA support\n");
+        CUDA_CHECK(cudaFree(d_mat_src));
+        CUDA_CHECK(cudaFree(d_mat_dst));
+        return false;
     }
+    descriptor_tma_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(in_desc, out_desc, M, N);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     
@@ -465,14 +469,9 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
     constexpr int kIterations2D = 20;
     CUDA_CHECK(cudaEventRecord(start2d));
     for (int iter = 0; iter < kIterations2D; ++iter) {
-        if (use_tensor_map) {
+        {
             NVTX_RANGE("compute_kernel:descriptor_tma_2d_copy_kernel");
-#if TMA_CUDA13_AVAILABLE
             descriptor_tma_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(in_desc, out_desc, M, N);
-#endif
-        } else {
-            NVTX_RANGE("compute_kernel:async_pipeline_2d_copy_kernel");
-            async_pipeline_2d_copy_kernel<kTile2D_M, kTile2D_N><<<grid2d, block2d>>>(d_mat_src, d_mat_dst, M, N);
         }
     }
     CUDA_CHECK(cudaGetLastError());
@@ -497,7 +496,7 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
     const double efficiency = 100.0 * bandwidth_gbps / peak_bandwidth;
     
     std::printf("%s (%dx%d, tile=%dx%d): %.3f ms\n",
-                use_tensor_map ? "Descriptor-backed 2D TMA copy" : "Async-pipeline 2D copy fallback",
+                "Descriptor-backed 2D TMA copy",
                 M, N, kTile2D_M, kTile2D_N, avg_tma2d_ms);
     std::printf("  Achieved bandwidth: %.1f GB/s (%.1f%% of peak)\n",
                 bandwidth_gbps, efficiency);
@@ -506,6 +505,7 @@ void benchmark_tma_2d(cudaDeviceProp& prop) {
     CUDA_CHECK(cudaEventDestroy(stop2d));
     CUDA_CHECK(cudaFree(d_mat_src));
     CUDA_CHECK(cudaFree(d_mat_dst));
+    return true;
 }
 
 int main() {
@@ -596,7 +596,9 @@ int main() {
     CUDA_CHECK(cudaFree(d_dst));
 
     // Run TMA 2D benchmark (from PERFORMANCE_OPTIMIZATION_ANALYSIS.md)
-    benchmark_tma_2d(prop);
+    if (!benchmark_tma_2d(prop)) {
+        return 3;
+    }
 
     std::printf("\n=== Summary ===\n");
     std::printf("TMA 1D: Good for streaming linear data\n");

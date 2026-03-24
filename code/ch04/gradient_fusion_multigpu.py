@@ -14,11 +14,11 @@ import torch
 import torch.distributed as dist
 
 from core.benchmark.gpu_requirements import require_min_gpus
-from ch04.distributed_helper import setup_single_gpu_env
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 def init_distributed() -> Tuple[int, int, torch.device]:
-    setup_single_gpu_env()
+    setup_single_gpu_env("gradient_fusion_multigpu", min_world_size=2)
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
@@ -112,4 +112,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

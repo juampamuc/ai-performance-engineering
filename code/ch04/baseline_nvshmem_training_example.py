@@ -1,21 +1,11 @@
-"""Baseline NVSHMEM training example analogue (single GPU)."""
+"""Baseline NVSHMEM training example benchmark wrapper."""
 
 from __future__ import annotations
 
 from core.harness.benchmark_harness import BaseBenchmark
-
-from ch04.single_gpu_transfer_common import SingleGPUTransferBenchmark, attach_benchmark_metadata
+from ch04.baseline_nvshmem_training_example_multigpu import NVSHMEMTrainingExampleMultiGPU
 
 
 def get_benchmark() -> BaseBenchmark:
-    bench = SingleGPUTransferBenchmark(
-        size_mb=384,
-        inner_iterations=30,
-        num_chunks=8,
-        use_streams=False,
-        sync_per_chunk=True,
-        collective_type="nvshmem_training_example",
-    )
-    return attach_benchmark_metadata(bench, __file__)
-
+    return NVSHMEMTrainingExampleMultiGPU()
 

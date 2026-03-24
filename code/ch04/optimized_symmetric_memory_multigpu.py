@@ -18,6 +18,7 @@ from core.harness.benchmark_harness import (
     TorchrunLaunchSpec,
 )
 from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.optimization.symmetric_memory_patch import symmetric_memory_available
 from typing import Optional
 
 
@@ -45,6 +46,8 @@ class OptimizedSymmetricMemoryMultiGPU(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: symmetric_memory requires >=2 GPUs")
+        if not symmetric_memory_available():
+            raise RuntimeError("SKIPPED: symmetric_memory requires SymmetricMemory support")
         _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
@@ -100,7 +103,6 @@ class OptimizedSymmetricMemoryMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
-        self._prepare_verification_payload()
         script_path = Path(__file__).resolve().with_name("symmetric_memory_example.py")
         env = _configure_blackwell_nccl()
         return TorchrunLaunchSpec(
@@ -130,5 +132,3 @@ class OptimizedSymmetricMemoryMultiGPU(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedSymmetricMemoryMultiGPU()
-
-

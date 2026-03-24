@@ -109,7 +109,7 @@ class BaselineIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.output: Optional[torch.Tensor] = None
         self._verify_input: Optional[torch.Tensor] = None
         self.max_seq_len = 8192
-        self.num_layers = 1
+        self.num_layers = 2
         self.num_heads = 2
         self.head_dim = 32
         self.hidden_dim = self.num_heads * self.head_dim

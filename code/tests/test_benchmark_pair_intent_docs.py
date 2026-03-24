@@ -20,17 +20,17 @@ def test_ch02_optimized_memory_transfer_docstring_matches_async_pinned_copy() ->
     assert "NVLink-C2C" not in class_doc
 
 
-def test_ch04_no_overlap_docs_call_out_single_gpu_stand_in() -> None:
+def test_ch04_no_overlap_docs_require_real_distributed_launch() -> None:
     ddp_no_overlap_text = (REPO_ROOT / "ch04" / "ddp_no_overlap.py").read_text(encoding="utf-8")
     wrapper_text = (REPO_ROOT / "ch04" / "baseline_no_overlap.py").read_text(encoding="utf-8")
     readme_text = (REPO_ROOT / "ch04" / "README.md").read_text(encoding="utf-8")
 
-    assert "Single-GPU simulation" in ddp_no_overlap_text
-    assert "stand-in for" in ddp_no_overlap_text
-    assert "all-reduce latency" in ddp_no_overlap_text
-    assert "single-GPU simulation" in wrapper_text
-    assert "stand-in for" in wrapper_text
-    assert "Single-GPU overlap simulations" in readme_text
+    assert "Single-GPU simulation" not in ddp_no_overlap_text
+    assert "stand-in for" not in ddp_no_overlap_text
+    assert "communication overlap" in ddp_no_overlap_text
+    assert "single-GPU simulation" not in wrapper_text
+    assert "stand-in for" not in wrapper_text
+    assert "require `torchrun` plus `>=2` GPUs" in readme_text
 
 
 def test_ch05_optimized_storage_cpu_names_match_cpu_staged_path() -> None:

@@ -19,8 +19,8 @@ Usage (conceptual):
     torchrun --nproc_per_node=<num_gpus> nvshmem_training_example.py --demo hybrid
     torchrun --nproc_per_node=<num_gpus> nvshmem_training_example.py --demo pipeline
 
-Each demo degrades gracefully to NCCL when NVSHMEM or symmetric memory is
-unavailable, providing runnable fallbacks for development laptops.
+Each demo now fails fast with `SKIPPED:` when the required multi-GPU launch or
+NVSHMEM/symmetric-memory support is unavailable.
 """
 
 from __future__ import annotations
@@ -39,16 +39,7 @@ from core.optimization.symmetric_memory_patch import (
     symmetric_memory_available,
 )
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import torch
@@ -74,34 +65,32 @@ def nvshmem_available() -> bool:
 
 
 def init_process_group() -> Tuple[int, int, torch.device]:
-    """Initialize distributed process group with CUDA fallback to Gloo."""
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    
-    if not dist.is_initialized():
-        rank = int(os.environ.get("RANK", 0))
-        world_size = int(os.environ.get("WORLD_SIZE", max(1, torch.cuda.device_count())))
-        local_rank = resolve_local_rank()
-        backend = "nccl" if torch.cuda.is_available() else "gloo"
+    """Initialize a real NCCL process group for the NVSHMEM demos."""
+    rank, world_size, local_rank = setup_single_gpu_env(
+        "nvshmem_training_example",
+        min_world_size=2,
+    )
 
-        if backend == "nccl":
-            torch.cuda.set_device(local_rank)
-        init_kwargs = dict(
-            backend=backend,
+    torch.cuda.set_device(local_rank)
+    if not dist.is_initialized():
+        dist.init_process_group(
+            backend="nccl",
             init_method="env://",
             rank=rank,
             world_size=world_size,
             timeout=datetime.timedelta(seconds=60),
+            device_id=local_rank,
         )
-        if backend == "nccl":
-            init_kwargs["device_id"] = local_rank
-        dist.init_process_group(**init_kwargs)
 
-        device = torch.device(f"cuda:{local_rank}") if backend == "nccl" else torch.device("cpu")
-    else:
-        rank = dist.get_rank()
-        world_size = dist.get_world_size()
-        device = torch.device(f"cuda:{torch.cuda.current_device()}") if torch.cuda.is_available() else torch.device("cpu")
+    if not nvshmem_available():
+        raise RuntimeError("SKIPPED: nvshmem_training_example requires NVSHMEM or SymmetricMemory support")
+
+    device = torch.device(f"cuda:{local_rank}")
     return rank, world_size, device
+
+
+def pipeline_reuse_buffers_enabled() -> bool:
+    return os.environ.get("AISP_NVSHMEM_PIPELINE_REUSE_BUFFERS", "").lower() not in {"0", "false", "no"}
 
 
 # ============================================================================
@@ -136,28 +125,26 @@ class GradientBucket:
 
     def allreduce_ring(self, rank: int) -> None:
         """
-        Conceptual ring AllReduce using one-sided puts/gets when available.
-        Falls back to NCCL AllReduce if symmetric memory is missing.
+        Conceptual ring AllReduce using one-sided puts/gets.
         """
         if self.tensor is None:
             raise RuntimeError("GradientBucket tensor not initialized")
 
-        if nvshmem_available() and self.handle is not None:
-            # Conceptual one-sided ring: each rank writes into next rank slot
-            chunk = self.tensor.view(self.world_size, -1)[rank].clone()
-            for step in range(self.world_size - 1):
-                target = (rank + 1 + step) % self.world_size
-                remote_buf = self.handle.get_buffer(target)
-                remote_buf.view(self.world_size, -1)[rank].copy_(chunk)
-                dist.barrier()
-                chunk.add_(
-                    self.handle.get_buffer((rank - 1 - step) % self.world_size)
-                    .view(self.world_size, -1)[rank]
-                )
-            self.tensor.view(self.world_size, -1)[rank].copy_(chunk)
-        else:
-            dist.all_reduce(self.tensor, op=dist.ReduceOp.SUM)
-            self.tensor.mul_(1.0 / self.world_size)
+        if self.handle is None or not nvshmem_available():
+            raise RuntimeError("SKIPPED: nvshmem_training_example requires NVSHMEM or SymmetricMemory support")
+
+        # Conceptual one-sided ring: each rank writes into next rank slot
+        chunk = self.tensor.view(self.world_size, -1)[rank].clone()
+        for step in range(self.world_size - 1):
+            target = (rank + 1 + step) % self.world_size
+            remote_buf = self.handle.get_buffer(target)
+            remote_buf.view(self.world_size, -1)[rank].copy_(chunk)
+            dist.barrier()
+            chunk.add_(
+                self.handle.get_buffer((rank - 1 - step) % self.world_size)
+                .view(self.world_size, -1)[rank]
+            )
+        self.tensor.view(self.world_size, -1)[rank].copy_(chunk)
 
     def close(self) -> None:
         if self.handle is None:
@@ -359,10 +346,11 @@ def demo_pipeline_parallel(microbatch: torch.Tensor, steps: int = 1) -> None:
     stage0 = PipelineStage(dim, dim * 4).to(device)
     stage1 = PipelineStage(dim, dim * 4).to(device)
 
-    use_symmem = nvshmem_available()
-    # Allocate symmetric buffer for microbatch handoff (optimized path).
+    if not nvshmem_available():
+        raise RuntimeError("SKIPPED: nvshmem_training_example requires NVSHMEM or SymmetricMemory support")
+    reuse_buffers = pipeline_reuse_buffers_enabled()
     bucket = None
-    if use_symmem:
+    if reuse_buffers:
         bucket = GradientBucket(
             numel=microbatch.numel(),
             dtype=microbatch.dtype,
@@ -372,8 +360,7 @@ def demo_pipeline_parallel(microbatch: torch.Tensor, steps: int = 1) -> None:
 
     partner_offset = world_size // 2
     for _ in range(steps):
-        if not use_symmem:
-            # Baseline: allocate per-iteration buffers (naive path).
+        if not reuse_buffers:
             bucket = GradientBucket(
                 numel=microbatch.numel(),
                 dtype=microbatch.dtype,
@@ -383,34 +370,28 @@ def demo_pipeline_parallel(microbatch: torch.Tensor, steps: int = 1) -> None:
         if rank < partner_offset:
             microbatch = stage0(microbatch.to(device))
             bucket.tensor.copy_(microbatch.flatten())
-            if use_symmem and bucket.handle is not None:
-                next_rank = rank + partner_offset
-                remote = bucket.handle.get_buffer(next_rank)
-                remote.copy_(bucket.tensor, non_blocking=True)
-                torch.cuda.synchronize(device)
-                dist.barrier()
-            else:
-                dist.send(bucket.tensor, dst=rank + partner_offset)
-                dist.barrier()
+            if bucket.handle is None:
+                raise RuntimeError("SKIPPED: nvshmem_training_example requires NVSHMEM or SymmetricMemory support")
+            next_rank = rank + partner_offset
+            remote = bucket.handle.get_buffer(next_rank)
+            remote.copy_(bucket.tensor, non_blocking=True)
+            torch.cuda.synchronize(device)
+            dist.barrier()
         else:
-            if use_symmem and bucket.handle is not None:
-                dist.barrier()
-                remote = bucket.handle.get_buffer(rank)
-                microbatch = remote.view_as(microbatch)
-            else:
-                recv_buf = torch.empty_like(bucket.tensor)
-                dist.recv(recv_buf, src=rank - partner_offset)
-                dist.barrier()
-                microbatch = recv_buf.view_as(microbatch)
+            if bucket.handle is None:
+                raise RuntimeError("SKIPPED: nvshmem_training_example requires NVSHMEM or SymmetricMemory support")
+            dist.barrier()
+            remote = bucket.handle.get_buffer(rank)
+            microbatch = remote.view_as(microbatch)
             microbatch = stage1(microbatch)
-        if not use_symmem and bucket is not None:
+        if not reuse_buffers and bucket is not None:
             bucket.close()
 
     dist.barrier()
     if bucket is not None:
         bucket.close()
     if rank == 0:
-        print("[pipeline] completed forward pass with NVSHMEM handoff")
+        print("[pipeline] completed forward pass with symmetric-memory handoff")
 
 
 # ============================================================================
@@ -462,4 +443,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

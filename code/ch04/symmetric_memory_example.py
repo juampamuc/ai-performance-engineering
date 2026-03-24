@@ -19,18 +19,10 @@ from core.common.device_utils import resolve_local_rank
 from core.optimization.symmetric_memory_patch import (
     create_symmetric_memory_handle,
     maybe_create_symmetric_memory_handle,
+    symmetric_memory_available,
 )
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import torch
@@ -43,7 +35,9 @@ from typing import Optional
 
 def setup_distributed():
     """Initialize distributed environment for multi-GPU operation."""
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    setup_single_gpu_env("symmetric_memory_example", min_world_size=2)
+    if not symmetric_memory_available():
+        raise RuntimeError("SKIPPED: symmetric_memory_example requires SymmetricMemory support")
     if dist.is_initialized():
         torch.cuda.set_device(resolve_local_rank())
         return dist.get_rank(), dist.get_world_size()
@@ -605,4 +599,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

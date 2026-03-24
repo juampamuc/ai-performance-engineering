@@ -21,6 +21,12 @@ from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_CUDA_SKIP_REASON = "SKIPPED: grace_coherent_memory requires CUDA"
+_GRACE_SKIP_REASON = (
+    "SKIPPED: grace_coherent_memory requires Grace-Blackwell coherent memory support "
+    "(GB200/GB300 on Grace CPU hosts)."
+)
+
 
 def _normalize_pci_bus_id(bus_id: str) -> str:
     value = str(bus_id).strip().lower()
@@ -97,7 +103,7 @@ class OptimizedGraceCoherentMemory:
     
     def __init__(self, size_mb: int = 256, iterations: int = 100):
         if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for Grace coherent memory benchmark")
+            raise RuntimeError(_CUDA_SKIP_REASON)
         self.size_mb = size_mb
         self.iterations = iterations
         self.device = torch.device("cuda")
@@ -105,7 +111,7 @@ class OptimizedGraceCoherentMemory:
         # Check if we're on Grace-Blackwell
         self.is_grace_blackwell = self._detect_grace_blackwell()
         if not self.is_grace_blackwell:
-            logger.warning("Not running on Grace-Blackwell; using fallback path")
+            raise RuntimeError(_GRACE_SKIP_REASON)
         
         # Select optimal strategy based on size
         self.strategy = self._select_strategy()
@@ -128,7 +134,7 @@ class OptimizedGraceCoherentMemory:
     
     def _select_strategy(self) -> str:
         """Select optimal transfer strategy based on size."""
-        if self.is_grace_blackwell and self.size_mb < self.ZERO_COPY_THRESHOLD_MB:
+        if self.size_mb < self.ZERO_COPY_THRESHOLD_MB:
             return "zero_copy"
         return "async_pinned"
     
@@ -172,18 +178,11 @@ class OptimizedGraceCoherentMemory:
         if self.strategy == "zero_copy":
             # Zero-copy: Map CPU memory directly to GPU
             # On Grace-Blackwell, this uses cache-coherent NVLink-C2C
-            if self.is_grace_blackwell:
-                # Single allocation stays resident on GPU; CPU can still peek via unified cache.
-                self.gpu_data = torch.randn(num_elements, dtype=torch.float32, device=self.device)
-                # Keep a reference for API symmetry; this is the same buffer.
-                self.cpu_data = self.gpu_data
-                logger.info(f"Using zero-copy coherent GPU buffer ({self.size_mb}MB)")
-            else:
-                # Fallback: keep data pinned on CPU but acknowledge it is not truly zero-copy.
-                self.cpu_data = torch.randn(num_elements, dtype=torch.float32).pin_memory()
-                self.gpu_data = torch.empty(num_elements, dtype=torch.float32, device=self.device)
-                self.gpu_data.copy_(self.cpu_data, non_blocking=True)
-                logger.info(f"Grace-less fallback: pinned CPU buffer ({self.size_mb}MB)")
+            # Single allocation stays resident on GPU; CPU can still peek via unified cache.
+            self.gpu_data = torch.randn(num_elements, dtype=torch.float32, device=self.device)
+            # Keep a reference for API symmetry; this is the same buffer.
+            self.cpu_data = self.gpu_data
+            logger.info(f"Using zero-copy coherent GPU buffer ({self.size_mb}MB)")
         
         elif self.strategy == "async_pinned":
             # Pinned memory with async copies
@@ -193,19 +192,6 @@ class OptimizedGraceCoherentMemory:
             # Create stream for async copies
             self.stream = torch.cuda.Stream()
             logger.info(f"Using async pinned memory ({self.size_mb}MB)")
-        
-        else:  # explicit_aligned
-            # Explicit transfers with pinned memory + async copies (non-Grace fallback)
-            # Use double-buffered approach to overlap copy with compute
-            self.cpu_data = torch.randn(num_elements, dtype=torch.float32).pin_memory()
-            self.cpu_data_out = torch.empty(num_elements, dtype=torch.float32).pin_memory()
-            self.gpu_data = torch.zeros(num_elements, dtype=torch.float32, device=self.device)
-            
-            # Create dedicated copy stream for overlapping transfers
-            self.copy_stream = torch.cuda.Stream()
-            self.compute_stream = torch.cuda.current_stream()
-            
-            logger.info(f"Using double-buffered async transfers ({self.size_mb}MB)")
     
     def run_step(self) -> float:
         """Execute one transfer step using the selected coherent-memory strategy."""
@@ -225,17 +211,6 @@ class OptimizedGraceCoherentMemory:
                 self.cpu_data.copy_(self.gpu_data, non_blocking=True)
             self.stream.synchronize()
         
-        else:  # explicit_aligned
-            with torch.cuda.stream(self.copy_stream):
-                self.gpu_data.copy_(self.cpu_data, non_blocking=True)
-            self.compute_stream.wait_stream(self.copy_stream)
-            self.gpu_data.mul_(2.0).add_(1.0)
-            with torch.cuda.stream(self.copy_stream):
-                self.copy_stream.wait_stream(self.compute_stream)
-                self.cpu_data_out.copy_(self.gpu_data, non_blocking=True)
-            self.copy_stream.synchronize()
-            self.cpu_data, self.cpu_data_out = self.cpu_data_out, self.cpu_data
-        
         torch.cuda.synchronize()
         end = time.perf_counter()
         
@@ -254,12 +229,8 @@ class OptimizedGraceCoherentMemory:
         """Clean up resources."""
         del self.cpu_data
         del self.gpu_data
-        if hasattr(self, 'cpu_data_out'):
-            del self.cpu_data_out
         if hasattr(self, 'stream'):
             del self.stream
-        if hasattr(self, 'copy_stream'):
-            del self.copy_stream
         torch.cuda.empty_cache()
 
 
@@ -347,7 +318,7 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
 
     def get_custom_streams(self) -> List["torch.cuda.Stream"]:
         streams: List["torch.cuda.Stream"] = []
-        for name in ("stream", "copy_stream"):
+        for name in ("stream",):
             stream = getattr(self._impl, name, None)
             if stream is not None:
                 streams.append(stream)

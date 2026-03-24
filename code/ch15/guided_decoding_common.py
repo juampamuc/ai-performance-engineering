@@ -16,10 +16,10 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 class GuidedDecodingConfig:
     """Workload configuration for the guided decoding benchmark family."""
 
-    batch_size: int = 16
-    steps: int = 64
-    vocab_size: int = 32768
-    allowed_count: int = 4096
+    batch_size: int = 32
+    steps: int = 96
+    vocab_size: int = 65536
+    allowed_count: int = 8192
     output_slice: int = 256
 
 

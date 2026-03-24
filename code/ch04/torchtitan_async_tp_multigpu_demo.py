@@ -30,16 +30,7 @@ import os
 
 from core.common.device_utils import resolve_local_rank
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 from core.benchmark.gpu_requirements import require_min_gpus, warn_optimal_gpu_count
 
@@ -87,7 +78,7 @@ def init_distributed(tp_degree: int) -> int:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA devices are required to run this demo.")
 
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    setup_single_gpu_env("torchtitan_async_tp_multigpu_demo", min_world_size=2)
     local_rank = resolve_local_rank()
     torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
@@ -198,4 +189,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - torchrun entry point
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

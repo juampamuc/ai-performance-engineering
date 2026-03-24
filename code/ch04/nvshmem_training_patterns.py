@@ -45,8 +45,8 @@ Usage:
     # Run all patterns with benchmarks
     torchrun --nproc_per_node=<num_gpus> nvshmem_training_patterns.py --pattern all --benchmark
 
-All patterns gracefully degrade to NCCL-based fallbacks when NVSHMEM or symmetric
-memory is unavailable, providing runnable code for development on non-B200 hardware.
+All patterns now fail fast with `SKIPPED:` when the required multi-GPU launch or
+NVSHMEM/symmetric-memory support is unavailable.
 
 Educational Notes:
 ------------------
@@ -78,16 +78,7 @@ from core.optimization.symmetric_memory_patch import (
     symmetric_memory_available,
 )
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import argparse
@@ -124,14 +115,13 @@ def pipeline_sync_enabled() -> bool:
 
 def init_process_group() -> Tuple[int, int, int]:
     """Initialize NCCL process group for multi-GPU setup."""
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    
-    if not dist.is_initialized():
-        rank = int(os.environ.get("RANK", 0))
-        world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
-        local_rank = resolve_local_rank()
+    rank, world_size, local_rank = setup_single_gpu_env(
+        "nvshmem_training_patterns",
+        min_world_size=2,
+    )
 
-        torch.cuda.set_device(local_rank)
+    torch.cuda.set_device(local_rank)
+    if not dist.is_initialized():
         dist.init_process_group(
             backend="nccl",
             init_method="env://",
@@ -140,7 +130,10 @@ def init_process_group() -> Tuple[int, int, int]:
             timeout=datetime.timedelta(seconds=60),
             device_id=local_rank,
         )
-    
+
+    if not nvshmem_available():
+        raise RuntimeError("SKIPPED: nvshmem_training_patterns requires NVSHMEM or SymmetricMemory support")
+
     return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 
 
@@ -249,9 +242,7 @@ class GradientBucket:
             # Average
             self.tensor.div_(self.world_size)
         else:
-            # Fallback to NCCL
-            dist.all_reduce(self.tensor, op=dist.ReduceOp.SUM)
-            self.tensor.div_(self.world_size)
+            raise RuntimeError("SKIPPED: nvshmem_training_patterns requires NVSHMEM or SymmetricMemory support")
         
         return self.tensor
 
@@ -602,11 +593,10 @@ class PipelineParallelSymmetricMemory:
                     )
                     buffer.tensor.copy_(activation.flatten())
                     
-                    if buffer.handle is not None and nvshmem_available():
-                        remote_buf = buffer.handle.get_buffer(next_rank)
-                        remote_buf.copy_(buffer.tensor, non_blocking=True)
-                    else:
-                        dist.send(buffer.tensor, dst=next_rank)
+                    if buffer.handle is None or not nvshmem_available():
+                        raise RuntimeError("SKIPPED: nvshmem_training_patterns requires NVSHMEM or SymmetricMemory support")
+                    remote_buf = buffer.handle.get_buffer(next_rank)
+                    remote_buf.copy_(buffer.tensor, non_blocking=True)
 
                     if pipeline_sync_enabled():
                         dist.barrier()
@@ -676,16 +666,11 @@ def demo_pipeline_parallel(benchmark: bool = False) -> None:
             buffer = pipeline._get_or_create_buffer(
                 my_stage_idx, (batch_size, seq_len, dim), device, pipeline_dtype
             )
-            if nvshmem_available() and buffer.handle is not None:
-                if pipeline_sync_enabled():
-                    dist.barrier()
-                microbatch = buffer.tensor.view(batch_size, seq_len, dim)
-            else:
-                recv_buf = torch.empty_like(buffer.tensor)
-                dist.recv(recv_buf, src=prev_stage // stages_per_rank)
-                if pipeline_sync_enabled():
-                    dist.barrier()
-                microbatch = recv_buf.view(batch_size, seq_len, dim)
+            if buffer.handle is None or not nvshmem_available():
+                raise RuntimeError("SKIPPED: nvshmem_training_patterns requires NVSHMEM or SymmetricMemory support")
+            if pipeline_sync_enabled():
+                dist.barrier()
+            microbatch = buffer.tensor.view(batch_size, seq_len, dim)
         
         # Execute forward through local stages
         output = pipeline.forward_microbatch(microbatch, rank, my_stage_idx)
@@ -752,16 +737,13 @@ def demo_tensor_parallel_activations(benchmark: bool = False) -> None:
     if nvshmem_available() and bucket.handle is not None:
         for peer in range(world_size):
             if peer != rank:
-                    remote_buf = bucket.handle.get_buffer(peer)
-                    bucket.tensor[peer * shard_size:(peer + 1) * shard_size].copy_(
-                        remote_buf[peer * shard_size:(peer + 1) * shard_size]
-                    )
+                remote_buf = bucket.handle.get_buffer(peer)
+                bucket.tensor[peer * shard_size:(peer + 1) * shard_size].copy_(
+                    remote_buf[peer * shard_size:(peer + 1) * shard_size]
+                )
         dist.barrier()
     else:
-        # Fallback to NCCL AllGather
-        gathered_list = [torch.empty_like(output_shard) for _ in range(world_size)]
-        dist.all_gather(gathered_list, output_shard)
-        bucket.tensor.copy_(torch.cat([t.flatten() for t in gathered_list]))
+        raise RuntimeError("SKIPPED: nvshmem_training_patterns requires NVSHMEM or SymmetricMemory support")
     
     # Reshape to get final output
     final_output = bucket.tensor.view(batch_size, seq_len, hidden_dim)
@@ -818,4 +800,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

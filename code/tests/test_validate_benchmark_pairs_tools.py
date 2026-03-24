@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import signal
+import subprocess
+import sys
 import time
 
 import torch
@@ -17,6 +19,16 @@ from core.scripts.validate_benchmark_pairs import (
     validate_all_pairs,
     validate_pair,
 )
+
+
+_DISTRIBUTED_ENV_KEYS = ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")
+
+
+def _subprocess_env_without_distributed() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in _DISTRIBUTED_ENV_KEYS:
+        env.pop(key, None)
+    return env
 
 
 class _DummyPayloadBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -138,12 +150,14 @@ def test_ch04_torchrun_multigpu_pairs_skip_cleanly_on_single_gpu_hosts() -> None
         if torch.cuda.device_count() < 2:
             assert result.skipped is True
             assert result.error is not None and "SKIPPED" in result.error
+        elif result.skipped:
+            assert result.error is not None and "SKIPPED" in result.error
         else:
-            assert result.error is None
             assert result.valid is True
+            assert result.error is None
 
 
-def test_ch04_no_overlap_pair_validates_on_single_gpu_hosts() -> None:
+def test_ch04_no_overlap_pair_skips_cleanly_on_single_gpu_hosts() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     result = validate_pair(
         "ch04",
@@ -152,13 +166,129 @@ def test_ch04_no_overlap_pair_validates_on_single_gpu_hosts() -> None:
         repo_root / "ch04" / "optimized_no_overlap.py",
     )
 
-    if torch.cuda.is_available():
+    if torch.cuda.device_count() < 2:
+        assert result.skipped is True
+        assert result.error is not None and "SKIPPED" in result.error
+    else:
         assert result.skipped is False
         assert result.error is None
         assert result.valid is True
-    else:
-        assert result.skipped is True
-        assert result.error is not None and "SKIPPED" in result.error
+
+
+def test_ch04_no_overlap_torchrun_specs_use_public_target_names() -> None:
+    from ch04.ddp_no_overlap import BaselineNoOverlapBenchmark
+    from ch04.ddp_overlap import OptimizedOverlapDdpBenchmark
+
+    baseline_spec = BaselineNoOverlapBenchmark().get_torchrun_spec()
+    optimized_spec = OptimizedOverlapDdpBenchmark().get_torchrun_spec()
+
+    assert baseline_spec.script_path is not None
+    assert Path(baseline_spec.script_path).resolve() == (Path(__file__).resolve().parents[1] / "ch04" / "ddp_no_overlap.py").resolve()
+    assert baseline_spec.name == "baseline_no_overlap"
+    assert baseline_spec.config_arg_map == {"iterations": "--iterations", "warmup": "--warmup"}
+    assert optimized_spec.script_path is not None
+    assert Path(optimized_spec.script_path).resolve() == (Path(__file__).resolve().parents[1] / "ch04" / "ddp_overlap.py").resolve()
+    assert optimized_spec.name == "optimized_no_overlap"
+    assert optimized_spec.config_arg_map == {"iterations": "--iterations", "warmup": "--warmup"}
+
+
+def test_ch04_additional_torchrun_specs_build_without_side_effects() -> None:
+    cases = [
+        ("ch04.baseline_nvshmem_training_example_multigpu", "NVSHMEMTrainingExampleMultiGPU", "ch04/baseline_nvshmem_training_example_multigpu.py", {}),
+        ("ch04.optimized_nvshmem_training_example_multigpu", "OptimizedNVSHMEMTrainingExampleMultiGPU", "ch04/optimized_nvshmem_training_example_multigpu.py", {}),
+        ("ch04.baseline_nvshmem_training_patterns_multigpu", "NVSHMEMTrainingPatternsMultiGPU", "ch04/baseline_nvshmem_training_patterns_multigpu.py", {}),
+        ("ch04.optimized_nvshmem_training_patterns_multigpu", "OptimizedNVSHMEMTrainingPatternsMultiGPU", "ch04/optimized_nvshmem_training_patterns_multigpu.py", {}),
+        ("ch04.baseline_nvshmem_pipeline_parallel_multigpu", "NVSHMEMPipelineParallelMultiGPU", "ch04/baseline_nvshmem_pipeline_parallel_multigpu.py", {}),
+        ("ch04.optimized_nvshmem_pipeline_parallel_multigpu", "OptimizedNVSHMEMPipelineParallelMultiGPU", "ch04/optimized_nvshmem_pipeline_parallel_multigpu.py", {}),
+        ("ch04.baseline_nvshmem_vs_nccl_benchmark_multigpu", "NVSHMEMVsNCCLBenchmarkMultiGPU", "ch04/baseline_nvshmem_vs_nccl_benchmark_multigpu.py", {}),
+        ("ch04.optimized_nvshmem_vs_nccl_benchmark_multigpu", "OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU", "ch04/optimized_nvshmem_vs_nccl_benchmark_multigpu.py", {}),
+        ("ch04.baseline_symmetric_memory_multigpu", "SymmetricMemoryMultiGPU", "ch04/symmetric_memory_example.py", {}),
+        ("ch04.optimized_symmetric_memory_multigpu", "OptimizedSymmetricMemoryMultiGPU", "ch04/symmetric_memory_example.py", {}),
+    ]
+
+    repo_root = Path(__file__).resolve().parents[1]
+    for module_name, class_name, script_relpath, expected_config_arg_map in cases:
+        module = __import__(module_name, fromlist=[class_name])
+        bench_cls = getattr(module, class_name)
+        bench = bench_cls()
+        spec = bench.get_torchrun_spec()
+        assert spec.script_path is not None
+        assert Path(spec.script_path).resolve() == (repo_root / script_relpath).resolve()
+        assert spec.config_arg_map == expected_config_arg_map
+
+
+def test_ch04_ddp_entrypoints_emit_explicit_skips_without_torchrun_env() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = ["ch04.ddp_no_overlap", "ch04.ddp_overlap"]
+
+    for module_name in cases:
+        completed = subprocess.run(
+            [sys.executable, "-m", module_name],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            env=_subprocess_env_without_distributed(),
+            check=False,
+        )
+        assert completed.returncode == 3
+        combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+        assert "SKIPPED:" in combined
+        assert (
+            "torchrun/distributed launch context" in combined
+            or "Requires >= 2 GPUs" in combined
+        )
+
+
+def test_ch04_nvshmem_wrapper_entrypoints_emit_explicit_skips_on_unsupported_hosts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
+        "ch04.baseline_nvshmem_training_example_multigpu",
+        "ch04.optimized_nvshmem_training_example_multigpu",
+        "ch04.baseline_nvshmem_training_patterns_multigpu",
+        "ch04.optimized_nvshmem_training_patterns_multigpu",
+        "ch04.baseline_nvshmem_pipeline_parallel_multigpu",
+        "ch04.optimized_nvshmem_pipeline_parallel_multigpu",
+        "ch04.baseline_nvshmem_vs_nccl_benchmark_multigpu",
+        "ch04.optimized_nvshmem_vs_nccl_benchmark_multigpu",
+    ]
+
+    for module_name in cases:
+        completed = subprocess.run(
+            [sys.executable, "-m", module_name],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            env=_subprocess_env_without_distributed(),
+            check=False,
+        )
+        assert completed.returncode == 3
+        combined = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+        assert "SKIPPED:" in combined
+        assert (
+            "requires >=2 GPUs" in combined
+            or "requires >= 2 GPUs" in combined
+            or "torchrun/distributed launch context" in combined
+            or "requires NVSHMEM or SymmetricMemory support" in combined
+        )
+
+
+def test_ch04_nvshmem_pairs_skip_cleanly_on_single_gpu_or_missing_symmem() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
+        ("nvshmem_training_example", "baseline_nvshmem_training_example.py", "optimized_nvshmem_training_example.py"),
+        ("nvshmem_training_patterns", "baseline_nvshmem_training_patterns.py", "optimized_nvshmem_training_patterns.py"),
+    ]
+
+    for example_name, baseline_name, optimized_name in cases:
+        result = validate_pair(
+            "ch04",
+            example_name,
+            repo_root / "ch04" / baseline_name,
+            repo_root / "ch04" / optimized_name,
+        )
+        if torch.cuda.device_count() < 2:
+            assert result.skipped is True
+            assert result.error is not None and "SKIPPED" in result.error
 
 
 def test_validate_all_pairs_timeout_kills_isolated_pair_descendants(tmp_path: Path) -> None:

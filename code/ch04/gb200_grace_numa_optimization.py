@@ -21,7 +21,7 @@ Key Optimizations:
 4. Memory bandwidth optimization
 
 Requirements:
-- GB200/GB300 system (gracefully degrades on non-Grace)
+- GB200/GB300 system
 - PyTorch 2.10+
 - Python 3.10+
 
@@ -32,16 +32,7 @@ Usage:
     from extras.ch04.gb200_grace_numa_optimization import setup_grace_affinity
     setup_grace_affinity(gpu_id=0, num_workers=8)
 """
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status
 
 import platform
 import os
@@ -489,6 +480,8 @@ def print_grace_system_info() -> None:
 
 def main():
     """Main demonstration of Grace-Blackwell optimizations."""
+    if not detect_grace_cpu().get("is_grace", False):
+        raise RuntimeError("SKIPPED: gb200_grace_numa_optimization requires Grace CPU support")
     print_grace_system_info()
     
     # Benchmark CPU-GPU bandwidth
@@ -530,4 +523,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

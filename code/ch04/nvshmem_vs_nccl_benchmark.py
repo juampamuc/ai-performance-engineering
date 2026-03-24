@@ -12,8 +12,8 @@ Measurements:
 - Latency (µs) for small message sizes (1 KB - 1 MB)
 - Bandwidth (GB/s) for larger message sizes (16 MB - 512 MB)
 
-The script degrades gracefully when NVSHMEM/symmetric memory is missing,
-reporting NCCL numbers only so it can run on non-Blackwell hardware.
+The script now fails fast with `SKIPPED:` when NVSHMEM/symmetric memory is
+missing instead of publishing NCCL-only results under the same benchmark name.
 
 Usage:
     torchrun --nproc_per_node=<num_gpus> nvshmem_vs_nccl_benchmark.py \
@@ -29,16 +29,7 @@ from core.optimization.symmetric_memory_patch import (
     symmetric_memory_available,
 )
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import argparse
@@ -57,7 +48,9 @@ import torch.distributed as dist
 
 
 def init_distributed() -> int:
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    setup_single_gpu_env("nvshmem_vs_nccl_benchmark", min_world_size=2)
+    if not symmetric_memory_available():
+        raise RuntimeError("SKIPPED: nvshmem_vs_nccl_benchmark requires NVSHMEM or SymmetricMemory support")
     
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
@@ -284,4 +277,4 @@ def main(destroy_process_group: bool = True) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

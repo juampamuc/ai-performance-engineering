@@ -41,16 +41,7 @@ from core.common.device_utils import resolve_local_rank
 from core.optimization.symmetric_memory_patch import symmetric_memory_available
 from core.benchmark.gpu_requirements import require_min_gpus
 
-try:
-    from ch04.distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")  # Graceful fallback if arch_config not available
+from ch04.distributed_helper import run_main_with_skip_status, setup_single_gpu_env
 
 
 import time
@@ -63,7 +54,7 @@ import math
 def setup_distributed():
     """Initialize distributed environment."""
     require_min_gpus(2)
-    setup_single_gpu_env()
+    setup_single_gpu_env("symmetric_memory_multigpu", min_world_size=2)
     if dist.is_initialized():
         return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 
@@ -138,7 +129,7 @@ def ring_allreduce_symmetric(
         # - Direct write to next GPU's buffer
         # - Direct read from previous GPU's buffer
         
-        # For now, use standard NCCL (fallback)
+        # Fall back is intentionally not exposed through this public demo name.
         send_tensor = chunks[send_chunk_idx].contiguous()
         recv_tensor = torch.empty_like(send_tensor)
         
@@ -421,8 +412,7 @@ def main():
         if sym_mem_available:
             print("Symmetric memory API available")
         else:
-            print("⚠ Symmetric memory API not available")
-            print("  Using fallback NCCL implementations")
+            raise RuntimeError("SKIPPED: symmetric_memory_multigpu requires SymmetricMemory support")
     
     # Benchmark 1: Traditional AllReduce
     if rank == 0:
@@ -491,4 +481,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_main_with_skip_status(main))

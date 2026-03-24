@@ -1077,7 +1077,7 @@ ENTRIES["ch02"] = chapter_entry(
                 | `memory_transfer` | `18.901 ms` | `3.637 ms` | `5.20x` | optimized transfer path fits the actual link behavior |
                 | `cublas` | `0.590 ms` | `0.114 ms` | `5.17x` | tuned cuBLAS settings match the hardware better |
 
-                On true Grace-Blackwell hosts, `grace_coherent_memory` is the coherency-placement story from the book. On PCIe-only Blackwell hosts, the same pair intentionally falls back to a host/device transfer-strategy comparison instead of pretending unified Grace memory is present.
+                `grace_coherent_memory` is only valid on Grace-Blackwell coherent-memory hosts. On PCIe-only Blackwell or other non-Grace systems, the target fails fast with `SKIPPED:` instead of emitting fallback transfer numbers under the wrong benchmark name.
 
                 This chapter is the hardware sanity anchor for later claims: if these numbers drift, everything that depends on them deserves scrutiny."""
             ),
@@ -1097,7 +1097,7 @@ ENTRIES["ch02"] = chapter_entry(
                 The expected story is:
                 - `cublas`: better math-mode and launch configuration behavior
                 - `memory_transfer`: less time lost to the wrong host/device path
-                - `grace_coherent_memory`: on GB200/GB300 the placement choice dominates runtime; on other hosts the fallback transfer strategy should still beat the generic path"""
+                - `grace_coherent_memory`: on GB200/GB300 the placement choice dominates runtime; on non-Grace hosts the benchmark should fail fast with `SKIPPED:`"""
             ),
         ),
         MarkdownSection(
@@ -1129,10 +1129,10 @@ ENTRIES["ch02"] = chapter_entry(
     validation=[
         "`python -m ch02.hardware_info` records the correct device name, SM count, and HBM size for every GPU in the system.",
         "`python -m ch02.nvlink_c2c_bandwidth_benchmark` reports the host↔device and bidirectional bandwidth table for the active topology.",
-        "Running the coherency sample on GB200/GB300 shows zero-copy benefiting sub-MB transfers while large transfers favor explicit H2D copies; on non-Grace hosts the benchmark should log that it is using the fallback transfer path instead of true coherency.",
+        "Running the coherency sample on GB200/GB300 shows zero-copy benefiting sub-MB transfers while large transfers favor explicit H2D copies; on non-Grace hosts the benchmark should stop immediately with a `SKIPPED:` capability diagnostic.",
     ],
     notes=[
-        "Grace-only coherency tests require GB200/GB300 nodes; on PCIe-only or discrete-GPU Blackwell hosts the Python benchmark pair falls back to a transfer-strategy comparison and logs that downgrade explicitly.",
+        "Grace-only coherency tests require GB200/GB300 nodes; on PCIe-only or discrete-GPU Blackwell hosts the Python benchmark pair fails fast with an explicit unsupported-capability diagnostic.",
         "`Makefile` builds both CUDA and CPU tools so results can be compared without leaving the chapter.",
     ],
 )
@@ -1332,20 +1332,20 @@ ENTRIES["ch04"] = chapter_entry(
     contents=[
         ("`baseline_dataparallel.py`, `optimized_dataparallel.py`", "Single-GPU DataParallel anti-pattern vs direct GPU execution."),
         ("`baseline_dataparallel_multigpu.py`, `optimized_dataparallel_multigpu.py`", "Multi-GPU DataParallel vs manual gradient reduction with pre-staged shards."),
-        ("`baseline_no_overlap.py`, `optimized_no_overlap.py`", "Single-GPU overlap simulations that use a host-buffer round-trip as a stand-in for all-reduce latency; use the `*_multigpu.py` variants for real DDP collective overlap."),
+        ("`baseline_no_overlap.py`, `optimized_no_overlap.py`", "Strict distributed DDP overlap benchmarks; they now require `torchrun` plus `>=2` GPUs and fail fast with `SKIPPED:` when launched on unsupported hosts."),
         ("`baseline_nvlink.py`, `optimized_nvlink.py`, `baseline_nvlink_topology_aware.py`, `optimized_nvlink_topology_aware.py`, `baseline_nvlink_multigpu.py`, `optimized_nvlink_multigpu.py`, `baseline_nvlink_topology_aware_multigpu.py`, `optimized_nvlink_topology_aware_multigpu.py`", "NVLink exercises for validating peer bandwidth and topology effects (single- and multi-GPU)."),
         ("`baseline_continuous_batching.py`, `optimized_continuous_batching.py`, `baseline_disaggregated.py`, `optimized_disaggregated.py`, `baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py`, `baseline_disaggregated_multigpu.py`, `optimized_disaggregated_multigpu.py`", "Continuous batching + disaggregated inference demos that showcase pooling and remote KV reuse."),
         ("`baseline_gradient_compression_fp16.py`, `optimized_gradient_compression_fp16.py`, `baseline_gradient_compression_int8.py`, `optimized_gradient_compression_int8.py`, `baseline_gradient_compression_fp16_multigpu.py`, `optimized_gradient_compression_fp16_multigpu.py`, `baseline_gradient_compression_int8_multigpu.py`, `optimized_gradient_compression_int8_multigpu.py`", "Gradient compression all-reduce benchmarks comparing small-bucket vs full-buffer compression (single GPU and multi-GPU FP16/INT8 paths)."),
         ("`baseline_gradient_compression_fp16_comm_only.py`, `optimized_gradient_compression_fp16_comm_only.py`, `baseline_gradient_compression_int8_comm_only.py`, `optimized_gradient_compression_int8_comm_only.py`, `baseline_gradient_compression_fp16_comm_only_multigpu.py`, `optimized_gradient_compression_fp16_comm_only_multigpu.py`, `baseline_gradient_compression_int8_comm_only_multigpu.py`, `optimized_gradient_compression_int8_comm_only_multigpu.py`", "Communication-only gradient compression benchmarks with pre-quantized buffers (single GPU and multi-GPU FP16/INT8 paths)."),
         ("`baseline_pipeline_parallel.py`, `optimized_pipeline_parallel_1f1b.py`, `baseline_tensor_parallel.py`, `optimized_tensor_parallel_async.py`, `baseline_torchcomms.py`, `optimized_torchcomms.py`, `baseline_pipeline_parallel_multigpu.py`, `optimized_pipeline_parallel_multigpu_1f1b.py`, `baseline_tensor_parallel_multigpu.py`, `optimized_tensor_parallel_multigpu.py`, `baseline_tensor_parallel_allgather_multigpu.py`, `optimized_tensor_parallel_allgather_multigpu.py`, `baseline_torchcomms_multigpu.py`, `optimized_torchcomms_multigpu.py`", "Pipeline/tensor-parallel and torchcomms overlap studies (single- and multi-GPU)."),
-        ("`baseline_nvshmem_pipeline_parallel_multigpu.py`, `optimized_nvshmem_pipeline_parallel_multigpu.py`, `baseline_nvshmem_training_example_multigpu.py`, `optimized_nvshmem_training_example_multigpu.py`", "NVSHMEM pipeline and training samples highlighting device-driven synchronization benefits."),
+        ("`baseline_nvshmem_pipeline_parallel_multigpu.py`, `optimized_nvshmem_pipeline_parallel_multigpu.py`, `baseline_nvshmem_training_example_multigpu.py`, `optimized_nvshmem_training_example_multigpu.py`", "NVSHMEM/symmetric-memory samples that require real multi-GPU launch plus symmetric-memory support; unsupported hosts fail fast with `SKIPPED:`."),
         ("`baseline_symmetric_memory_perf.py`, `optimized_symmetric_memory_perf.py`, `baseline_symmetric_memory_multigpu.py`, `optimized_symmetric_memory_multigpu.py`, `baseline_symmetric_memory_perf_multigpu.py`, `optimized_symmetric_memory_perf_multigpu.py`", "Symmetric memory utilities and perf probes for KV cache and optimizer shards."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`, `bandwidth_benchmark_suite_multigpu.py`, `nccl_benchmark.py`", "Harness driver plus standalone NCCL/NVLink sweepers for topology bring-up."),
     ],
     validation=[
         "`python compare.py --examples dataparallel_multigpu` shows the optimized pair overlapping compute and communication with lower latency.",
         "`python -m cli.aisp bench run --targets ch04:bandwidth_benchmark_suite_multigpu --profile minimal` surfaces >=250 GB/s links on connected GPU pairs and highlights any slow hops on a host with >=2 visible GPUs.",
-        "NVSHMEM samples emit consistent outputs when `NVSHMEM_SYMMETRIC_SIZE` is sized to hold the workload; mismatched config raises clear errors.",
+        "NVSHMEM samples now run only on real multi-GPU symmetric-memory hosts; unsupported environments fail fast with `SKIPPED:` instead of publishing fallback timings.",
     ],
     notes=[
         "`symmetric_memory_*` helpers hold user-space allocators for pooling KV-cache lines across GPUs without NVSwitch penalties.",
@@ -1442,16 +1442,16 @@ ENTRIES["ch05"] = chapter_entry(
         ("`baseline_ai.py`, `optimized_ai.py`, `storage_io_optimization.py`", "LLM-style token pipelines showcasing overlapping compute with streaming reads and prefetch. `ai` is kept as an informational overlap/control demo."),
         ("`baseline_host_staged_reduction.py`, `optimized_host_staged_reduction.py`", "Single-GPU host-staged reduction vs on-device reduction."),
         ("`baseline_distributed_multigpu.py`, `optimized_distributed_multigpu.py`", "Actual multi-GPU reduction baseline (CPU staging) vs GPU-side reduce_add."),
-        ("`gds_cufile_minimal.py`, `gpudirect_storage_example.py`", "GPUDirect Storage samples for verifying cuFile setup, buffer alignment, and throughput."),
+        ("`gds_cufile_minimal.py`, `gpudirect_storage_example.py`", "GPUDirect Storage utilities that verify real cuFile/GDS capability; unsupported hosts fail fast with `SKIPPED:` instead of publishing host-staged fallback throughput."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`", "Harness entrypoint plus expectation baselines for spotting regressions."),
     ],
     validation=[
         "`python baseline_storage_cpu.py --inspect` exposes CPU wait time > GPU time; `optimized_storage_cpu.py` reverses the ratio with >=80% GPU utilization.",
-        "`python -m ch05.gds_cufile_minimal /tmp/gds_test_file.bin 1073741824 --generate` sustains multi-GB/s throughput when `/etc/cufile.json` is configured and NVMe advertises GPUDirect support.",
+        "`python -m ch05.gds_cufile_minimal /tmp/gds_test_file.bin 1073741824 --generate` now acts as a strict capability probe: it either confirms usable cuFile/GDS support or exits with `SKIPPED:`.",
         "`python -m ch05.compare` remains useful for inspecting the `ai` overlap/control demo, but canonical chapter claims should come from `vectorization` and `storage_cpu`.",
     ],
     notes=[
-        "GPUDirect scripts fall back to host-mediated reads when `libcufile.so` is unavailable, making it safe to run on dev laptops.",
+        "GPUDirect scripts no longer publish host-mediated fallback numbers under the cuFile/GDS names; unsupported hosts receive explicit `SKIPPED:` diagnostics instead.",
         "`requirements.txt` captures the limited extra deps (like `lmdb`) needed for the dataset shims.",
     ],
 )
@@ -1607,7 +1607,7 @@ ENTRIES["ch07"] = chapter_entry(
                 | `lookup` | `0.397 ms` | `0.009 ms` | `45.41x` | locality-aware lookup path |
                 | `matmul` | `1.165 ms` | `0.367 ms` | `3.18x` | shared-memory tiled matmul instead of the naive layout |
 
-                This chapter has some intentionally dramatic wins because memory access mistakes are expensive. For the real descriptor-backed TMA story, use `tma_bulk_tensor_2d`; the older `tma_copy` pair remains as a legacy async-neighbor demo and is not the canonical TMA comparison."""
+                This chapter has some intentionally dramatic wins because memory access mistakes are expensive. `tma_copy` now means a strict tensor-map/TMA-capable run only, and unsupported hosts fail fast with `SKIPPED:` instead of publishing an async-pipeline fallback under the TMA name."""
             ),
         ),
         MarkdownSection(
@@ -1624,7 +1624,7 @@ ENTRIES["ch07"] = chapter_entry(
 
                 These targets answer different chapter-level questions:
                 - `tma_bulk_tensor_2d`: descriptor-backed TMA vs manual 2D staging
-                - `tma_copy`: legacy async-neighbor transfer path without tensor maps
+                - `tma_copy`: scalar baseline vs strict descriptor-backed tensor-map/TMA path
                 - `lookup`: cache/locality sensitivity
                 - `matmul`: memory-layout and tile-reuse payoff"""
             ),
