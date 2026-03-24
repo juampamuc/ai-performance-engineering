@@ -97,3 +97,12 @@ def test_cluster_common_eval_rejects_unknown_preset_via_real_cli():
     payload = json.loads(result.stdout)
     assert payload["success"] is False
     assert "Unknown preset" in payload["error"]
+
+
+def test_cluster_promote_run_reports_missing_run_dir_via_real_cli():
+    result = _run_cli(["cluster", "promote-run", "--run-id", "does-not-exist"])
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert payload["run_id"] == "does-not-exist"
+    assert "missing run dir" in payload["stderr"]
