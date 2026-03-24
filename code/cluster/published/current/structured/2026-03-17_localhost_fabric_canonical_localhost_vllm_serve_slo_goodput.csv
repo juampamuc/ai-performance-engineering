@@ -1,0 +1,2 @@
+concurrency,request_throughput,total_token_throughput,p99_ttft_ms,p99_tpot_ms,slo_pass,goodput_req_s,goodput_tok_s
+1,5.047000,484.494000,77.573000,5.706000,1,5.047000,484.494000

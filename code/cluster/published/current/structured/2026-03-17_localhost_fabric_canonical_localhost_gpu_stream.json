@@ -1,0 +1,47 @@
+{
+  "cuda_version": "13.1",
+  "device": 0,
+  "dtype": "float32",
+  "element_size_bytes": 4,
+  "gpu_name": "NVIDIA B200",
+  "iters": 40,
+  "label": "localhost",
+  "numel": 268435456,
+  "operations": [
+    {
+      "bandwidth_gbps": 5583.994515904046,
+      "bytes_per_iter": 2147483648.0,
+      "operation": "copy",
+      "time_ms": 15.383135795593262,
+      "total_bytes": 85899345920.0
+    },
+    {
+      "bandwidth_gbps": 6232.843024017602,
+      "bytes_per_iter": 2147483648.0,
+      "operation": "scale",
+      "time_ms": 13.78172779083252,
+      "total_bytes": 85899345920.0
+    },
+    {
+      "bandwidth_gbps": 6182.679308656927,
+      "bytes_per_iter": 3221225472.0,
+      "operation": "add",
+      "time_ms": 20.840320587158203,
+      "total_bytes": 128849018880.0
+    },
+    {
+      "bandwidth_gbps": 6191.730318157977,
+      "bytes_per_iter": 3221225472.0,
+      "operation": "triad",
+      "time_ms": 20.809856414794922,
+      "total_bytes": 128849018880.0
+    }
+  ],
+  "peak_bandwidth_gbps": 6232.843024017602,
+  "run_id": "2026-03-17_localhost_fabric_canonical",
+  "size_mb": 1024,
+  "status": "ok",
+  "stream_like_bandwidth_gbps": 6191.730318157977,
+  "torch_version": "2.10.0a0+a36e1d39eb.nv26.01.42222806",
+  "warmup": 10
+}

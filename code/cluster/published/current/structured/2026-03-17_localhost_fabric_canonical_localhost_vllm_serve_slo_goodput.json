@@ -1,0 +1,40 @@
+{
+  "input_csv": "/home/cfregly/ai-performance-engineering/code/cluster/runs/2026-03-17_localhost_fabric_canonical/structured/2026-03-17_localhost_fabric_canonical_localhost_vllm_serve_sweep.csv",
+  "label": "localhost",
+  "points": [
+    {
+      "concurrency": 1,
+      "goodput_req_s": 5.047,
+      "goodput_tok_s": 484.494,
+      "p99_tpot_ms": 5.706,
+      "p99_ttft_ms": 77.573,
+      "request_throughput": 5.047,
+      "slo_pass": true,
+      "total_token_throughput": 484.494
+    }
+  ],
+  "run_id": "2026-03-17_localhost_fabric_canonical",
+  "slo_thresholds_ms": {
+    "p99_tpot_ms": 200.0,
+    "p99_ttft_ms": 2000.0
+  },
+  "status": "ok",
+  "summary": {
+    "all_points_meet_slo": true,
+    "any_point_meets_slo": true,
+    "concurrency_at_max_goodput_req_s": 1,
+    "concurrency_at_max_goodput_tok_s": 1,
+    "concurrency_at_peak_total_req_s": 1,
+    "concurrency_at_peak_total_tok_s": 1,
+    "concurrency_points": 1,
+    "goodput_efficiency_req_ratio": 1.0,
+    "goodput_efficiency_tok_ratio": 1.0,
+    "knee_concurrency": null,
+    "max_goodput_req_s": 5.047,
+    "max_goodput_tok_s": 484.494,
+    "p99_tpot_ms_at_max_goodput_tok_s": 5.706,
+    "p99_ttft_ms_at_max_goodput_tok_s": 77.573,
+    "peak_total_req_s": 5.047,
+    "peak_total_tok_s": 484.494
+  }
+}

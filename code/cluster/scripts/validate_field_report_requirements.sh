@@ -408,17 +408,21 @@ if [[ -z "$effective_canonical_run_id" ]]; then
 else
   stale_output="$(python3 - "$ROOT_DIR" "$REPORT" "$NOTES" "$effective_canonical_run_id" "${ALLOW_RUN_IDS[@]}" <<'PY'
 import pathlib
+import json
 import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
-report = pathlib.Path(sys.argv[2]).read_text()
-notes = pathlib.Path(sys.argv[3]).read_text()
+report_path = pathlib.Path(sys.argv[2])
+notes_path = pathlib.Path(sys.argv[3])
+report = report_path.read_text()
+notes = notes_path.read_text()
 canonical = sys.argv[4]
 allow = set(sys.argv[5:])
 
 link_targets = []
-for text in (report, notes):
+resolved_link_targets = []
+for doc_path, text in ((report_path, report), (notes_path, notes)):
     for m in re.finditer(r'\[[^\]]+\]\(([^)]+)\)', text):
         t = m.group(1).strip()
         if not t or t.startswith('#') or '://' in t or t.startswith('mailto:'):
@@ -427,6 +431,9 @@ for text in (report, notes):
         t = t.split('#', 1)[0]
         if t:
             link_targets.append(t)
+            resolved = (doc_path.parent / t).resolve()
+            if resolved.exists():
+                resolved_link_targets.append(str(resolved))
 
 manifest_runs = []
 flat_structured = root / "cluster" / "results" / "structured"
@@ -444,11 +451,22 @@ if runs_root.exists():
         if re.match(r"20\d{2}-\d{2}-\d{2}_", p.name) and (p / "manifest.json").exists():
             manifest_runs.append(p.name)
 
+published_root = root / "cluster" / "published" / "current"
+published_manifest = published_root / "manifest.json"
+published_manifest_run_id = None
+if published_manifest.exists():
+    try:
+        published_manifest_run_id = json.loads(published_manifest.read_text()).get("run_id")
+    except Exception:
+        published_manifest_run_id = None
+    if isinstance(published_manifest_run_id, str) and re.match(r"20\d{2}-\d{2}-\d{2}_", published_manifest_run_id):
+        manifest_runs.append(published_manifest_run_id)
+
 stale = []
 for run_id in sorted(set(manifest_runs)):
     if run_id == canonical or run_id in allow:
         continue
-    linked = any(run_id in target for target in link_targets)
+    linked = any(run_id in target for target in link_targets) or any(run_id in target for target in resolved_link_targets)
     if linked:
         continue
 
@@ -457,15 +475,42 @@ for run_id in sorted(set(manifest_runs)):
     figures = list((root / "cluster" / "docs" / "figures").glob(f"{run_id}*"))
     run_dir = root / "cluster" / "runs" / run_id
     run_dir_present = run_dir.exists()
-    total = len(structured) + len(raw) + len(figures) + (1 if run_dir_present else 0)
+    published_structured = list((published_root / "structured").glob(f"{run_id}*"))
+    published_raw = list((published_root / "raw").glob(f"{run_id}*"))
+    published_figures = list((published_root / "figures").glob(f"{run_id}*"))
+    published_manifest_present = int(published_manifest_run_id == run_id)
+    total = (
+        len(structured)
+        + len(raw)
+        + len(figures)
+        + (1 if run_dir_present else 0)
+        + len(published_structured)
+        + len(published_raw)
+        + len(published_figures)
+        + published_manifest_present
+    )
     if total > 0:
-        stale.append((run_id, len(structured), len(raw), len(figures), int(run_dir_present), total))
+        stale.append(
+            (
+                run_id,
+                len(structured),
+                len(raw),
+                len(figures),
+                int(run_dir_present),
+                len(published_structured),
+                len(published_raw),
+                len(published_figures),
+                published_manifest_present,
+                total,
+            )
+        )
 
 if stale:
-    for run_id, s_cnt, r_cnt, f_cnt, run_dir_present, total in stale:
+    for run_id, s_cnt, r_cnt, f_cnt, run_dir_present, p_s_cnt, p_r_cnt, p_f_cnt, p_manifest, total in stale:
         print(
             f"STALE {run_id} structured={s_cnt} raw={r_cnt} figures={f_cnt} "
-            f"run_dir={run_dir_present} total={total}"
+            f"run_dir={run_dir_present} published_structured={p_s_cnt} published_raw={p_r_cnt} "
+            f"published_figures={p_f_cnt} published_manifest={p_manifest} total={total}"
         )
     sys.exit(2)
 

@@ -1,0 +1,66 @@
+{
+  "test": "allreduce_stability",
+  "payload_gib": 2.0,
+  "payload_bytes": 2147483648,
+  "world_size": 1,
+  "warmup_iters": 1,
+  "measurement_iters": 5,
+  "hostname": "ai-book-dev",
+  "app_clocks": [
+    {
+      "rank": 0,
+      "hostname": "ai-book-dev",
+      "logical_device": 0,
+      "physical_device": 0,
+      "gpu_name": "NVIDIA B200",
+      "app_sm_mhz": 1965,
+      "app_mem_mhz": 3996,
+      "cur_sm_mhz": 1155,
+      "cur_mem_mhz": 3996
+    }
+  ],
+  "summary": {
+    "busbw_mean_gbps": 0.0,
+    "busbw_median_gbps": 0.0,
+    "busbw_std_gbps": 0.0,
+    "busbw_cv_pct": 0.0,
+    "busbw_min_gbps": 0.0,
+    "busbw_max_gbps": 0.0,
+    "busbw_p01_gbps": 0.0,
+    "busbw_p50_gbps": 0.0,
+    "busbw_p99_gbps": 0.0,
+    "p99_p50_ratio": 0,
+    "max_min_ratio": 0,
+    "jitter_assessment": "excellent",
+    "algbw_mean_gbps": 86946.596
+  },
+  "per_iteration": {
+    "busbw_gbps": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "algbw_gbps": [
+      61286.637,
+      88885.917,
+      76783.597,
+      100915.583,
+      106861.244
+    ],
+    "duration_ms": [
+      0.035,
+      0.0242,
+      0.028,
+      0.0213,
+      0.0201
+    ]
+  },
+  "software": {
+    "torch_version": "2.9.1+cu130",
+    "cuda_version": "13.0",
+    "nccl_version": "2.27.7",
+    "clock_lock_required": true
+  }
+}

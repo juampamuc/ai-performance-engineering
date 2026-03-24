@@ -1,6 +1,6 @@
 # Cluster Perf Field Report (Localhost, 1 Node)
 
-Last updated: 2026-03-17. Canonical run: `2026-03-17_localhost_fabric_canonical`.
+Last updated: 2026-03-24. Canonical run: `2026-03-17_localhost_fabric_canonical`.
 
 ## Table of Contents
 1. [TL;DR](#tldr)

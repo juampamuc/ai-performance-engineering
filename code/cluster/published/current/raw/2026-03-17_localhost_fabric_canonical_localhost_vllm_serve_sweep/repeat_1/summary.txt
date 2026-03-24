@@ -1,0 +1,10 @@
+========================================
+vLLM Concurrency Sweep Results
+========================================
+Model: openai-community/gpt2
+TP: 1
+ISL: 64, OSL: 32
+
+Concurrency | Output tok/s | Total tok/s | Mean TTFT | Mean TPOT | P99 TPOT
+------------|--------------|-------------|-----------|-----------|----------
+1           | 161.50       | 484.49      | 27.00     | 5.514     | 5.706

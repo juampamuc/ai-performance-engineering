@@ -1,0 +1,15 @@
+========================================
+vLLM Concurrency Sweep Results
+========================================
+Repeat count: 1
+Points: 1
+Invalid rows skipped: 0
+
+Concurrency | Output tok/s | Total tok/s | Mean TTFT | Mean TPOT | P99 TPOT
+------------|--------------|-------------|-----------|-----------|----------
+1           | 161.50       | 484.49      | 27.00     | 5.514     | 5.706
+
+Stability (p95 CV across points)
+  total_token_throughput: 0.0%
+  p99_ttft_ms: 0.0%
+  p99_tpot_ms: 0.0%
