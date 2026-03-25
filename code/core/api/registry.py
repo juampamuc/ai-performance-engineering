@@ -236,6 +236,13 @@ _ROUTES: List[ApiRoute] = [
         mcp_tool="benchmark_targets",
     ),
     ApiRoute(
+        "POST",
+        "/api/benchmark/e2e-sweep",
+        "benchmark.e2e_sweep",
+        handlers.benchmark_e2e_sweep,
+        mcp_tool="benchmark_e2e_sweep",
+    ),
+    ApiRoute(
         "GET",
         "/api/profile/flame",
         "profile.flame_graph",

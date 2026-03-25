@@ -70,6 +70,7 @@ CATEGORY_TOOLS: Dict[str, List[str]] = {
         "benchmark_targets",
         "list_chapters",
         "run_benchmarks",
+        "benchmark_e2e_sweep",
         "benchmark_variants",
         "benchmark_explore",
         "benchmark_deep_dive_compare",
@@ -241,6 +242,13 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "iterations": 1,
         "warmup": 5,
         "llm_analysis": False,
+    },
+    "benchmark_e2e_sweep": {
+        "run_tier1": False,
+        "run_full_sweep": False,
+        "run_cluster": False,
+        "run_fabric": False,
+        "dry_run": True,
     },
     "benchmark_variants": {
         "targets": ["ch10:atomic_reduction"],

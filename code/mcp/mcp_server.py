@@ -70,8 +70,8 @@ DOMAIN TOOLS (organized by 10-domain model):
         inference_vllm, inference_quantization,
         inference_deploy, inference_estimate
 
-    Benchmark (16 tools):
-        run_benchmarks, list_chapters, benchmark_targets, benchmark_report,
+    Benchmark (17 tools):
+        run_benchmarks, benchmark_e2e_sweep, list_chapters, benchmark_targets, benchmark_report,
         benchmark_export, benchmark_compare_runs, benchmark_triage,
         benchmark_data, benchmark_overview, benchmark_history,
         benchmark_trends, benchmark_compare,
@@ -295,6 +295,7 @@ _OUTPUT_ENVELOPE_SUMMARY = (
 # Explicit overrides for tools that have notable runtime/side effects.
 _EXPECTATION_OVERRIDES: Dict[str, str] = {
     "run_benchmarks": "Runs the bench CLI; can take minutes and writes artifacts/logs under artifacts/runs/<run_id>/ by default. Run IDs are self-describing (timestamp + run kind + targets). Serialized via the MCP queue runner under artifacts/parallel_runs to prevent overlap. Also runs triage + HTML report generation unless auto_analyze/auto_report are disabled. Use artifacts_dir to control output location. For full baseline-vs-optimized profiling + diffs, use profile='deep_dive' or benchmark_deep_dive_compare.",
+    "benchmark_e2e_sweep": "Runs the tier1 release-confidence suite, optional discovered full sweep, cluster common-eval, and optional fabric eval in one orchestrated flow. Writes a top-level package under artifacts/e2e_runs/<run_id>/ and uses async job tickets when requested.",
     "benchmark_deep_dive_compare": "Runs bench with profile='deep_dive' (slow) and then compares baseline vs optimized profiles (nsys+ncu). Emits side-by-side JSON + narrative and writes a self-describing run directory under output_dir (default: artifacts/runs).",
     "benchmark_report": "Generates a report from existing benchmark JSON; writes PDF/HTML to the chosen output.",
     "benchmark_export": "Exports existing benchmark JSON to csv/markdown/json; writes to the chosen output file.",
@@ -4837,6 +4838,68 @@ def tool_benchmark_targets(params: Dict[str, Any]) -> Dict[str, Any]:
     if chapter:
         args.extend(["--chapter", chapter])
     result = _run_bench_cli(args)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_e2e_sweep",
+    "Tags: benchmark, e2e, tier1, cluster, fabric, orchestration, release-gate. "
+    "Run the tier1 release-confidence suite, optional discovered full sweep, cluster common-eval, "
+    "and optional fabric eval in one orchestrated flow. "
+    "Returns: {success, overall_status, run_id, stages, manifest_path, summary_path}. "
+    "USE when: You want one top-level end-to-end benchmark package instead of composing tier1, sweep, and cluster runs manually. "
+    "Writes top-level artifacts under artifacts/e2e_runs/<run_id>/. "
+    "Supports async job tickets via async=true.",
+    {"type": "object", "properties": with_context_params({
+        "run_tier1": {"type": "boolean", "default": True, "description": "Run the canonical tier-1 suite stage"},
+        "run_full_sweep": {"type": "boolean", "default": False, "description": "Run the heavier discovered full benchmark sweep"},
+        "run_cluster": {"type": "boolean", "default": True, "description": "Run the cluster common-eval stage"},
+        "run_fabric": {"type": "boolean", "default": True, "description": "Run the dedicated fabric-eval stage"},
+        "cluster_preset": {
+            "type": "string",
+            "enum": ["common-answer-fast", "core-system", "modern-llm", "fabric-systems", "multinode-readiness"],
+            "default": "common-answer-fast",
+            "description": "Cluster common-eval preset to run",
+        },
+        "hosts": {"type": "array", "items": {"type": "string"}, "description": "Cluster host list; defaults to localhost"},
+        "labels": {"type": "array", "items": {"type": "string"}, "description": "Optional labels matching hosts"},
+        "ssh_user": {"type": "string", "description": "SSH user for non-local cluster runs"},
+        "ssh_key": {"type": "string", "description": "SSH key path for non-local cluster runs"},
+        "bench_root": {"type": "string", "description": "Benchmark discovery root (defaults to repo root)"},
+        "profile": {
+            "type": "string",
+            "enum": ["none", "minimal", "deep_dive", "roofline"],
+            "default": "minimal",
+            "description": "Profiling preset for benchmark stages",
+        },
+        "suite_timeout": {"type": "integer", "description": "Benchmark suite timeout in seconds", "default": 14400},
+        "timeout_seconds": {"type": "integer", "description": "Optional cluster stage timeout in seconds"},
+        "artifacts_dir": {"type": "string", "description": "Base directory for benchmark run artifacts"},
+        "run_id": {"type": "string", "description": "Explicit top-level e2e sweep run id"},
+        "validity_profile": {
+            "type": "string",
+            "enum": ["strict", "portable"],
+            "default": "strict",
+            "description": "Benchmark validity profile",
+        },
+        "single_gpu": {"type": "boolean", "default": False, "description": "Force single-GPU visibility for benchmark stages"},
+        "iterations": {"type": "integer", "description": "Override benchmark iterations"},
+        "warmup": {"type": "integer", "description": "Override benchmark warmup iterations"},
+        "gpu_sm_clock_mhz": {"type": "integer", "description": "Lock the SM application clock (MHz) for benchmark stages"},
+        "gpu_mem_clock_mhz": {"type": "integer", "description": "Lock the GPU memory application clock (MHz) for benchmark stages"},
+        "accept_regressions": {"type": "boolean", "default": False, "description": "Update expectations when improvements are detected instead of flagging regressions"},
+        "update_expectations": {"type": "boolean", "default": False, "description": "Force-write observed metrics into expectation files"},
+        "allow_mixed_provenance": {"type": "boolean", "default": False, "description": "Allow expectation writes when provenance differs without forcing updates"},
+        "allow_portable_expectations_update": {"type": "boolean", "default": False, "description": "Allow expectation writes while validity_profile=portable"},
+        "dry_run": {"type": "boolean", "default": False, "description": "Describe planned execution without running stages"},
+        "async": {"type": "boolean", "default": False, "description": "Run in background and return a job ticket"},
+    })}
+)
+def tool_benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.api import handlers
+
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_e2e_sweep(params)
     return attach_context_if_requested(result, include_context, context_level)
 
 

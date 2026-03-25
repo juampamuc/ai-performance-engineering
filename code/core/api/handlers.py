@@ -587,6 +587,59 @@ def benchmark_targets(_: Dict[str, Any]) -> Dict[str, Any]:
     return get_engine().benchmark.targets()
 
 
+def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.benchmark.e2e_sweep import e2e_run_dir, resolve_e2e_run_id, run_benchmark_e2e_sweep
+
+    run_async = bool(params.get("async", False))
+    dry_run = bool(params.get("dry_run", False))
+    run_id = _parse_str_param(params, "run_id")
+    bench_root_raw = _parse_str_param(params, "bench_root")
+    kwargs: Dict[str, Any] = {
+        "run_tier1": bool(params.get("run_tier1", True)),
+        "run_full_sweep": bool(params.get("run_full_sweep", False)),
+        "run_cluster": bool(params.get("run_cluster", True)),
+        "run_fabric": bool(params.get("run_fabric", True)),
+        "cluster_preset": str(params.get("cluster_preset", "common-answer-fast")),
+        "hosts": _parse_list_param(params, "hosts"),
+        "labels": _parse_list_param(params, "labels"),
+        "ssh_user": _parse_str_param(params, "ssh_user"),
+        "ssh_key": _parse_str_param(params, "ssh_key"),
+        "bench_root": Path(bench_root_raw).resolve() if bench_root_raw else None,
+        "profile_type": str(params.get("profile", "minimal")),
+        "suite_timeout": _parse_optional_int_param(params, "suite_timeout", minimum=0),
+        "timeout_seconds": _parse_optional_int_param(params, "timeout_seconds", minimum=1),
+        "artifacts_dir": _parse_str_param(params, "artifacts_dir"),
+        "validity_profile": str(params.get("validity_profile", "strict")),
+        "single_gpu": bool(params.get("single_gpu", False)),
+        "iterations": _parse_optional_int_param(params, "iterations", minimum=1),
+        "warmup": _parse_optional_int_param(params, "warmup", minimum=0),
+        "gpu_sm_clock_mhz": _parse_optional_int_param(params, "gpu_sm_clock_mhz", minimum=1),
+        "gpu_mem_clock_mhz": _parse_optional_int_param(params, "gpu_mem_clock_mhz", minimum=1),
+        "accept_regressions": bool(params.get("accept_regressions", False)),
+        "update_expectations": bool(params.get("update_expectations", False)),
+        "allow_mixed_provenance": bool(params.get("allow_mixed_provenance", False)),
+        "allow_portable_expectations_update": bool(params.get("allow_portable_expectations_update", False)),
+        "run_id": run_id,
+        "dry_run": dry_run,
+    }
+
+    if run_async and not dry_run:
+        resolved_run_id = resolve_e2e_run_id(run_id)
+        kwargs["run_id"] = resolved_run_id
+        run_dir = e2e_run_dir(resolved_run_id)
+        ticket = JobStore.get().queue_job(
+            "benchmark_e2e_sweep",
+            lambda: run_benchmark_e2e_sweep(**kwargs),
+            arguments=params,
+            run_metadata={"run_id": resolved_run_id, "run_dir": str(run_dir)},
+        )
+        ticket["run_id"] = resolved_run_id
+        ticket["run_dir"] = str(run_dir)
+        return ticket
+
+    return run_benchmark_e2e_sweep(**kwargs)
+
+
 def profile_flame(_: Dict[str, Any]) -> Dict[str, Any]:
     return get_engine().profile.flame_graph()
 
@@ -734,6 +787,7 @@ def ai_tools(_: Dict[str, Any]) -> Dict[str, Any]:
         "benchmarks": [
             "benchmark_contracts",
             "run_benchmarks",
+            "benchmark_e2e_sweep",
             "benchmark_targets",
             "list_chapters",
             "benchmark_report",

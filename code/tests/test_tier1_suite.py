@@ -555,3 +555,36 @@ def test_run_tier1_passes_explicit_ncu_replay_mode(tmp_path: Path, monkeypatch) 
 
     assert result.exit_code == 0, result.stdout
     assert captured["ncu_replay_mode"] == "application"
+
+
+def test_run_tier1_passes_expectation_write_flags(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run_tier1_suite(**kwargs):
+        captured.update(kwargs)
+        return {
+            "execution": {"run_id": "tier1_smoke", "total_failed": 0},
+            "summary_path": tmp_path / "summary.json",
+            "regression_summary_path": tmp_path / "regressions.json",
+            "trend_snapshot_path": tmp_path / "trend.json",
+            "history_root": tmp_path / "history",
+        }
+
+    monkeypatch.setattr("core.benchmark.suites.tier1.run_tier1_suite", _fake_run_tier1_suite)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "run-tier1",
+            "--accept-regressions",
+            "--update-expectations",
+            "--allow-mixed-provenance",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert captured["accept_regressions"] is True
+    assert captured["update_expectations"] is True
+    assert captured["allow_mixed_provenance"] is True

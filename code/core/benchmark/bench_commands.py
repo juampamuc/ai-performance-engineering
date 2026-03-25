@@ -78,7 +78,7 @@ def _expand_multi_value_option(option_names: List[str]) -> None:
     sys.argv = new_argv
 
 
-_expand_multi_value_option(["--targets", "-t"])
+_expand_multi_value_option(["--targets", "-t", "--hosts", "--labels"])
 
 from core.env import apply_env_defaults, dump_environment_and_capabilities
 from core.utils.logger import setup_logging, get_logger
@@ -1335,6 +1335,9 @@ if TYPER_AVAILABLE:
         log_level: str = Option("INFO", "--log-level", help="Log level: DEBUG, INFO, WARNING, ERROR"),
         log_file: Optional[str] = Option(None, "--log-file", help="Path to log file."),
         single_gpu: bool = Option(False, "--single-gpu", help="Force single-GPU visibility."),
+        accept_regressions: bool = Option(False, "--accept-regressions", help="Update expectation files when improvements are detected instead of flagging regressions."),
+        update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware."),
+        allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations)."),
         ncu_metric_set: str = Option("minimal", "--ncu-metric-set", help="Nsight Compute metric preset.", callback=_validate_ncu_metric_set),
         ncu_replay_mode: Optional[str] = Option(
             None,
@@ -1372,6 +1375,9 @@ if TYPER_AVAILABLE:
             log_level=log_level,
             log_file=log_file,
             single_gpu=single_gpu,
+            accept_regressions=accept_regressions,
+            update_expectations=update_expectations,
+            allow_mixed_provenance=allow_mixed_provenance,
             ncu_metric_set=ncu_metric_set,
             ncu_replay_mode=ncu_replay_mode,
             nsys_timeout_seconds=nsys_timeout_seconds,
@@ -1390,6 +1396,75 @@ if TYPER_AVAILABLE:
             )
         )
         if int(result["execution"].get("total_failed", 0) or 0) > 0:
+            raise typer.Exit(code=1)
+
+    @app.command("run-e2e")
+    def run_e2e(
+        run_tier1: bool = Option(True, "--run-tier1/--no-run-tier1", help="Run the canonical tier-1 suite stage."),
+        run_full_sweep: bool = Option(False, "--run-full-sweep/--no-run-full-sweep", help="Run the heavier discovered full benchmark sweep."),
+        run_cluster: bool = Option(True, "--run-cluster/--no-run-cluster", help="Run the cluster common-eval stage."),
+        run_fabric: bool = Option(True, "--run-fabric/--no-run-fabric", help="Run the dedicated fabric-eval stage."),
+        cluster_preset: str = Option("common-answer-fast", "--cluster-preset", help="Cluster common-eval preset to run."),
+        bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
+        hosts: Optional[List[str]] = Option(None, "--hosts", help="Cluster host list. Repeat the flag for multiple hosts; defaults to localhost."),
+        labels: Optional[List[str]] = Option(None, "--labels", help="Optional labels matching --hosts."),
+        ssh_user: Optional[str] = Option(None, "--ssh-user", help="SSH user for non-local cluster runs."),
+        ssh_key: Optional[str] = Option(None, "--ssh-key", help="SSH key path for non-local cluster runs."),
+        profile_type: str = Option("minimal", "--profile", "-p", help="Profiling preset: minimal (default), none, deep_dive, or roofline.", callback=_validate_profile_type),
+        suite_timeout: Optional[int] = Option(14400, "--suite-timeout", help="Benchmark suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)."),
+        timeout_seconds: Optional[int] = Option(None, "--timeout-seconds", help="Optional cluster stage timeout in seconds."),
+        artifacts_dir: Optional[str] = Option(None, "--artifacts-dir", help="Base directory for benchmark run artifacts."),
+        run_id: Optional[str] = Option(None, "--run-id", help="Explicit top-level e2e sweep run id."),
+        validity_profile: str = Option(
+            "strict",
+            "--validity-profile",
+            help=VALIDITY_PROFILE_HELP_TEXT,
+            callback=_validate_validity_profile,
+        ),
+        single_gpu: bool = Option(False, "--single-gpu", help="Force single-GPU visibility for benchmark stages."),
+        iterations: Optional[int] = Option(None, "--iterations", help="Override benchmark iterations."),
+        warmup: Optional[int] = Option(None, "--warmup", help="Override benchmark warmup iterations."),
+        gpu_sm_clock_mhz: Optional[int] = Option(None, "--gpu-sm-clock-mhz", help="Lock the SM application clock (MHz) for benchmark stages."),
+        gpu_mem_clock_mhz: Optional[int] = Option(None, "--gpu-mem-clock-mhz", help="Lock the GPU memory application clock (MHz) for benchmark stages."),
+        accept_regressions: bool = Option(False, "--accept-regressions", help="Update expectation files when improvements are detected instead of flagging regressions."),
+        update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware."),
+        allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations)."),
+        allow_portable_expectations_update: bool = Option(False, "--allow-portable-expectations-update", help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT),
+        dry_run: bool = Option(False, "--dry-run", help="Describe planned execution without running stages."),
+    ):
+        """Run tier1, optional full sweep, cluster common eval, and optional fabric eval in one orchestrated flow."""
+        from core.benchmark.e2e_sweep import run_benchmark_e2e_sweep
+
+        result = run_benchmark_e2e_sweep(
+            run_tier1=run_tier1,
+            run_full_sweep=run_full_sweep,
+            run_cluster=run_cluster,
+            run_fabric=run_fabric,
+            cluster_preset=cluster_preset,
+            hosts=hosts,
+            labels=labels,
+            ssh_user=ssh_user,
+            ssh_key=ssh_key,
+            bench_root=bench_root,
+            profile_type=profile_type,
+            suite_timeout=suite_timeout,
+            timeout_seconds=timeout_seconds,
+            validity_profile=validity_profile,
+            allow_portable_expectations_update=allow_portable_expectations_update,
+            iterations=iterations,
+            warmup=warmup,
+            gpu_sm_clock_mhz=gpu_sm_clock_mhz,
+            gpu_mem_clock_mhz=gpu_mem_clock_mhz,
+            artifacts_dir=artifacts_dir,
+            single_gpu=single_gpu,
+            accept_regressions=accept_regressions,
+            update_expectations=update_expectations,
+            allow_mixed_provenance=allow_mixed_provenance,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+        typer.echo(json.dumps(result, indent=2))
+        if result.get("success") is False:
             raise typer.Exit(code=1)
 
     @app.command("explore")

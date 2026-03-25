@@ -42,6 +42,33 @@ def test_bench_list_targets_help():
     assert "list-targets" in result.stdout
 
 
+def test_bench_run_e2e_help():
+    result = _run_cli(["bench", "run-e2e", "--help"])
+    assert result.returncode == 0
+    assert "run-e2e" in result.stdout
+
+
+def test_bench_run_e2e_dry_run_returns_structured_payload():
+    result = _run_cli(
+        [
+            "bench",
+            "run-e2e",
+            "--dry-run",
+            "--no-run-full-sweep",
+            "--no-run-cluster",
+            "--no-run-fabric",
+        ],
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["success"] is True
+    assert payload["dry_run"] is True
+    assert payload["overall_status"] == "dry_run"
+    assert payload["run_id"]
+    assert payload["stages"][0]["name"] == "tier1"
+
+
 def test_bench_analyze_help():
     result = _run_cli(["bench", "analyze", "--help"])
     assert result.returncode == 0
