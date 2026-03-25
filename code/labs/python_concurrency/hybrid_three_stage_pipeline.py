@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import json
 import math
+import multiprocessing as mp
 import statistics
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -349,7 +350,12 @@ async def run_pipeline(args: argparse.Namespace, items: list[WorkItem]) -> list[
 
     results: list[PipelineResult | None] = [None] * len(items)
 
-    process_pool = ProcessPoolExecutor(max_workers=stage_b_workers)
+    # Use spawn so test runners and other multi-threaded hosts do not inherit a
+    # forked event-loop state into the CPU stage workers.
+    process_pool = ProcessPoolExecutor(
+        max_workers=stage_b_workers,
+        mp_context=mp.get_context("spawn"),
+    )
 
     try:
         stage_a_tasks = [

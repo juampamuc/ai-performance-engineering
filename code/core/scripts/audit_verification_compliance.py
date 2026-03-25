@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import importlib.abc
 import importlib.util
 import os
 import sys
@@ -66,17 +67,42 @@ def _module_name_for_path(filepath: Path) -> str:
     return ".".join(relative.with_suffix("").parts)
 
 
+class _SiblingImportFinder(importlib.abc.MetaPathFinder):
+    """Resolve sibling benchmark imports without mutating the global sys.path."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+
+    def find_spec(self, fullname: str, path=None, target=None):  # type: ignore[override]
+        if path is not None or "." in fullname:
+            return None
+
+        module_path = self.root / f"{fullname}.py"
+        if module_path.is_file():
+            return importlib.util.spec_from_file_location(fullname, module_path)
+
+        package_init = self.root / fullname / "__init__.py"
+        if package_init.is_file():
+            return importlib.util.spec_from_file_location(
+                fullname,
+                package_init,
+                submodule_search_locations=[str(package_init.parent)],
+            )
+
+        return None
+
+
 @contextlib.contextmanager
-def _prepend_sys_path(path: Path):
-    resolved = str(path.resolve())
-    sys.path.insert(0, resolved)
+def _with_sibling_import_finder(path: Path):
+    finder = _SiblingImportFinder(path)
+    sys.meta_path.insert(0, finder)
     try:
         yield
     finally:
-        try:
-            sys.path.remove(resolved)
-        except ValueError:
-            pass
+        for index, candidate in enumerate(sys.meta_path):
+            if candidate is finder:
+                sys.meta_path.pop(index)
+                break
 
 
 def _should_retry_with_multigpu_floor(exc: BaseException) -> bool:
@@ -264,7 +290,7 @@ def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str, List[str]]]
         
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        with _prepend_sys_path(filepath.parent):
+        with _with_sibling_import_finder(filepath.parent):
             with _capture_process_output() as captured_output:
                 spec.loader.exec_module(module)
 

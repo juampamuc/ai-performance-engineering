@@ -290,6 +290,23 @@ def _load_lab_classifications(index_path: Path = LABS_INDEX_PATH) -> Dict[str, s
     if not index_path.exists():
         return {}
     classifications: Dict[str, str] = {}
+
+    def _classify_description(desc: str) -> Optional[str]:
+        if "benchmark-pair labs" in desc:
+            return "benchmark-pair"
+        if "broader optimization story" in desc:
+            return "benchmark-story"
+        if "workflow-oriented" in desc or "matrix/playbook" in desc:
+            return "playbook-matrix"
+        if "verification discipline matters" in desc:
+            return "challenge-kernel-lab"
+        # The detailed lab index uses shorter per-lab summaries, so keep a
+        # second-pass heuristic for story-oriented labs that still ship as
+        # explicit baseline/optimized benchmark pairs.
+        if any(marker in desc for marker in ("optimization journey", "scheduling lab", "disaggregated inference")):
+            return "benchmark-story"
+        return None
+
     for raw_line in index_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line.startswith("|"):
@@ -298,15 +315,8 @@ def _load_lab_classifications(index_path: Path = LABS_INDEX_PATH) -> Dict[str, s
         if len(cells) < 2 or cells[0] in {"Path", "---"}:
             continue
         desc = cells[1].lower()
-        if "benchmark-pair labs" in desc:
-            classification = "benchmark-pair"
-        elif "broader optimization story" in desc:
-            classification = "benchmark-story"
-        elif "workflow-oriented" in desc or "matrix/playbook" in desc:
-            classification = "playbook-matrix"
-        elif "verification discipline matters" in desc:
-            classification = "challenge-kernel-lab"
-        else:
+        classification = _classify_description(desc)
+        if classification is None:
             continue
         for match in re.finditer(r"`(labs/[^`]+)`", cells[0]):
             classifications[match.group(1).rstrip("/")] = classification

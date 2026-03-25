@@ -63,6 +63,7 @@ def _read_json_object(path: Path, *, label: str) -> Tuple[Optional[Dict[str, Any
 
 
 def _write_reuse_warning(out_dir: Path, warning: str) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "warning": warning,
         "decided_to_rerun": True,
@@ -1163,31 +1164,54 @@ def summarize(results: List[RunResult], session_dir: Path) -> None:
             latest_failures.write_text("All tasks succeeded.\n")
 
 
+def _candidate_existing_output_dirs(out_dir: Path) -> List[Path]:
+    """Yield current output dir first, then older session outputs for the same target."""
+
+    candidates: List[Path] = [out_dir]
+    try:
+        output_root = out_dir.parents[2]
+    except IndexError:
+        return candidates
+
+    profiler = out_dir.parent.name
+    example_name = out_dir.name
+    for candidate in sorted(
+        output_root.glob(f"*/{profiler}/{example_name}"),
+        key=lambda path: path.parent.parent.name,
+        reverse=True,
+    ):
+        if candidate != out_dir:
+            candidates.append(candidate)
+    return candidates
+
+
 def maybe_skip_output(out_dir: Path, skip_existing: bool) -> Tuple[bool, Optional[str]]:
     if not skip_existing:
         return False, None
-    summary = out_dir / "command.json"
-    if not out_dir.exists() or not summary.exists():
-        return False, None
-    _, summary_warning = _read_json_object(summary, label="existing profile harness command summary")
-    if summary_warning:
-        _write_reuse_warning(out_dir, summary_warning)
-        return False, summary_warning
-    status_path = out_dir / "status.json"
-    if not status_path.exists():
-        return False, None
-    status, status_warning = _read_json_object(status_path, label="existing profile harness status")
-    if status_warning:
-        _write_reuse_warning(out_dir, status_warning)
-        return False, status_warning
-    exit_code_raw = status.get("exit_code", 1)
-    try:
-        exit_code = int(exit_code_raw)
-    except Exception:
-        warning = f"Expected integer exit_code in existing profile harness status {status_path}, got {exit_code_raw!r}"
-        _write_reuse_warning(out_dir, warning)
-        return False, warning
-    return exit_code == 0, None
+    for candidate in _candidate_existing_output_dirs(out_dir):
+        summary = candidate / "command.json"
+        if not candidate.exists() or not summary.exists():
+            continue
+        _, summary_warning = _read_json_object(summary, label="existing profile harness command summary")
+        if summary_warning:
+            _write_reuse_warning(out_dir, summary_warning)
+            return False, summary_warning
+        status_path = candidate / "status.json"
+        if not status_path.exists():
+            continue
+        status, status_warning = _read_json_object(status_path, label="existing profile harness status")
+        if status_warning:
+            _write_reuse_warning(out_dir, status_warning)
+            return False, status_warning
+        exit_code_raw = status.get("exit_code", 1)
+        try:
+            exit_code = int(exit_code_raw)
+        except Exception:
+            warning = f"Expected integer exit_code in existing profile harness status {status_path}, got {exit_code_raw!r}"
+            _write_reuse_warning(out_dir, warning)
+            return False, warning
+        return exit_code == 0, None
+    return False, None
 
 
 def write_status(out_dir: Path, *, exit_code: int, duration: float) -> None:
