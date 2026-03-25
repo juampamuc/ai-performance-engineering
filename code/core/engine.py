@@ -684,15 +684,10 @@ class DistributedDomain:
             gpus: Total number of GPUs
             nodes: Number of nodes
         """
-        try:
-            from core.optimization.parallelism_planner.cli import get_parallelism_recommendations
-            return get_parallelism_recommendations(
-                model_name=f"model-{model_size}b",
-                num_gpus=gpus,
-                num_nodes=nodes
-            )
-        except (ImportError, AttributeError):
-            return _safe_call(_get_handler().get_parallelism_recommendations)
+        return _safe_call(
+            _get_handler().get_parallelism_recommendations,
+            {"model_size": model_size, "gpus": gpus, "nodes": nodes},
+        )
     
     def nccl(self, nodes: int = 1, gpus: int = 8, diagnose: bool = False) -> Dict[str, Any]:
         """

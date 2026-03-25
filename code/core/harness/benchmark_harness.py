@@ -1523,16 +1523,28 @@ class BaseBenchmark:
     story_metadata: Optional[Dict[str, Any]] = None
 
     def __init__(self):
-        """Initialize benchmark with device resolution.
-        
-        Subclasses should call super().__init__() and then set up their own attributes.
+        """Initialize benchmark without forcing runtime-only device checks.
+
+        Static inspection paths should be able to instantiate benchmarks and
+        read metadata or input signatures without bringing up CUDA. The first
+        actual access to ``self.device`` still fails fast when CUDA is required.
         """
-        self.device = self._resolve_device()
+        self._device: Optional[torch.device] = None
         self._config = None  # Cache for get_config()
         self._workload_metadata: Optional[WorkloadMetadata] = None
         self._workload_registered: bool = False
         self._execution_marker: Optional[torch.Tensor] = None
         self._verification_payload = None
+
+    @property
+    def device(self) -> torch.device:
+        if self._device is None:
+            self._device = self._resolve_device()
+        return self._device
+
+    @device.setter
+    def device(self, value: Optional[torch.device]) -> None:
+        self._device = value
     
     def _resolve_device(self) -> torch.device:
         """Resolve CUDA device, failing fast if CUDA is not available.

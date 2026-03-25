@@ -9,6 +9,7 @@ from core.api.registry import get_dashboard_mcp_tools
 from core.perf_core import PerfCore
 from core.engine import get_engine, reset_engine
 from dashboard.api import server
+from tests.http_client import asgi_request
 
 
 class _TestPerfCore(PerfCore):
@@ -39,13 +40,11 @@ def test_dashboard_cli_has_serve_command():
 
 
 def test_dashboard_http_benchmark_overview_route_returns_success_envelope(sample_benchmark_results_file):
-    fastapi = pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
+    pytest.importorskip("fastapi")
 
     reset_engine()
     server._configure_engine(sample_benchmark_results_file)
-    client = TestClient(server.fastapi_app)
-    response = client.get("/api/benchmark/overview")
+    response = asgi_request(server.fastapi_app, "GET", "/api/benchmark/overview")
 
     assert response.status_code == 200
     payload = response.json()
@@ -58,10 +57,8 @@ def test_dashboard_http_benchmark_overview_route_returns_success_envelope(sample
 
 def test_dashboard_http_compare_route_returns_error_envelope() -> None:
     pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
 
-    client = TestClient(server.fastapi_app)
-    response = client.get("/api/benchmark/compare")
+    response = asgi_request(server.fastapi_app, "GET", "/api/benchmark/compare")
 
     assert response.status_code == 200
     payload = response.json()

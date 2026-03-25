@@ -463,6 +463,16 @@ SLOW_TOOL_CASES = [case for case in ALL_TOOL_CASES if case.slow]
 
 @pytest.fixture(scope="module", autouse=True)
 def prepare_artifacts() -> None:
+    generated_copy_globs = [
+        REPO_ROOT / "ch10" / "baseline_atomic_reduction_mcp_copy*.py",
+        REPO_ROOT / "ch10" / "baseline_atomic_reduction_mcp_copy*.cu",
+    ]
+    existing_generated_copies = {
+        path.resolve()
+        for pattern in generated_copy_globs
+        for path in pattern.parent.glob(pattern.name)
+    }
+
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     MICROBENCH_DIR.mkdir(parents=True, exist_ok=True)
     PROFILE_FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
@@ -485,6 +495,15 @@ def prepare_artifacts() -> None:
             "\"0\",\"kernelA\",\"(256,1,1)\",\"(1024,1,1)\",\"10.0\",\"100.0\",\"80.0\",\"70.0\",\"60.0\",\"50.0\",\"64\",\"12.0\",\"16\",\"8\",\"8\",\"4\"\n"
             "\"1\",\"kernelB\",\"(128,1,1)\",\"(2048,1,1)\",\"5.0\",\"50.0\",\"60.0\",\"50.0\",\"40.0\",\"30.0\",\"80\",\"8.0\",\"8\",\"4\",\"4\",\"2\"\n"
         )
+    yield
+
+    current_generated_copies = {
+        path.resolve()
+        for pattern in generated_copy_globs
+        for path in pattern.parent.glob(pattern.name)
+    }
+    for path in sorted(current_generated_copies - existing_generated_copies):
+        path.unlink(missing_ok=True)
 
 
 @pytest.fixture()

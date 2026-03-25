@@ -51,5 +51,14 @@ def check_tcgen05_support(
     except RuntimeError as exc:
         message = str(exc)
         if "SKIPPED" not in message:
+            unsupported_markers = (
+                "No CUDA GPUs are available",
+                "Found no NVIDIA driver",
+                "CUDA driver version is insufficient",
+                "Torch not compiled with CUDA enabled",
+            )
+            if any(marker in message for marker in unsupported_markers):
+                return False, f"SKIPPED: {module_name} unavailable ({message})"
+        if "SKIPPED" not in message:
             raise
         return False, message

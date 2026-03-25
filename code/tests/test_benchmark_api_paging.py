@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 
-from fastapi.testclient import TestClient
-
 from core.engine import reset_engine
 from dashboard.api import server
+from tests.http_client import asgi_request, asgi_stream_text
 
 
 def _configure_with_sample_data(tmp_path):
@@ -67,9 +66,11 @@ def _configure_with_sample_data(tmp_path):
 
 def test_benchmark_data_pagination_and_filters(tmp_path):
     _configure_with_sample_data(tmp_path)
-    client = TestClient(server.fastapi_app)
-
-    response = client.get("/api/benchmark/data?page=1&page_size=1&sort_field=speedup&sort_dir=desc")
+    response = asgi_request(
+        server.fastapi_app,
+        "GET",
+        "/api/benchmark/data?page=1&page_size=1&sort_field=speedup&sort_dir=desc",
+    )
     assert response.status_code == 200
     payload = response.json()
     result = payload["result"]
@@ -78,7 +79,7 @@ def test_benchmark_data_pagination_and_filters(tmp_path):
     assert result["benchmarks"][0]["name"] == "transfer"
     assert result["summary"]["total"] == 5
 
-    filtered = client.get("/api/benchmark/data?status=succeeded")
+    filtered = asgi_request(server.fastapi_app, "GET", "/api/benchmark/data?status=succeeded")
     filtered_payload = filtered.json()["result"]
     assert filtered_payload["pagination"]["total"] == 1
     assert filtered_payload["benchmarks"][0]["name"] == "gemm"
@@ -88,9 +89,7 @@ def test_benchmark_data_pagination_and_filters(tmp_path):
 
 def test_benchmark_overview_summary(tmp_path):
     _configure_with_sample_data(tmp_path)
-    client = TestClient(server.fastapi_app)
-
-    response = client.get("/api/benchmark/overview")
+    response = asgi_request(server.fastapi_app, "GET", "/api/benchmark/overview")
     assert response.status_code == 200
     overview = response.json()["result"]
     assert overview["summary"]["total"] == 5
@@ -104,11 +103,12 @@ def test_benchmark_overview_summary(tmp_path):
 
 def test_gpu_stream_single_event(tmp_path):
     _configure_with_sample_data(tmp_path)
-    client = TestClient(server.fastapi_app)
-
-    with client.stream("GET", "/api/gpu/stream?max_events=1&interval=0.01") as response:
-        assert response.status_code == 200
-        stream_text = "".join(response.iter_text())
+    status_code, stream_text = asgi_stream_text(
+        server.fastapi_app,
+        "GET",
+        "/api/gpu/stream?max_events=1&interval=0.01",
+    )
+    assert status_code == 200
 
     data_lines = [line for line in stream_text.splitlines() if line.startswith("data:")]
     assert data_lines

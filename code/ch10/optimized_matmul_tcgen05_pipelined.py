@@ -42,7 +42,6 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
         )
         self._tcgen05_available = available
         self._skip_reason = reason or "SKIPPED: tcgen05 matmul unavailable"
-        self.device = require_cuda_device("CUDA required for ch10")
         # Match baseline for fair comparison (larger size reduces CPU overhead noise).
         self.n = 12288
         self.size = self.n
@@ -53,6 +52,9 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
         self.output: Optional[torch.Tensor] = None
         self._module = None
         self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
+
+    def _resolve_device(self) -> torch.device:
+        return require_cuda_device("CUDA required for ch10")
 
     def setup(self) -> None:
         if not self._tcgen05_available:

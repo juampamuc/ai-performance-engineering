@@ -1,265 +1,209 @@
-"""CLI integration tests for `aisp profile ncu` with the new launch-limiting options."""
+"""CLI tests for `aisp profile ncu` option plumbing.
 
-import os
-import shutil
-import subprocess
+These tests validate argument parsing and propagation at the Typer entrypoint.
+The live Nsight execution path is covered separately by the longer integration
+profiling workflow tests.
+"""
+
+from __future__ import annotations
+
 import sys
-import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from typer.testing import CliRunner
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _ncu_available() -> bool:
-    """Check if ncu is available on PATH."""
-    return shutil.which("ncu") is not None
+from cli.aisp import app
 
 
-def _nvcc_available() -> bool:
-    """Check if nvcc is available on PATH."""
-    return shutil.which("nvcc") is not None
+class DummyNsightAutomation:
+    """Capture CLI arguments without running a real Nsight Compute session."""
+
+    calls: list[dict[str, object]] = []
+
+    def __init__(self, output_root: Path) -> None:
+        self.output_root = Path(output_root)
+        self.last_error: str | None = None
+        self.last_run: dict[str, object] = {}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.calls = []
+
+    def profile_ncu(self, **kwargs: object) -> Path:
+        type(self).calls.append(kwargs)
+        output_name = str(kwargs.get("output_name", "profile_ncu"))
+        metric_set = str(kwargs.get("metric_set", "full"))
+        resolved_metric_set = "basic" if metric_set == "minimal" else metric_set
+        output_path = self.output_root / f"{output_name}.ncu-rep"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("fake ncu report", encoding="utf-8")
+        self.last_run = {
+            "launch_skip": kwargs.get("launch_skip"),
+            "launch_count": kwargs.get("launch_count"),
+            "replay_mode": kwargs.get("replay_mode"),
+            "metric_set_resolved": resolved_metric_set,
+        }
+        return output_path
 
 
-# Minimal CUDA kernel source for testing
-MINIMAL_CUDA_SOURCE = r'''
-#include <cstdio>
-
-__global__ void test_kernel(float* out, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        out[idx] = static_cast<float>(idx * idx);
-    }
-}
-
-int main() {
-    constexpr int N = 1024;
-    float* d_out = nullptr;
-    cudaMalloc(&d_out, N * sizeof(float));
-    
-    // Launch kernel multiple times to test launch limiting
-    for (int i = 0; i < 10; ++i) {
-        test_kernel<<<4, 256>>>(d_out, N);
-    }
-    
-    cudaDeviceSynchronize();
-    cudaFree(d_out);
-    printf("OK\n");
-    return 0;
-}
-'''
+@pytest.fixture
+def fake_binary(tmp_path: Path) -> Path:
+    path = tmp_path / "test_kernel"
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
 
 
-@pytest.fixture(scope="module")
-def compiled_cuda_binary(tmp_path_factory):
-    """Compile a minimal CUDA binary for testing."""
-    if not _nvcc_available():
-        pytest.skip("nvcc not available")
-    
-    tmp_dir = tmp_path_factory.mktemp("cuda_test")
-    source_path = tmp_dir / "test_kernel.cu"
-    binary_path = tmp_dir / "test_kernel"
-    
-    source_path.write_text(MINIMAL_CUDA_SOURCE)
-    
-    # Compile with -lineinfo for better NCU source mapping
-    compile_cmd = [
-        "nvcc",
-        "-lineinfo",
-        "-o", str(binary_path),
-        str(source_path),
-    ]
-    result = subprocess.run(
-        compile_cmd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"nvcc compilation failed: {result.stderr}")
-    
-    return binary_path
+def _invoke_profile_ncu(args: list[str]) -> tuple[object, dict[str, object]]:
+    runner = CliRunner()
+    DummyNsightAutomation.reset()
+    with patch("core.profiling.nsight_automation.NsightAutomation", DummyNsightAutomation):
+        result = runner.invoke(app, ["profile", "ncu", *args])
+    assert len(DummyNsightAutomation.calls) == 1
+    return result, DummyNsightAutomation.calls[0]
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not _ncu_available(), reason="ncu not available")
-def test_cli_profile_ncu_help():
-    """Test that aisp profile ncu --help shows new options."""
-    result = subprocess.run(
-        [sys.executable, "-m", "cli.aisp", "profile", "ncu", "--help"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"Help failed: {result.stderr}"
-    
-    # Check that new options are documented
+def test_cli_profile_ncu_help() -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["profile", "ncu", "--help"])
+
+    assert result.exit_code == 0, result.stdout
     help_text = result.stdout.lower()
-    assert "--launch-skip" in help_text or "launch-skip" in help_text
-    assert "--launch-count" in help_text or "launch-count" in help_text
-    assert "--metric-set" in help_text or "metric-set" in help_text
-    assert "--replay-mode" in help_text or "replay-mode" in help_text
+    assert "--launch-skip" in help_text
+    assert "--launch-count" in help_text
+    assert "--metric-set" in help_text
+    assert "--replay-mode" in help_text
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not _ncu_available(), reason="ncu not available")
-def test_cli_profile_ncu_minimal_metric_set(compiled_cuda_binary, tmp_path):
-    """Test aisp profile ncu with --metric-set minimal."""
-    output_dir = tmp_path / "ncu_output"
-    output_dir.mkdir()
-    
-    result = subprocess.run(
+def test_cli_profile_ncu_minimal_metric_set(fake_binary: Path, tmp_path: Path) -> None:
+    result, call = _invoke_profile_ncu(
         [
-            sys.executable, "-m", "cli.aisp", "profile", "ncu",
-            "--command", str(compiled_cuda_binary),
-            "--output-dir", str(output_dir),
-            "--output-name", "minimal_test",
-            "--metric-set", "minimal",
-            "--timeout", "60",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=120,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+            "--command",
+            str(fake_binary),
+            "--output-dir",
+            str(tmp_path / "ncu_output"),
+            "--output-name",
+            "minimal_test",
+            "--metric-set",
+            "minimal",
+            "--timeout",
+            "60",
+        ]
     )
-    
-    # Check command succeeded
-    assert result.returncode == 0, f"NCU profiling failed: {result.stderr}\n{result.stdout}"
-    
-    # Check output mentions success
-    assert "✓" in result.stdout or "success" in result.stdout.lower() or "ncu-rep" in result.stdout
+
+    assert result.exit_code == 0, result.stdout
+    assert call["command"] == [str(fake_binary)]
+    assert call["metric_set"] == "minimal"
+    assert call["timeout_seconds"] == 60
+    assert "NCU report:" in result.stdout
+    assert "Metric set: minimal (resolved: basic)" in result.stdout
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not _ncu_available(), reason="ncu not available")
-def test_cli_profile_ncu_launch_limiting(compiled_cuda_binary, tmp_path):
-    """Test aisp profile ncu with --launch-skip and --launch-count."""
-    output_dir = tmp_path / "ncu_output"
-    output_dir.mkdir()
-    
-    result = subprocess.run(
+def test_cli_profile_ncu_launch_limiting(fake_binary: Path, tmp_path: Path) -> None:
+    result, call = _invoke_profile_ncu(
         [
-            sys.executable, "-m", "cli.aisp", "profile", "ncu",
-            "--command", str(compiled_cuda_binary),
-            "--output-dir", str(output_dir),
-            "--output-name", "launch_limit_test",
-            "--metric-set", "minimal",
-            "--launch-skip", "2",
-            "--launch-count", "1",
-            "--timeout", "60",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=120,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+            "--command",
+            str(fake_binary),
+            "--output-dir",
+            str(tmp_path / "ncu_output"),
+            "--output-name",
+            "launch_limit_test",
+            "--metric-set",
+            "minimal",
+            "--launch-skip",
+            "2",
+            "--launch-count",
+            "1",
+            "--timeout",
+            "60",
+        ]
     )
-    
-    assert result.returncode == 0, f"NCU with launch limiting failed: {result.stderr}\n{result.stdout}"
-    
-    # Check that the output references the limiting options
-    combined_output = result.stdout + result.stderr
-    # The command should have run successfully
-    assert "✓" in result.stdout or "success" in result.stdout.lower() or "ncu-rep" in result.stdout
+
+    assert result.exit_code == 0, result.stdout
+    assert call["launch_skip"] == 2
+    assert call["launch_count"] == 1
+    assert call["replay_mode"] == "application"
+    assert "Launch skip: 2" in result.stdout
+    assert "Launch count: 1" in result.stdout
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not _ncu_available(), reason="ncu not available")
-def test_cli_profile_ncu_kernel_replay_mode(compiled_cuda_binary, tmp_path):
-    """Test aisp profile ncu with --replay-mode kernel."""
-    output_dir = tmp_path / "ncu_output"
-    output_dir.mkdir()
-    
-    result = subprocess.run(
+def test_cli_profile_ncu_kernel_replay_mode(fake_binary: Path, tmp_path: Path) -> None:
+    result, call = _invoke_profile_ncu(
         [
-            sys.executable, "-m", "cli.aisp", "profile", "ncu",
-            "--command", str(compiled_cuda_binary),
-            "--output-dir", str(output_dir),
-            "--output-name", "kernel_replay_test",
-            "--metric-set", "minimal",
-            "--replay-mode", "kernel",
-            "--timeout", "60",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=120,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+            "--command",
+            str(fake_binary),
+            "--output-dir",
+            str(tmp_path / "ncu_output"),
+            "--output-name",
+            "kernel_replay_test",
+            "--metric-set",
+            "minimal",
+            "--replay-mode",
+            "kernel",
+            "--timeout",
+            "60",
+        ]
     )
-    
-    assert result.returncode == 0, f"NCU with kernel replay failed: {result.stderr}\n{result.stdout}"
+
+    assert result.exit_code == 0, result.stdout
+    assert call["replay_mode"] == "kernel"
+    assert "Replay mode: kernel" in result.stdout
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not _ncu_available(), reason="ncu not available")
-def test_cli_profile_ncu_kernel_filter(compiled_cuda_binary, tmp_path):
-    """Test aisp profile ncu with --kernel-filter."""
-    output_dir = tmp_path / "ncu_output"
-    output_dir.mkdir()
-    
-    result = subprocess.run(
+def test_cli_profile_ncu_kernel_filter(fake_binary: Path, tmp_path: Path) -> None:
+    result, call = _invoke_profile_ncu(
         [
-            sys.executable, "-m", "cli.aisp", "profile", "ncu",
-            "--command", str(compiled_cuda_binary),
-            "--output-dir", str(output_dir),
-            "--output-name", "kernel_filter_test",
-            "--kernel-filter", "test_kernel",
-            "--metric-set", "minimal",
-            "--launch-skip", "1",
-            "--launch-count", "1",
-            "--timeout", "60",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=120,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+            "--command",
+            str(fake_binary),
+            "--output-dir",
+            str(tmp_path / "ncu_output"),
+            "--output-name",
+            "kernel_filter_test",
+            "--kernel-filter",
+            "test_kernel",
+            "--metric-set",
+            "minimal",
+            "--launch-skip",
+            "1",
+            "--launch-count",
+            "1",
+            "--timeout",
+            "60",
+        ]
     )
-    
-    assert result.returncode == 0, f"NCU with kernel filter failed: {result.stderr}\n{result.stdout}"
+
+    assert result.exit_code == 0, result.stdout
+    assert call["kernel_filter"] == "test_kernel"
+    assert call["launch_skip"] == 1
+    assert call["launch_count"] == 1
+    assert "Kernel filter: test_kernel" in result.stdout
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not _ncu_available(), reason="ncu not available")
-def test_cli_profile_ncu_script_mode(tmp_path):
-    """Test aisp profile ncu with a Python script (script mode)."""
-    output_dir = tmp_path / "ncu_output"
-    output_dir.mkdir()
-    
-    # Create a minimal Python script that does some GPU work
+def test_cli_profile_ncu_script_mode(tmp_path: Path) -> None:
     script_path = tmp_path / "gpu_script.py"
-    script_path.write_text('''
-import torch
-if not torch.cuda.is_available():
-    print("CUDA not available")
-    exit(1)
-x = torch.randn(1000, 1000, device="cuda")
-for _ in range(16):
-    y = torch.mm(x, x)
-torch.cuda.synchronize()
-print("OK")
-''')
-    
-    result = subprocess.run(
+    script_path.write_text("print('OK')\n", encoding="utf-8")
+
+    result, call = _invoke_profile_ncu(
         [
-            sys.executable, "-m", "cli.aisp", "profile", "ncu",
             str(script_path),
-            "--output-dir", str(output_dir),
-            "--output-name", "script_test",
-            "--metric-set", "minimal",
-            "--launch-skip", "5",
-            "--launch-count", "1",
-            "--timeout", "120",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=180,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+            "--output-dir",
+            str(tmp_path / "ncu_output"),
+            "--output-name",
+            "script_test",
+            "--metric-set",
+            "minimal",
+            "--launch-skip",
+            "5",
+            "--launch-count",
+            "1",
+            "--timeout",
+            "120",
+        ]
     )
-    
-    # Script mode should work
-    assert result.returncode == 0, f"NCU script mode failed: {result.stderr}\n{result.stdout}"
+
+    assert result.exit_code == 0, result.stdout
+    assert call["command"] == [sys.executable, str(script_path)]
+    assert call["launch_skip"] == 5
+    assert call["launch_count"] == 1

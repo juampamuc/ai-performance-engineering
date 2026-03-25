@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from tests.integration._strict_gpu_env import skip_if_strict_benchmark_env_invalid
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -16,7 +17,10 @@ def test_microbench_disk_and_loopback():
     assert "read_gbps" in disk and disk["read_gbps"] is not None
 
     net = microbench.network_loopback_test(size_mb=1, port=50507)
-    assert "throughput_gbps" in net and net["throughput_gbps"] is not None
+    if net.get("error") is not None:
+        assert "Loopback sockets not permitted" in net["error"]
+    else:
+        assert "throughput_gbps" in net and net["throughput_gbps"] is not None
 
 
 @pytest.mark.cuda
@@ -25,6 +29,7 @@ def test_microbench_pcie_mem_tensor_sfu_cuda():
     import torch
     from core.diagnostics import microbench
 
+    skip_if_strict_benchmark_env_invalid()
     assert torch.cuda.is_available(), "CUDA expected to be available"
 
     pcie = microbench.pcie_bandwidth_test(size_mb=1, iters=1)

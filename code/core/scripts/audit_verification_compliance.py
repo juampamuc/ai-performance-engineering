@@ -66,6 +66,19 @@ def _module_name_for_path(filepath: Path) -> str:
     return ".".join(relative.with_suffix("").parts)
 
 
+@contextlib.contextmanager
+def _prepend_sys_path(path: Path):
+    resolved = str(path.resolve())
+    sys.path.insert(0, resolved)
+    try:
+        yield
+    finally:
+        try:
+            sys.path.remove(resolved)
+        except ValueError:
+            pass
+
+
 def _should_retry_with_multigpu_floor(exc: BaseException) -> bool:
     message = str(exc).lower()
     markers = (
@@ -251,19 +264,20 @@ def load_benchmark_class(filepath: Path) -> Optional[Tuple[Any, str, List[str]]]
         
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        with _capture_process_output() as captured_output:
-            spec.loader.exec_module(module)
-            
-            # Look for get_benchmark factory function
-            if hasattr(module, "get_benchmark"):
-                try:
-                    benchmark = module.get_benchmark()
-                except RuntimeError as exc:
-                    if not _should_retry_with_multigpu_floor(exc):
-                        raise
-                    with _audit_gpu_floor():
+        with _prepend_sys_path(filepath.parent):
+            with _capture_process_output() as captured_output:
+                spec.loader.exec_module(module)
+
+                # Look for get_benchmark factory function
+                if hasattr(module, "get_benchmark"):
+                    try:
                         benchmark = module.get_benchmark()
-                return (benchmark, type(benchmark).__name__, captured_output)
+                    except RuntimeError as exc:
+                        if not _should_retry_with_multigpu_floor(exc):
+                            raise
+                        with _audit_gpu_floor():
+                            benchmark = module.get_benchmark()
+                    return (benchmark, type(benchmark).__name__, captured_output)
         
         return None
     except Exception as e:

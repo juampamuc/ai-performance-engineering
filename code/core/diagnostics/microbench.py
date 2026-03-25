@@ -454,6 +454,21 @@ def network_loopback_test(size_mb: int = 64, port: int = 50007, timeout_seconds:
     deadline = _now() + timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
     timeout_hit = False
 
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.close()
+    except PermissionError as exc:
+        return _with_meta({
+            "size_mb": size_mb,
+            "elapsed_seconds": None,
+            "bytes_sent": 0,
+            "throughput_gbps": None,
+            "error": f"Loopback sockets not permitted: {exc}",
+            "notes": "Loopback TCP only; use iperf for real NIC tests",
+            "timeout_seconds": timeout_seconds,
+            "timeout_hit": False,
+        })
+
     def server():
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

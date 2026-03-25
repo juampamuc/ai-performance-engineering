@@ -2,21 +2,14 @@
 
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import torch
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.common.device_utils import require_cuda_device
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.utils.extension_loader_template import load_cuda_extension
-
-resolve_device = partial(
-    require_cuda_device,
-    "CUDA required for Chapter 8 tiling benchmarks",
-)
 
 
 class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
@@ -37,13 +30,17 @@ class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        self.device = resolve_device()
         self.extension = None
         self.matrix_a: Optional[torch.Tensor] = None
         self.matrix_b: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self._output_buffer: Optional[torch.Tensor] = None
         self.register_workload_metadata(requests_per_iteration=float(self.inner_iterations))
+
+    def _resolve_device(self) -> torch.device:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        raise RuntimeError("CUDA required for Chapter 8 tiling benchmarks")
 
     # --------------------------------------------------------------------- #
     # Benchmark lifecycle

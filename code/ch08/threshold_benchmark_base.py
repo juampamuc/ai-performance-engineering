@@ -25,14 +25,16 @@ class ThresholdBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA required for Chapter 8 threshold benchmarks")
-        self.device = torch.device("cuda")
         self.inputs: Optional[torch.Tensor] = None
         self.outputs: Optional[torch.Tensor] = None
         self.host_inputs: Optional[torch.Tensor] = None
         self.extension = None
         self.register_workload_metadata(requests_per_iteration=float(self.inner_iterations))
+
+    def _resolve_device(self) -> torch.device:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        raise RuntimeError("CUDA required for Chapter 8 threshold benchmarks")
 
     def setup(self) -> None:
         self.extension = load_cuda_extension(

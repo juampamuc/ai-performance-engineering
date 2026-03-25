@@ -34,7 +34,6 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
         )
         self._tcgen05_available = available
         self._skip_reason = reason or "SKIPPED: tcgen05 matmul unavailable"
-        self.device = require_cuda_device("CUDA required for ch10")
         self.dtype = torch.float16
         # Increase workload to reduce CPU overhead in timing cross-validation.
         self.n = 12288
@@ -44,6 +43,9 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
         self.module = None
         self.output: Optional[torch.Tensor] = None
         self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
+
+    def _resolve_device(self) -> torch.device:
+        return require_cuda_device("CUDA required for ch10")
 
     def setup(self) -> None:
         if not self._tcgen05_available:

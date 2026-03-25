@@ -52,7 +52,7 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.host_buffers: List[torch.Tensor] = []
         self.device_buffers: List[torch.Tensor] = []
         self.norm: Optional[nn.Module] = None
-        self.copy_stream = torch.cuda.Stream()
+        self.copy_stream: Optional[torch.cuda.Stream] = None
         self.cur_slot = 0
         self.next_slot = 1
         self.nic_plan: List[NICInfo] = []
@@ -110,6 +110,7 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
             torch.empty_like(self.host_buffers[0], device=self.device),
         ]
         self.norm = nn.LayerNorm(self.hidden_size, device=self.device, dtype=torch.float32)
+        self.copy_stream = torch.cuda.Stream(device=self.device)
         self.cur_slot = 0
         self.next_slot = 1
         self._start_copy(self.cur_slot)
@@ -118,11 +119,15 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
 
     def _start_copy(self, slot: int) -> None:
+        if self.copy_stream is None:
+            raise RuntimeError("Copy stream not initialized")
         with torch.cuda.stream(self.copy_stream):
             self.device_buffers[slot].copy_(self.host_buffers[slot], non_blocking=True)
 
     def benchmark_fn(self) -> None:
         assert self.norm is not None
+        if self.copy_stream is None:
+            raise RuntimeError("Copy stream not initialized")
         enable_nvtx = get_nvtx_enabled(self.get_config())
         torch.cuda.current_stream().wait_stream(self.copy_stream)
         with nvtx_range("optimized_rack_prep", enable=enable_nvtx):
@@ -156,6 +161,7 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.device_buffers = []
         self.norm = None
         self.output = None
+        self.copy_stream = None
         self._last_slot = 0
         super().teardown()
 
@@ -168,7 +174,7 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_custom_streams(self) -> list["torch.cuda.Stream"]:
-        return [self.copy_stream]
+        return [self.copy_stream] if self.copy_stream is not None else []
 
     def validate_result(self) -> Optional[str]:
         if not self.host_buffers or self.norm is None:

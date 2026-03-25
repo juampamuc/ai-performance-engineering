@@ -141,7 +141,7 @@ _ROUTES: List[ApiRoute] = [
         "cluster.watch_promote",
         handlers.cluster_watch_promote,
         description="Attach detached post-run watcher that promotes a completed cluster run (CLI/MCP parity; not surfaced in dashboard MCP subset).",
-        mcp_tool=None,
+        mcp_tool="cluster_watch_promote",
     ),
     ApiRoute(
         "POST",

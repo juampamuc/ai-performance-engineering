@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 
-from fastapi.testclient import TestClient
-
 from core.engine import reset_engine
 from dashboard.api import server
+from tests.http_client import asgi_request
 
 
 def _write_run(path, timestamp, results):
@@ -72,9 +71,9 @@ def test_compare_runs_endpoint(tmp_path):
 
     reset_engine()
     server._configure_engine(baseline_path)
-    client = TestClient(server.fastapi_app)
-
-    response = client.get(
+    response = asgi_request(
+        server.fastapi_app,
+        "GET",
         f"/api/benchmark/compare?baseline={baseline_path}&candidate={candidate_path}&top=5"
     )
     assert response.status_code == 200

@@ -13,7 +13,7 @@ def test_optimized_performance_disables_and_restores_tf32() -> None:
     assert "capture_tf32_state" in source
     assert "set_tf32_state(False)" in source
     assert "self._tf32_state" in source
-    assert "torch.backends.cuda.matmul.allow_tf32 = matmul_state" in source
+    assert "restore_tf32_state(self._tf32_state)" in source
 
 
 def test_optimized_performance_fp16_disables_and_restores_tf32() -> None:
@@ -21,4 +21,4 @@ def test_optimized_performance_fp16_disables_and_restores_tf32() -> None:
     assert "capture_tf32_state" in source
     assert "set_tf32_state(False)" in source
     assert "self._tf32_state" in source
-    assert "torch.backends.cuda.matmul.allow_tf32 = matmul_state" in source
+    assert "restore_tf32_state(self._tf32_state)" in source

@@ -25,6 +25,8 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         super().__init__()
         self.extension: Optional[object] = None
         self._matmul: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
+        self._graph: Optional[torch.cuda.CUDAGraph] = None
+        self._graph_stream: Optional[torch.cuda.Stream] = None
 
     def setup(self) -> None:
         ensure_dsmem_supported(description="tcgen05 cluster pipeline")
@@ -36,19 +38,29 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         if self.extension is None:
             self.extension = load_tcgen05_cluster_module()
         self._matmul = self.extension.matmul_tcgen05_cluster
+        self._graph_stream = torch.cuda.Stream(device=self.device)
+        with torch.inference_mode():
+            self.output = self._matmul(self.matrix_a, self.matrix_b)
+        self._synchronize()
+        self._graph = torch.cuda.CUDAGraph()
+        with torch.cuda.stream(self._graph_stream):
+            with torch.cuda.graph(self._graph, stream=self._graph_stream):
+                self.output = self._matmul(self.matrix_a, self.matrix_b)
         self._synchronize()
 
     def benchmark_fn(self) -> None:
-        if self._matmul is None or self.matrix_a is None or self.matrix_b is None:
-            raise RuntimeError("Inputs or extension not initialized")
+        if self._matmul is None or self.matrix_a is None or self.matrix_b is None or self._graph is None:
+            raise RuntimeError("Inputs, extension, or graph not initialized")
         with self._nvtx_range(self.nvtx_label):
             with torch.inference_mode():
-                self.output = self._matmul(self.matrix_a, self.matrix_b)
+                self._graph.replay()
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=10, warmup=5)
 
     def teardown(self) -> None:
+        self._graph = None
+        self._graph_stream = None
         super().teardown()
 
     def get_custom_metrics(self) -> Optional[dict]:
@@ -63,7 +75,7 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         )
         metrics["gemm.uses_tcgen05"] = 1.0
         metrics["gemm.cluster_launch"] = 1.0
-        metrics["gemm.cuda_graph_replay"] = 0.0
+        metrics["gemm.cuda_graph_replay"] = 1.0
         return metrics
 
 

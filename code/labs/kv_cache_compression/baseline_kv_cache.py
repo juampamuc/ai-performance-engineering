@@ -65,7 +65,7 @@ class BaselineKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        self.device = resolve_device()
+        self.device = None
         self.tensor_dtype = torch.bfloat16
         # Keep the lab large enough to exercise KV pressure without relying on
         # near-capacity allocator behavior on single-GPU runs.
@@ -84,6 +84,9 @@ class BaselineKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         self.runtime_recipe = self.fp8_recipe
         self.output: Optional[torch.Tensor] = None
+
+    def _resolve_device(self) -> torch.device:
+        return resolve_device()
 
     def setup(self) -> None:
         self._setup_with_recipe(self.fp8_recipe)

@@ -3,8 +3,10 @@
 import subprocess
 import sys
 from pathlib import Path
+import shutil
 import pytest
 
+from core.harness.benchmark_harness import lock_gpu_clocks
 from core.profiling.metrics_extractor import (
     NsysMetrics,
     NcuMetrics,
@@ -14,6 +16,14 @@ from core.profiling.metrics_extractor import (
     _parse_nsys_csv,
     _parse_ncu_csv,
 )
+from tests.integration._strict_gpu_env import skip_if_strict_benchmark_env_invalid
+
+
+def _skip_if_live_nsight_unavailable(*tools: str) -> None:
+    skip_if_strict_benchmark_env_invalid()
+    for tool in tools:
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} required for live metrics extractor test")
 
 
 class TestNsysMetrics:
@@ -145,6 +155,7 @@ class TestExtractNsysMetrics:
 
     def test_extract_nsys_metrics_success(self, tmp_path):
         """Test successful nsys metrics extraction from a real nsys report."""
+        _skip_if_live_nsight_unavailable("nsys")
         script_path = tmp_path / "workload.py"
         script_path.write_text(
             "import torch\n"
@@ -156,24 +167,25 @@ class TestExtractNsysMetrics:
         )
 
         out_base = tmp_path / "nsys_out"
-        subprocess.run(
-            [
-                "nsys",
-                "profile",
-                "-t",
-                "cuda,nvtx",
-                "--force-overwrite",
-                "true",
-                "-o",
-                str(out_base),
-                sys.executable,
-                str(script_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+        with lock_gpu_clocks():
+            subprocess.run(
+                [
+                    "nsys",
+                    "profile",
+                    "-t",
+                    "cuda,nvtx",
+                    "--force-overwrite",
+                    "true",
+                    "-o",
+                    str(out_base),
+                    sys.executable,
+                    str(script_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
         nsys_path = tmp_path / "nsys_out.nsys-rep"
         assert nsys_path.exists()
 
@@ -193,6 +205,7 @@ class TestExtractNcuMetrics:
 
     def test_extract_ncu_metrics_success(self, tmp_path):
         """Test successful ncu metrics extraction from a real ncu report."""
+        _skip_if_live_nsight_unavailable("ncu")
         script_path = tmp_path / "workload.py"
         script_path.write_text(
             "import torch\n"
@@ -213,13 +226,23 @@ class TestExtractNcuMetrics:
             ]
         )
         out_base = tmp_path / "ncu_out"
-        subprocess.run(
-            ["ncu", "--metrics", metrics, "--force-overwrite", "-o", str(out_base), sys.executable, str(script_path)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+        with lock_gpu_clocks():
+            subprocess.run(
+                [
+                    "ncu",
+                    "--metrics",
+                    metrics,
+                    "--force-overwrite",
+                    "-o",
+                    str(out_base),
+                    sys.executable,
+                    str(script_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
         ncu_path = tmp_path / "ncu_out.ncu-rep"
         assert ncu_path.exists()
 

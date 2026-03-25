@@ -58,6 +58,144 @@ def _package_root(name: str) -> Optional[Path]:
     return None
 
 
+def _resolve_parallelism_model_name(raw_model: Any, raw_model_size: Any) -> str:
+    if raw_model:
+        return str(raw_model)
+    try:
+        model_size = float(raw_model_size)
+    except (TypeError, ValueError):
+        return "llama-3.1-70b"
+    known_presets = {
+        7.0: "llama-7b",
+        8.0: "llama-3.1-8b",
+        13.0: "llama-13b",
+        70.0: "llama-70b",
+        405.0: "llama-3.1-405b",
+    }
+    closest = min(known_presets, key=lambda candidate: abs(candidate - model_size))
+    return known_presets[closest]
+
+
+def _build_synthetic_parallelism_topology(total_gpus: int, num_nodes: int):
+    from core.optimization.parallelism_planner.topology_detector import (
+        GPUInfo,
+        InterconnectInfo,
+        TopologyInfo,
+    )
+
+    total_gpus = max(1, int(total_gpus))
+    num_nodes = max(1, min(int(num_nodes), total_gpus))
+
+    base_gpus_per_node = total_gpus // num_nodes
+    extra_gpus = total_gpus % num_nodes
+    node_gpu_indices: List[List[int]] = []
+    next_gpu_index = 0
+    for node_idx in range(num_nodes):
+        node_size = base_gpus_per_node + (1 if node_idx < extra_gpus else 0)
+        if node_size <= 0:
+            continue
+        node_gpu_indices.append(list(range(next_gpu_index, next_gpu_index + node_size)))
+        next_gpu_index += node_size
+
+    intra_node_nvlink = any(len(indices) > 1 for indices in node_gpu_indices)
+    has_nvswitch = any(len(indices) >= 8 for indices in node_gpu_indices)
+    intra_node_bandwidth = 600.0 if intra_node_nvlink else 64.0
+    inter_node_bandwidth = 50.0 if len(node_gpu_indices) > 1 else 32.0
+
+    gpus: List[GPUInfo] = []
+    gpu_numa_mapping: Dict[int, int] = {}
+    interconnects: List[InterconnectInfo] = []
+    p2p_matrix = [[False] * total_gpus for _ in range(total_gpus)]
+    bandwidth_matrix = [[0.0] * total_gpus for _ in range(total_gpus)]
+
+    for node_idx, indices in enumerate(node_gpu_indices):
+        for global_idx in indices:
+            gpus.append(
+                GPUInfo(
+                    index=global_idx,
+                    name="Synthetic NVIDIA H100",
+                    compute_capability="9.0",
+                    memory_gb=80,
+                    num_sms=132,
+                    architecture="hopper",
+                    nvlink_capable=len(indices) > 1,
+                    numa_node=node_idx,
+                )
+            )
+            gpu_numa_mapping[global_idx] = node_idx
+            p2p_matrix[global_idx][global_idx] = True
+            bandwidth_matrix[global_idx][global_idx] = float("inf")
+
+        for pos, gpu_a in enumerate(indices):
+            for gpu_b in indices[pos + 1 :]:
+                p2p_matrix[gpu_a][gpu_b] = True
+                p2p_matrix[gpu_b][gpu_a] = True
+                bandwidth_matrix[gpu_a][gpu_b] = intra_node_bandwidth
+                bandwidth_matrix[gpu_b][gpu_a] = intra_node_bandwidth
+                interconnects.append(
+                    InterconnectInfo(
+                        gpu_a=gpu_a,
+                        gpu_b=gpu_b,
+                        link_type="NV18" if len(indices) >= 8 else "NV4",
+                        bandwidth_gbps=intra_node_bandwidth,
+                        is_nvlink=len(indices) > 1,
+                        nvlink_count=18 if len(indices) >= 8 else 4,
+                    )
+                )
+
+    if len(node_gpu_indices) > 1:
+        for node_a, indices_a in enumerate(node_gpu_indices):
+            for indices_b in node_gpu_indices[node_a + 1 :]:
+                for gpu_a in indices_a:
+                    for gpu_b in indices_b:
+                        bandwidth_matrix[gpu_a][gpu_b] = inter_node_bandwidth
+                        bandwidth_matrix[gpu_b][gpu_a] = inter_node_bandwidth
+
+    numa_nodes = max(1, len(node_gpu_indices))
+    numa_distance_matrix = [
+        [10 if src == dst else 20 for dst in range(numa_nodes)]
+        for src in range(numa_nodes)
+    ]
+
+    network_interfaces: List[Dict[str, Any]] = []
+    if len(node_gpu_indices) > 1:
+        network_interfaces.append(
+            {
+                "name": "ib0",
+                "type": "infiniband",
+                "speed_gbps": 400,
+                "synthetic": True,
+            }
+        )
+
+    return TopologyInfo(
+        num_gpus=total_gpus,
+        gpus=gpus,
+        total_memory_gb=80 * total_gpus,
+        interconnects=interconnects,
+        p2p_matrix=p2p_matrix,
+        bandwidth_matrix=bandwidth_matrix,
+        has_nvlink=intra_node_nvlink,
+        has_nvswitch=has_nvswitch,
+        nvlink_version="4.0" if intra_node_nvlink else None,
+        max_nvlink_bandwidth_gbps=intra_node_bandwidth if intra_node_nvlink else 0.0,
+        numa_nodes=numa_nodes,
+        gpu_numa_mapping=gpu_numa_mapping,
+        numa_distance_matrix=numa_distance_matrix,
+        cpu_type="x86_64",
+        is_grace_cpu=False,
+        has_nvlink_c2c=False,
+        gpu_numa_status="synthetic",
+        topology_source="synthetic_preset",
+        topology_preset_name=f"synthetic_h100_{total_gpus}gpus_{len(node_gpu_indices)}nodes",
+        network_interfaces=network_interfaces,
+        infiniband_available=len(node_gpu_indices) > 1,
+        rdma_capable=len(node_gpu_indices) > 1,
+        num_nodes=len(node_gpu_indices),
+        gpus_per_node=max(len(indices) for indices in node_gpu_indices),
+    )
+
+
 class PerformanceCoreBase:
     """Shared performance logic without HTTP concerns."""
 
@@ -1664,22 +1802,32 @@ class PerformanceCoreBase:
     def get_parallelism_recommendations(self, params: Optional[dict] = None) -> dict:
         """Recommend TP/PP/DP settings using the Parallelism Advisor."""
         params = params or {}
-        model = params.get("model", "llama-3.1-70b")
+        model = _resolve_parallelism_model_name(params.get("model"), params.get("model_size"))
         batch_size = int(params.get("batch_size", 1))
         seq_length = int(params.get("seq_length", 2048))
         goal = params.get("goal", "throughput")
         is_training = bool(params.get("is_training", False))
+        requested_gpus = max(1, int(params.get("gpus", params.get("num_gpus", 8))))
+        requested_nodes = max(1, int(params.get("nodes", params.get("num_nodes", 1))))
 
         try:
             from core.optimization.parallelism_planner.advisor import ParallelismAdvisor
 
             advisor = ParallelismAdvisor(auto_detect_topology=True)
+            topology = advisor.topology
+            if (
+                topology is None
+                or topology.num_gpus != requested_gpus
+                or int(getattr(topology, "num_nodes", 1) or 1) != requested_nodes
+            ):
+                topology = _build_synthetic_parallelism_topology(requested_gpus, requested_nodes)
             result = advisor.recommend(
                 model=model,
                 batch_size=batch_size,
                 seq_length=seq_length,
                 goal=goal,
                 is_training=is_training,
+                custom_topology=topology,
             )
             best = result.best_strategy.to_dict() if result.best_strategy else None
             recs = [rec.to_dict() for rec in result.recommendations]

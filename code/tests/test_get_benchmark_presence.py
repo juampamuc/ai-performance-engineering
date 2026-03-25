@@ -96,6 +96,15 @@ def _has_main_guard(path: Path) -> bool:
     return False
 
 
+def _is_self_targeting_torchrun_wrapper(path: Path) -> bool:
+    text = path.read_text(encoding="utf-8")
+    return (
+        "TorchrunLaunchSpec(" in text
+        and "script_path=Path(__file__).resolve()" in text
+        and "run_main_with_skip_status(main)" in text
+    )
+
+
 def test_all_discoverable_python_benchmarks_have_get_benchmark() -> None:
     missing: list[Path] = []
     for bench_dir in discover_all_chapters(REPO_ROOT):
@@ -124,7 +133,11 @@ def test_discoverable_python_benchmarks_do_not_define_main_guards() -> None:
             if should_ignore_benchmark_candidate(path):
                 continue
             try:
-                if _has_get_benchmark_symbol(path) and _has_main_guard(path):
+                if (
+                    _has_get_benchmark_symbol(path)
+                    and _has_main_guard(path)
+                    and not _is_self_targeting_torchrun_wrapper(path)
+                ):
                     offenders.append(path)
             except SyntaxError:
                 offenders.append(path)

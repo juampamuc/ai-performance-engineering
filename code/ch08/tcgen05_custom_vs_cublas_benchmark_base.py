@@ -22,9 +22,6 @@ class Tcgen05CustomVsCublasBase(VerificationPayloadMixin, BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA required for ch08 tcgen05 custom vs cuBLAS benchmark")
-        self.device = torch.device("cuda")
         self.matrix_a: Optional[torch.Tensor] = None
         self.matrix_b: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
@@ -35,6 +32,11 @@ class Tcgen05CustomVsCublasBase(VerificationPayloadMixin, BaseBenchmark):
             + (self.matrix_rows * self.matrix_cols)
         ) * 2.0
         self.register_workload_metadata(bytes_per_iteration=float(bytes_per_iter))
+
+    def _resolve_device(self) -> torch.device:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        raise RuntimeError("CUDA required for ch08 tcgen05 custom vs cuBLAS benchmark")
 
     def setup(self) -> None:
         torch.manual_seed(42)

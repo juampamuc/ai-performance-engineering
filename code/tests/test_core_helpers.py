@@ -1,12 +1,15 @@
 import json
 import inspect
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import mcp.mcp_server as mcp_server
+import pytest
 from core.harness.benchmark_harness import lock_gpu_clocks
+from tests.integration._strict_gpu_env import skip_if_strict_benchmark_env_invalid
 
 from core import (
     profile_artifacts,
@@ -18,6 +21,13 @@ from core import (
     ncu_analysis,
     profile_insights,
 )
+
+
+def _skip_if_live_nsight_unavailable(*tools: str) -> None:
+    skip_if_strict_benchmark_env_invalid()
+    for tool in tools:
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} required for live profile comparison test")
 
 
 def test_profile_artifacts_empty(tmp_path: Path):
@@ -113,6 +123,7 @@ def test_profile_insights_ncu_comparison_and_recommendations(tmp_path: Path):
 
 
 def test_profile_insights_nsys_comparison(tmp_path: Path):
+    _skip_if_live_nsight_unavailable("nsys")
     script = tmp_path / "nvtx_script.py"
     script.write_text(
         (
@@ -170,6 +181,7 @@ def test_profile_insights_nsys_requires_pair_key(tmp_path: Path):
 
 
 def test_profile_insights_ncu_comparison_from_rep(tmp_path: Path):
+    _skip_if_live_nsight_unavailable("ncu")
     script = tmp_path / "ncu_script.py"
     script.write_text(
         (
@@ -752,6 +764,7 @@ def test_profile_insights_role_detection_ignores_pair_dir_bias(tmp_path: Path):
 
 
 def test_mcp_compare_tools_include_metrics(tmp_path: Path):
+    _skip_if_live_nsight_unavailable("nsys", "ncu")
     script = tmp_path / "compare_script.py"
     script.write_text(
         (
