@@ -275,6 +275,22 @@ CONFIG_BY_EXAMPLE: Dict[str, ProfilerOverrides] = {
             "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
         ],
     ),
+    "ch19_dynamic_precision": _overrides_from_lists(
+        ncu_metrics=[
+            "sm__sass_thread_inst_executed_op_fp32_pred_on.sum",
+            "sm__sass_thread_inst_executed_op_fp16_pred_on.sum",
+            "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+            "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+        ],
+    ),
+    "ch19_dynamic_quantized_cache": _overrides_from_lists(
+        ncu_metrics=[
+            "sm__sass_data_bytes_mem_shared_op_ld.sum",
+            "sm__sass_data_bytes_mem_shared_op_st.sum",
+            "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+            "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+        ],
+    ),
     "ch20_ai_kernel_generator": _overrides_from_lists(
         ncu_metrics=[
             "sm__sass_thread_inst_executed_op_fp32_pred_on.sum",

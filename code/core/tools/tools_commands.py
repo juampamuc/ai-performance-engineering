@@ -172,6 +172,12 @@ TOOLS: Dict[str, ToolSpec] = {
         module_name="ch19.dynamic_precision_switching",
         description="Run the Chapter 19 dynamic precision switching utility.",
     ),
+    "ch19-dynamic-quantized-cache": ToolSpec(
+        name="ch19-dynamic-quantized-cache",
+        script_path=REPO_ROOT / "ch19" / "dynamic_quantized_cache.py",
+        module_name="ch19.dynamic_quantized_cache",
+        description="Run the Chapter 19 dynamic quantized KV cache policy demo (helpers + local emulation).",
+    ),
     "kernel-verification": ToolSpec(
         name="kernel-verification",
         script_path=REPO_ROOT / "ch20" / "kernel_verification_tool.py",

@@ -165,6 +165,7 @@ CATEGORY_TOOLS: Dict[str, List[str]] = {
         "cluster_nmx_partition_lab",
         "cluster_build_canonical_package",
         "cluster_promote_run",
+        "cluster_watch_promote",
         "cluster_validate_field_report",
     ],
     "tools": [
@@ -412,6 +413,11 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "run_id": "mcp_cluster_smoke_test",
         "skip_render_localhost_report": True,
         "skip_validate_localhost_report": True,
+        "include_context": False,
+    },
+    "cluster_watch_promote": {
+        "run_id": "mcp_cluster_smoke_test_missing_run",
+        "pid": 999999,
         "include_context": False,
     },
     "cluster_validate_field_report": {"canonical_run_id": "mcp_cluster_smoke_test", "include_context": False},

@@ -55,7 +55,7 @@ _DEFAULT_TARGETS: TargetsDict = {
         "metrics": {}
     },
     "ch04": {
-        "description": "Distributed Networking",
+        "description": "Distributed Networking (includes ch04:nixl_tier_handoff memory-tier analogue)",
         "metrics": {
             # NCCL all-reduce: 100 GB/s on 800 Gb/s InfiniBand (book/ch04.md:760-779)
             "allreduce_bandwidth_gbs": {"min": 700, "target": 800, "unit": "GB/s"},
@@ -172,6 +172,7 @@ _DEFAULT_TARGETS: TargetsDict = {
         "metrics": {
             "adaptive_parallelism_speedup": {"min": 1.05, "target": 1.25, "unit": "x"},
             "dynamic_precision_speedup": {"min": 1.05, "target": 1.20, "unit": "x"},
+            "dynamic_quantized_cache_speedup": {"min": 1.05, "target": 1.15, "unit": "x"},
             "fp8_training_speedup": {"min": 1.5, "target": 2.0, "unit": "x"},
             "memory_reduction_percent": {"min": 30, "target": 50, "unit": "%"},
         }

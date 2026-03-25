@@ -14,10 +14,6 @@ def test_watch_cluster_run_for_promotion_launches_detached_watcher(monkeypatch, 
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "raw").mkdir(parents=True, exist_ok=True)
 
-    script_dir = cluster_root / "scripts"
-    script_dir.mkdir(parents=True, exist_ok=True)
-    (script_dir / "watch_run_for_promotion.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-
     monkeypatch.setattr(cluster_runner, "_repo_root", lambda: repo_root)
     monkeypatch.setattr(cluster_runner, "_cluster_root", lambda: cluster_root)
     monkeypatch.setattr(
@@ -56,6 +52,8 @@ def test_watch_cluster_run_for_promotion_launches_detached_watcher(monkeypatch, 
     assert "--pid" in captured["cmd"]
     assert "--cleanup" in captured["cmd"]
     assert "--allow-run-id" in captured["cmd"]
+    assert "--repo-root" in captured["cmd"]
+    assert str(repo_root.resolve()) in captured["cmd"]
     assert captured["cwd"] == str(repo_root)
     assert captured["start_new_session"] is True
     assert captured["stdout_name"].endswith(f"{run_id}_postrun_promote_watch.launch.log")

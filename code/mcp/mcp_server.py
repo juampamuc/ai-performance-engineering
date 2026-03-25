@@ -8840,6 +8840,7 @@ def tool_cluster_build_canonical_package(params: Dict[str, Any]) -> Dict[str, An
         "skip_validate_localhost_report": {"type": "boolean", "default": False, "description": "Skip localhost report validation after promotion"},
         "cleanup": {"type": "boolean", "default": False, "description": "Run cleanup_run_artifacts.sh after promotion using this run_id as canonical"},
         "timeout_seconds": {"type": "integer", "default": 300, "description": "Promotion timeout in seconds"},
+        "repo_root": {"type": "string", "description": "Optional repository root override (tests/alternate trees); default is this checkout"},
     })},
 )
 def tool_cluster_promote_run(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -8850,6 +8851,8 @@ def tool_cluster_promote_run(params: Dict[str, Any]) -> Dict[str, Any]:
         run_id = str(params.get("run_id") or "").strip()
         if not run_id:
             return make_error("run_id is required", include_context, context_level)
+        rr = params.get("repo_root")
+        repo_root_val = str(rr).strip() if isinstance(rr, str) and rr.strip() else None
         result = promote_cluster_run(
             run_id=run_id,
             label=str(params.get("label") or "localhost"),
@@ -8860,10 +8863,65 @@ def tool_cluster_promote_run(params: Dict[str, Any]) -> Dict[str, Any]:
             skip_validate_localhost_report=bool(params.get("skip_validate_localhost_report", False)),
             cleanup=bool(params.get("cleanup", False)),
             timeout_seconds=int(params.get("timeout_seconds", 300) or 300),
+            repo_root=repo_root_val,
         )
         return attach_context_if_requested(result, include_context, context_level)
     except Exception as e:
         return make_error(f"promote run failed: {e}", include_context, context_level)
+
+
+@register_tool(
+    "cluster_watch_promote",
+    "Tags: cluster, publish, promote, watch, background, localhost. "
+    "Attach a detached watcher process that waits for a PID to exit, validates run artifacts, then promotes the run. "
+    "Returns: {success, run_id, repo_root, watcher_pid, watch_command, watch_status_path, launch_log_path, ...}. "
+    "⚡ FAST to launch (~ms); the watcher may run until the watched PID exits. "
+    "USE when: a long-running cluster job should auto-promote after exit without blocking the launcher.",
+    {"type": "object", "properties": with_context_params({
+        "run_id": {"type": "string", "description": "Run id under cluster/runs/<run_id>"},
+        "pid": {"type": "integer", "description": "Host PID to wait on before evaluating artifacts + promoting"},
+        "label": {"type": "string", "default": "localhost", "description": "Host label for localhost report rendering"},
+        "allow_run_ids": {"type": "array", "items": {"type": "string"}, "description": "Additional run ids to retain during cleanup/validation hygiene checks"},
+        "publish_report_path": {"type": "string", "description": "Published localhost report path"},
+        "publish_notes_path": {"type": "string", "description": "Published localhost notes path"},
+        "repo_root": {"type": "string", "description": "Optional repository root override (tests/alternate trees); default is this checkout"},
+        "skip_render_localhost_report": {"type": "boolean", "default": False, "description": "Skip rendering run-local + published localhost report markdown"},
+        "skip_validate_localhost_report": {"type": "boolean", "default": False, "description": "Skip localhost report validation after promotion"},
+        "cleanup": {"type": "boolean", "default": False, "description": "Run cleanup_run_artifacts.sh after promotion using this run_id as canonical"},
+        "poll_interval_seconds": {"type": "number", "default": 30.0, "description": "How often to poll whether the watched PID is still alive"},
+    })},
+)
+def tool_cluster_watch_promote(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.cluster import watch_cluster_run_for_promotion
+
+    include_context, context_level = extract_context_opts(params)
+    try:
+        run_id = str(params.get("run_id") or "").strip()
+        if not run_id:
+            return make_error("run_id is required", include_context, context_level)
+        pid_raw = params.get("pid")
+        try:
+            pid = int(pid_raw)
+        except (TypeError, ValueError):
+            return make_error("pid must be an integer", include_context, context_level)
+        rr = params.get("repo_root")
+        repo_root_val = str(rr).strip() if isinstance(rr, str) and rr.strip() else None
+        result = watch_cluster_run_for_promotion(
+            run_id=run_id,
+            pid=pid,
+            label=str(params.get("label") or "localhost"),
+            allow_run_ids=params.get("allow_run_ids") if isinstance(params.get("allow_run_ids"), list) else None,
+            publish_report_path=params.get("publish_report_path"),
+            publish_notes_path=params.get("publish_notes_path"),
+            skip_render_localhost_report=bool(params.get("skip_render_localhost_report", False)),
+            skip_validate_localhost_report=bool(params.get("skip_validate_localhost_report", False)),
+            cleanup=bool(params.get("cleanup", False)),
+            poll_interval_seconds=float(params.get("poll_interval_seconds", 30.0) or 30.0),
+            repo_root=repo_root_val,
+        )
+        return attach_context_if_requested(result, include_context, context_level)
+    except Exception as e:
+        return make_error(f"watch promote failed: {e}", include_context, context_level)
 
 
 @register_tool(

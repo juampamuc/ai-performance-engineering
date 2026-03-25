@@ -3011,6 +3011,7 @@ ENTRIES["ch19"] = chapter_entry(
                 python -m cli.aisp bench run --targets ch19:mxfp8_moe --profile deep_dive --single-gpu
                 python -m cli.aisp tools ch19-adaptive-parallelism
                 python -m cli.aisp tools ch19-dynamic-precision -- --help
+                python -m cli.aisp tools ch19-dynamic-quantized-cache -- --help
                 ```"""
             ),
         ),

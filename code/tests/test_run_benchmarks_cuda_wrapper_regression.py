@@ -59,6 +59,37 @@ def test_test_chapter_impl_uses_cuda_wrapper_detector_without_nameerror(tmp_path
     assert result["benchmarks"][0]["baseline_file"] == "baseline_pageable_copy.py"
 
 
+def test_discover_chapter_benchmark_pairs_recognizes_real_cuda_wrapper_files(tmp_path):
+    chapter_dir = tmp_path / "ch03"
+    chapter_dir.mkdir()
+    benchmark_source = (
+        "from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark\n"
+        "from core.harness.benchmark_harness import BaseBenchmark\n"
+        "class DemoCudaWrapper(CudaBinaryBenchmark):\n"
+        "    cuda_binary_path = 'demo'\n"
+        "def get_benchmark() -> BaseBenchmark:\n"
+        "    raise RuntimeError('not executed in discovery test')\n"
+    )
+    baseline_path = chapter_dir / "baseline_pageable_copy.py"
+    optimized_path = chapter_dir / "optimized_pageable_copy.py"
+    baseline_path.write_text(benchmark_source, encoding="utf-8")
+    optimized_path.write_text(benchmark_source, encoding="utf-8")
+
+    python_pairs, cuda_pairs, example_filters, suppressed_alias_pairs, suppressed_variant_opts = (
+        run_benchmarks._discover_chapter_benchmark_pairs(chapter_dir, only_cuda=True)
+    )
+
+    assert example_filters is None
+    assert suppressed_alias_pairs == 0
+    assert suppressed_variant_opts == 0
+    assert cuda_pairs == []
+    assert len(python_pairs) == 1
+    assert python_pairs[0][2] == "pageable_copy"
+    assert python_pairs[0][0] == baseline_path
+    assert python_pairs[0][1] == [optimized_path]
+    assert run_benchmarks._is_cuda_wrapper(baseline_path) is True
+
+
 def test_benchmark_cuda_executable_treats_skip_exit_code_as_skip(tmp_path):
     executable = tmp_path / "skip_cuda_binary.sh"
     executable.write_text(
@@ -131,6 +162,16 @@ def test_ch04_torchcomms_benchmarks_keep_single_gpu_torchrun_override():
         repo_root / "ch04" / "optimized_torchcomms.py",
     ]
 
+    for benchmark_path in cases:
+        assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
+
+
+def test_ch04_nixl_tier_handoff_benchmarks_are_single_gpu():
+    repo_root = Path(__file__).resolve().parents[1]
+    cases = [
+        repo_root / "ch04" / "baseline_nixl_tier_handoff.py",
+        repo_root / "ch04" / "optimized_nixl_tier_handoff.py",
+    ]
     for benchmark_path in cases:
         assert run_benchmarks.is_distributed_benchmark(benchmark_path) is False
 

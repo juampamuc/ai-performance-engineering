@@ -1441,6 +1441,18 @@ elif [[ "$MULTINODE_READINESS_CHECK_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$MULTINODE_READINESS_CHECK_ONLY" -eq 1 ]]; then
+  manifest_args=(--root "$ROOT_DIR" --run-id "$RUN_ID" --run-dir "$RUN_DIR" --hosts "$HOSTS" --include-figures)
+  if [[ -n "$LABELS" ]]; then
+    manifest_args+=(--labels "$LABELS")
+  fi
+  if ! python3 "${ROOT_DIR}/scripts/write_manifest.py" "${manifest_args[@]}"; then
+    echo "ERROR: readiness-only run failed to write manifest: ${MANIFEST_PATH}" >&2
+    exit 2
+  fi
+  if [[ ! -f "${MANIFEST_PATH}" ]]; then
+    echo "ERROR: readiness-only run completed without manifest: ${MANIFEST_PATH}" >&2
+    exit 2
+  fi
   if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
     echo "Multi-node readiness check completed (no workloads executed)." >&2
   else

@@ -17,12 +17,23 @@ def _cluster_root() -> Path:
     return _repo_root() / "cluster"
 
 
+def _promote_run_script() -> Path:
+    """Path to `cluster/scripts/promote_run.py` in this checkout (not derived from `--repo-root`)."""
+    return Path(__file__).resolve().parents[2] / "cluster" / "scripts" / "promote_run.py"
+
+
+def _watch_run_for_promotion_script() -> Path:
+    """Path to `cluster/scripts/watch_run_for_promotion.py` in this checkout."""
+    return Path(__file__).resolve().parents[2] / "cluster" / "scripts" / "watch_run_for_promotion.py"
+
+
 def _cluster_run_dir(run_id: str) -> Path:
     return _cluster_root() / "runs" / run_id
 
 
-def _cluster_run_layout(run_id: str) -> Dict[str, str]:
-    run_dir = _cluster_run_dir(run_id)
+def _cluster_run_layout(run_id: str, *, repo_root: Optional[Path] = None) -> Dict[str, str]:
+    cluster_root = (repo_root / "cluster") if repo_root is not None else _cluster_root()
+    run_dir = cluster_root / "runs" / run_id
     return {
         "run_dir": str(run_dir),
         "structured_dir": str(run_dir / "structured"),
@@ -659,15 +670,21 @@ def promote_cluster_run(
     skip_validate_localhost_report: bool = False,
     cleanup: bool = False,
     timeout_seconds: int = 300,
+    repo_root: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Promote one run-local result tree into the published cluster package."""
+    """Promote one run-local result tree into the published cluster package.
+
+    When ``repo_root`` is set (tests, alternate checkouts), run metadata is read from
+    ``<repo_root>/cluster/runs/...`` while ``promote_run.py`` is always invoked from this
+    repository checkout so temp trees do not need a full ``cluster/scripts`` copy.
+    """
     run_id_value = (run_id or "").strip()
     if not run_id_value:
         return {"success": False, "error": "run_id is required"}
 
-    root = _repo_root()
-    cluster_root = _cluster_root()
-    script = cluster_root / "scripts" / "promote_run.py"
+    root = Path(repo_root).resolve() if repo_root else _repo_root()
+    cluster_root = root / "cluster"
+    script = _promote_run_script()
     if not script.exists():
         return {"success": False, "error": f"Missing script: {script}"}
 
@@ -704,7 +721,8 @@ def promote_cluster_run(
         "success": bool(success),
         "run_id": run_id_value,
         "label": label or "localhost",
-        **_cluster_run_layout(run_id_value),
+        "repo_root": str(root),
+        **_cluster_run_layout(run_id_value, repo_root=root),
         "published_root": str(cluster_root / "published" / "current"),
         "published_structured_dir": str(cluster_root / "published" / "current" / "structured"),
         "published_raw_dir": str(cluster_root / "published" / "current" / "raw"),
@@ -741,6 +759,7 @@ def watch_cluster_run_for_promotion(
     skip_validate_localhost_report: bool = False,
     cleanup: bool = False,
     poll_interval_seconds: float = 30.0,
+    repo_root: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attach a detached watcher that promotes a completed run once required artifacts are present."""
     run_id_value = (run_id or "").strip()
@@ -749,10 +768,10 @@ def watch_cluster_run_for_promotion(
     if not isinstance(pid, int) or pid <= 0:
         return {"success": False, "error": "pid must be a positive integer"}
 
-    root = _repo_root()
-    cluster_root = _cluster_root()
-    script = cluster_root / "scripts" / "watch_run_for_promotion.py"
-    run_dir = _cluster_run_dir(run_id_value)
+    root = Path(repo_root).resolve() if repo_root else _repo_root()
+    cluster_root = root / "cluster"
+    script = _watch_run_for_promotion_script()
+    run_dir = cluster_root / "runs" / run_id_value
     if not script.exists():
         return {"success": False, "error": f"Missing script: {script}"}
     if not run_dir.exists():
@@ -770,6 +789,8 @@ def watch_cluster_run_for_promotion(
     cmd: List[str] = [
         sys.executable,
         str(script),
+        "--repo-root",
+        str(root),
         "--run-id",
         run_id_value,
         "--pid",
@@ -804,9 +825,10 @@ def watch_cluster_run_for_promotion(
     return {
         "success": True,
         "run_id": run_id_value,
+        "repo_root": str(root),
         "watcher_pid": proc.pid,
         "watch_command": cmd,
         "watch_status_path": str(watch_status_path),
         "launch_log_path": str(launch_log_path),
-        **_cluster_run_layout(run_id_value),
+        **_cluster_run_layout(run_id_value, repo_root=root),
     }

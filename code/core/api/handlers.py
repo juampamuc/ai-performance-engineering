@@ -890,6 +890,7 @@ def cluster_promote_run(params: Dict[str, Any]) -> Dict[str, Any]:
     skip_validate_localhost_report = bool(params.get("skip_validate_localhost_report", False))
     cleanup = bool(params.get("cleanup", False))
     timeout_seconds = _parse_int_param(params, "timeout_seconds", 300, minimum=1, maximum=3600)
+    repo_root = _parse_str_param(params, "repo_root")
 
     return promote_cluster_run(
         run_id=run_id,
@@ -901,6 +902,39 @@ def cluster_promote_run(params: Dict[str, Any]) -> Dict[str, Any]:
         skip_validate_localhost_report=skip_validate_localhost_report,
         cleanup=cleanup,
         timeout_seconds=timeout_seconds,
+        repo_root=repo_root,
+    )
+
+
+def cluster_watch_promote(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.cluster import watch_cluster_run_for_promotion
+
+    run_id = _parse_str_param(params, "run_id")
+    if not run_id:
+        raise ValueError("run_id is required")
+    pid = int(params.get("pid") or 0)
+    label = _parse_str_param(params, "label") or "localhost"
+    allow_run_ids = _parse_list_param(params, "allow_run_ids")
+    publish_report_path = _parse_str_param(params, "publish_report_path")
+    publish_notes_path = _parse_str_param(params, "publish_notes_path")
+    repo_root = _parse_str_param(params, "repo_root")
+    skip_render_localhost_report = bool(params.get("skip_render_localhost_report", False))
+    skip_validate_localhost_report = bool(params.get("skip_validate_localhost_report", False))
+    cleanup = bool(params.get("cleanup", False))
+    poll_interval_seconds = float(params.get("poll_interval_seconds", 30.0) or 30.0)
+
+    return watch_cluster_run_for_promotion(
+        run_id=run_id,
+        pid=pid,
+        label=label,
+        allow_run_ids=allow_run_ids,
+        publish_report_path=publish_report_path,
+        publish_notes_path=publish_notes_path,
+        skip_render_localhost_report=skip_render_localhost_report,
+        skip_validate_localhost_report=skip_validate_localhost_report,
+        cleanup=cleanup,
+        poll_interval_seconds=poll_interval_seconds,
+        repo_root=repo_root,
     )
 
 

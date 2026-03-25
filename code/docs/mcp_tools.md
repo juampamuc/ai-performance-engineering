@@ -239,7 +239,7 @@ Generated from `mcp.mcp_server.TOOLS`. Run `python -m scripts.generate_mcp_docs`
 ### HuggingFace (1)
 - `hf` — HuggingFace Hub operations: search models, get trending, download models
 
-### Cluster/Cost (9)
+### Cluster/Cost (10)
 - `cluster_build_canonical_package` — Materialize a clean canonical cluster package from one primary run plus optional comparison and historical runs
 - `cluster_common_eval` — Run a preset benchmark bundle that answers the common system-evaluation questions people usually ask
 - `cluster_eval_suite` — Run the cluster field-report eval suite, or a fast local smoke run that captures metadata + manifest
@@ -248,6 +248,7 @@ Generated from `mcp.mcp_server.TOOLS`. Run `python -m scripts.generate_mcp_docs`
 - `cluster_promote_run` — Promote one run-local cluster result tree into the published cluster package
 - `cluster_slurm` — Generate SLURM job script for cluster submission with optimal settings
 - `cluster_validate_field_report` — Validate `cluster/field-report.md` and companion notes/template/runbook plus artifact hygiene
+- `cluster_watch_promote` — Attach a detached watcher process that waits for a PID to exit, validates run artifacts, then promotes the run
 - `cost_estimate` — Cloud cost estimation for GPU fleets
 
 ### Tools (6)

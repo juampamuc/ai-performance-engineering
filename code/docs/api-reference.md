@@ -197,7 +197,12 @@ These are repo helpers for cluster evaluations under `cluster/` (field report wo
 | `run_cluster_eval_suite(...)` | Run cluster eval suite (full) or a safe local smoke run | `aisp cluster eval-suite` | `cluster_eval_suite` |
 | `run_cluster_common_eval(...)` | Run a preset cluster evaluation bundle | `aisp cluster common-eval` | `cluster_common_eval` |
 | `run_cluster_fabric_eval(...)` | Run the canonical fabric evaluation bundle | `aisp cluster fabric-eval` | `cluster_fabric_eval` |
+| `build_canonical_package(...)` | Build a canonical comparison/history package | `aisp cluster build-canonical-package` | `cluster_build_canonical_package` |
+| `promote_cluster_run(...)` | Promote `cluster/runs/<run_id>/` into `cluster/published/current` | `aisp cluster promote-run` (optional `--repo-root` for alternate trees) | `cluster_promote_run` |
+| `watch_cluster_run_for_promotion(...)` | Detached watcher: wait on PID, then promote | `aisp cluster watch-promote` (optional `--repo-root`) | `cluster_watch_promote` |
 | `validate_field_report_requirements(...)` | Validate `cluster/field-report*.md` requirements + artifact hygiene | `aisp cluster validate-field-report` | `cluster_validate_field_report` |
+
+**HTTP:** `POST /api/cluster/promote-run` and `POST /api/cluster/watch-promote` accept the same JSON fields as the MCP tools (including optional `repo_root`). The watch-promote route is registered for programmatic use; it is not part of the dashboard’s restricted MCP tool subset.
 
 ---
 

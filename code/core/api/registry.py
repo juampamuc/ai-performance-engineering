@@ -137,6 +137,14 @@ _ROUTES: List[ApiRoute] = [
     ),
     ApiRoute(
         "POST",
+        "/api/cluster/watch-promote",
+        "cluster.watch_promote",
+        handlers.cluster_watch_promote,
+        description="Attach detached post-run watcher that promotes a completed cluster run (CLI/MCP parity; not surfaced in dashboard MCP subset).",
+        mcp_tool=None,
+    ),
+    ApiRoute(
+        "POST",
         "/api/cluster/validate-field-report",
         "cluster.validate_field_report",
         handlers.cluster_validate_field_report,

@@ -18,7 +18,7 @@ from ch12.optimized_kernel_launches import OptimizedKernelLaunchesBenchmark
 from ch13.baseline_autograd_standard import BaselineAutogradStandardBenchmark
 from ch13.optimized_autograd_standard import OptimizedAutogradCompiledBenchmark
 from ch13.optimized_fp8_static import StaticFP8Benchmark
-from ch13.optimized_matmul_pytorch import OptimizedMatmulCUTLASSBenchmark
+from ch13.optimized_matmul_pytorch import OptimizedMatmulPyTorchBenchmark
 from ch13.optimized_memory_profiling import OptimizedMemoryProfilingBenchmark
 from ch13.optimized_precisionfp8_te import OptimizedTEFP8Benchmark
 from ch16.baseline_regional_compilation import DummyTransformer
@@ -42,7 +42,7 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA requ
         (OptimizedGraphBandwidthBenchmark, "ch12.graph_bandwidth.optimized"),
         (OptimizedGraphBenchmark, "ch12.graph_conditional_runtime.optimized"),
         (OptimizedKernelLaunchesBenchmark, "ch12.kernel_launches.optimized"),
-        (OptimizedMatmulCUTLASSBenchmark, "ch13.matmul_pytorch.optimized"),
+        (OptimizedMatmulPyTorchBenchmark, "ch13.matmul_pytorch.optimized"),
         (OptimizedMemoryProfilingBenchmark, "ch13.memory_profiling.optimized"),
         (OptimizedTEFP8Benchmark, "ch13.precisionfp8_te.optimized"),
         (OptimizedRegionalCompilationBenchmark, "ch16.regional_compilation.optimized"),
@@ -108,7 +108,7 @@ def test_regional_compilation_optimized_only_uses_compiled_layer_helper(monkeypa
         (OptimizedGraphBenchmark, "ch12.graph_conditional_runtime.optimized"),
         (OptimizedKernelLaunchesBenchmark, "ch12.kernel_launches.optimized"),
         (StaticFP8Benchmark, "ch13.fp8_static.optimized"),
-        (OptimizedMatmulCUTLASSBenchmark, "ch13.matmul_pytorch.optimized"),
+        (OptimizedMatmulPyTorchBenchmark, "ch13.matmul_pytorch.optimized"),
         (OptimizedMemoryProfilingBenchmark, "ch13.memory_profiling.optimized"),
         (OptimizedTEFP8Benchmark, "ch13.precisionfp8_te.optimized"),
         (OptimizedMemoryBenchmark, "ch17.memory.optimized"),

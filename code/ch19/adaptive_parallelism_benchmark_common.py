@@ -71,16 +71,23 @@ def build_workload(
 
 
 def classify_baseline(workload: Dict[str, torch.Tensor], *, device: torch.device) -> torch.Tensor:
-    """Reference implementation using the chapter's existing Python helper."""
-    seq_len = workload["seq_len"]
-    batch_size = workload["batch_size"]
-    gpu_mem_util = workload["gpu_mem_util"]
-    concurrent_reqs = workload["concurrent_reqs"]
-    prefill_tokens = workload["prefill_tokens"]
-    decode_tokens = workload["decode_tokens"]
+    """Reference implementation using the chapter's existing Python helper.
 
-    strategy_ids = []
-    for idx in range(int(seq_len.numel())):
+    Materialize routing features to CPU once, then run per-request ``choose_worker_pool``
+    in Python. Calling ``.item()`` on CUDA tensors inside the loop would force a device
+    sync per scalar read (~6× per request), which dominates timing and dwarfs the
+    actual routing logic—this path keeps the same semantics without that artifact.
+    """
+    seq_len = workload["seq_len"].detach().cpu()
+    batch_size = workload["batch_size"].detach().cpu()
+    gpu_mem_util = workload["gpu_mem_util"].detach().cpu()
+    concurrent_reqs = workload["concurrent_reqs"].detach().cpu()
+    prefill_tokens = workload["prefill_tokens"].detach().cpu()
+    decode_tokens = workload["decode_tokens"].detach().cpu()
+
+    n = int(seq_len.numel())
+    strategy_ids: list[int] = []
+    for idx in range(n):
         config = choose_worker_pool(
             seq_len=int(seq_len[idx].item()),
             gpu_mem_util=float(gpu_mem_util[idx].item()),

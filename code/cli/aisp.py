@@ -1916,6 +1916,11 @@ if typer and cluster_app is not None:
         allow_run_id: List[str] = typer.Option([], "--allow-run-id", help="Additional run ids to retain during cleanup/validation hygiene checks", show_default=False),
         publish_report_path: Optional[Path] = typer.Option(None, "--publish-report-path", help="Published localhost report path"),
         publish_notes_path: Optional[Path] = typer.Option(None, "--publish-notes-path", help="Published localhost notes path"),
+        repo_root: Optional[Path] = typer.Option(
+            None,
+            "--repo-root",
+            help="Override repository root (default: this checkout). Use for tests or alternate trees.",
+        ),
         skip_render_localhost_report: bool = typer.Option(False, "--skip-render-localhost-report", help="Skip rendering run-local + published localhost report markdown"),
         skip_validate_localhost_report: bool = typer.Option(False, "--skip-validate-localhost-report", help="Skip localhost report validation after promotion"),
         cleanup: bool = typer.Option(False, "--cleanup", help="Run cleanup_run_artifacts.sh after promotion using this run_id as canonical"),
@@ -1933,6 +1938,7 @@ if typer and cluster_app is not None:
             skip_validate_localhost_report=skip_validate_localhost_report,
             cleanup=cleanup,
             timeout_seconds=timeout_seconds,
+            repo_root=str(repo_root) if repo_root else None,
         )
         emit_json(result)
         raise typer.Exit(0)
@@ -1946,6 +1952,11 @@ if typer and cluster_app is not None:
         allow_run_id: List[str] = typer.Option([], "--allow-run-id", help="Additional run ids to retain during cleanup/validation hygiene checks", show_default=False),
         publish_report_path: Optional[Path] = typer.Option(None, "--publish-report-path", help="Published localhost report path"),
         publish_notes_path: Optional[Path] = typer.Option(None, "--publish-notes-path", help="Published localhost notes path"),
+        repo_root: Optional[Path] = typer.Option(
+            None,
+            "--repo-root",
+            help="Override repository root (default: this checkout). Use for tests or alternate trees.",
+        ),
         skip_render_localhost_report: bool = typer.Option(False, "--skip-render-localhost-report", help="Skip rendering run-local + published localhost report markdown"),
         skip_validate_localhost_report: bool = typer.Option(False, "--skip-validate-localhost-report", help="Skip localhost report validation after promotion"),
         cleanup: bool = typer.Option(False, "--cleanup", help="Run cleanup_run_artifacts.sh after promotion using this run_id as canonical"),
@@ -1964,6 +1975,7 @@ if typer and cluster_app is not None:
             skip_validate_localhost_report=skip_validate_localhost_report,
             cleanup=cleanup,
             poll_interval_seconds=poll_interval_seconds,
+            repo_root=str(repo_root) if repo_root else None,
         )
         emit_json(result)
         raise typer.Exit(0)

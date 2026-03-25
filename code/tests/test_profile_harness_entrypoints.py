@@ -116,6 +116,22 @@ def test_ch19_example_registry_uses_module_launch_for_adaptive_parallelism_demo(
     assert cmd == [sys.executable, "-m", "ch19.adaptive_parallelism_strategy"]
 
 
+def test_ch19_example_registry_uses_module_launch_for_dynamic_precision_utilities() -> None:
+    example = EXAMPLE_BY_NAME["ch19_dynamic_precision"]
+
+    cmd = profile_harness.example_run_command(example, REPO_ROOT)
+
+    assert cmd == [sys.executable, "-m", "ch19.dynamic_precision_switching"]
+
+
+def test_ch19_example_registry_uses_module_launch_for_dynamic_quantized_cache_demo() -> None:
+    example = EXAMPLE_BY_NAME["ch19_dynamic_quantized_cache"]
+
+    cmd = profile_harness.example_run_command(example, REPO_ROOT)
+
+    assert cmd == [sys.executable, "-m", "ch19.dynamic_quantized_cache"]
+
+
 def test_ch01_example_registry_uses_module_launch_for_performance_basics() -> None:
     example = EXAMPLE_BY_NAME["ch01_performance_basics"]
 

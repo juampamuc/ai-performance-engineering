@@ -123,3 +123,28 @@ def test_cluster_promote_run_reports_missing_run_dir_via_real_cli():
     assert payload["success"] is False
     assert payload["run_id"] == "does-not-exist"
     assert "missing run dir" in payload["stderr"]
+
+
+def test_cluster_common_eval_multinode_readiness_writes_real_manifest():
+    run_id = f"test_cli_common_eval_{uuid4().hex[:8]}"
+    run_dir = REPO_ROOT / "cluster" / "runs" / run_id
+    try:
+        result = _run_cli(
+            ["cluster", "common-eval", "--preset", "multinode-readiness", "--hosts", "localhost", "--run-id", run_id],
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["success"] is True
+        assert payload["preset"] == "multinode-readiness"
+        assert Path(payload["manifest_path"]).exists()
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def test_cluster_watch_promote_reports_missing_run_dir_via_real_cli():
+    result = _run_cli(["cluster", "watch-promote", "--run-id", "does-not-exist", "--pid", "999999"])
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert "Missing run dir" in payload["error"]

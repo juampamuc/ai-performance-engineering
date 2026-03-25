@@ -12,3 +12,11 @@ def test_generate_concept_mapping_uses_updated_chapter_names() -> None:
     assert get_chapter_name("ch09") == "Arithmetic Intensity and Kernel Efficiency"
     assert get_chapter_name("ch11") == "Streams and Concurrency"
     assert get_chapter_name("ch20") == "AI-Assisted Performance Optimization"
+
+
+def test_ch19_performance_targets_include_quantized_cache_speedup() -> None:
+    from core.benchmark.performance_targets import _DEFAULT_TARGETS
+
+    m = _DEFAULT_TARGETS["ch19"]["metrics"]
+    assert "dynamic_quantized_cache_speedup" in m
+    assert m["dynamic_quantized_cache_speedup"]["unit"] == "x"
