@@ -1,2 +1,0 @@
-model,tp,isl,osl,concurrency,num_prompts,request_throughput,output_throughput,total_token_throughput,mean_ttft_ms,median_ttft_ms,p99_ttft_ms,mean_tpot_ms,median_tpot_ms,p99_tpot_ms,gpu_util_mean_pct,gpu_util_p95_pct,mem_used_mean_mb,mem_used_max_mb,gpu_power_mean_w,gpu_power_p95_w,completed,failed
-openai-community/gpt2,1,64,32,1,10,5.047,161.498,484.494,27.001,21.038,77.573,5.514,5.501,5.706,4.300,25.000,147480.000,147480.000,157.830,164.310,10,0

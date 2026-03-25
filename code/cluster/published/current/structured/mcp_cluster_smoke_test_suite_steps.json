@@ -1,0 +1,10 @@
+[
+  {
+    "name": "preflight_services",
+    "start_time": "2026-03-25T04:46:22+00:00",
+    "end_time": "2026-03-25T04:46:22+00:00",
+    "exit_code": 3,
+    "log_path": "/home/cfregly/ai-performance-engineering/code/cluster/runs/mcp_cluster_smoke_test/raw/mcp_cluster_smoke_test_suite/preflight_services.log",
+    "command": "/home/cfregly/ai-performance-engineering/code/cluster/scripts/preflight_cluster_services.sh --run-id mcp_cluster_smoke_test --hosts localhost --ssh-user ubuntu"
+  }
+]
