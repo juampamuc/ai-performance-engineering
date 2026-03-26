@@ -8,7 +8,11 @@
 #include <torch/extension.h>
 
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
 
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/Exceptions.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <cutlass/cutlass.h>
 #include <cutlass/gemm/device/gemm.h>
 #include <cutlass/gemm/device/default_gemm_configuration.h>
@@ -85,6 +89,7 @@ void validate_inputs(const torch::Tensor& A, const torch::Tensor& B) {
 
 torch::Tensor cutlass_gemm_fp16(const torch::Tensor& A, const torch::Tensor& B) {
     validate_inputs(A, B);
+    c10::cuda::CUDAGuard device_guard(A.device());
 
     const int64_t m = A.size(0);
     const int64_t k = A.size(1);
@@ -133,7 +138,51 @@ torch::Tensor cutlass_gemm_fp16(const torch::Tensor& A, const torch::Tensor& B) 
     return C;
 }
 
+torch::Tensor cublas_gemm_fp16(const torch::Tensor& A, const torch::Tensor& B) {
+    validate_inputs(A, B);
+    c10::cuda::CUDAGuard device_guard(A.device());
+
+    const int64_t m = A.size(0);
+    const int64_t k = A.size(1);
+    const int64_t n = B.size(1);
+
+    auto C = torch::empty({m, n}, A.options());
+
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+
+    cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
+    TORCH_CUDABLAS_CHECK(cublasGemmEx(
+        handle,
+        CUBLAS_OP_N,
+        CUBLAS_OP_N,
+        static_cast<int>(n),
+        static_cast<int>(m),
+        static_cast<int>(k),
+        &alpha,
+        B.data_ptr<at::Half>(),
+        CUDA_R_16F,
+        static_cast<int>(n),
+        A.data_ptr<at::Half>(),
+        CUDA_R_16F,
+        static_cast<int>(k),
+        &beta,
+        C.data_ptr<at::Half>(),
+        CUDA_R_16F,
+        static_cast<int>(n),
+        CUDA_R_32F,
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+    CUDA_CHECK(cudaGetLastError());
+
+    return C;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def(
+        "cublas_gemm_fp16",
+        &cublas_gemm_fp16,
+        "Explicit cuBLAS GEMM (FP16 input/output, FP32 accumulate)"
+    );
     m.def(
         "cutlass_gemm_fp16",
         &cutlass_gemm_fp16,

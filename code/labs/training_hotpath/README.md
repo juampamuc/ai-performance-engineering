@@ -79,6 +79,6 @@ python -m cli.aisp bench run --targets labs/training_hotpath --profile minimal
 - The padding-aware target should preserve outputs while flipping `padding_aware.enabled` and reporting a non-trivial padded-token fraction.
 
 ## Notes
-- Keep `ch14:model_compile_bf16` as the primary compile + BF16 training story.
+- Keep `ch14:model_compile_reduced_precision` as the primary compile + reduced-precision training story.
 - Keep `ch12:cuda_graphs` as the primary CUDA Graph replay story.
 - Keep `labs/async_input_pipeline:async_input_pipeline` as the primary copy-stream overlap story.

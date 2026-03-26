@@ -1,8 +1,4 @@
-"""optimized_model_compile_bf16.py - BF16 + torch.compile optimized execution.
-
-Uses torch.compile together with reduced precision for kernel fusion and optimization.
-Implements BaseBenchmark for harness integration.
-"""
+"""optimized_model_compile_reduced_precision.py - Compiled reduced-precision execution."""
 
 from __future__ import annotations
 
@@ -26,15 +22,10 @@ from ch14.model_eager_common import (  # noqa: E402
 )
 
 
-class OptimizedModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Benchmark implementation with the chapter's combined optimization stack.
-    
-    Chapter 14 intentionally combines two changes in one pair:
-    1. Reduced-precision model execution (BF16 when available, otherwise FP16)
-    2. torch.compile with max-autotune for kernel fusion and code generation
-    """
+class OptimizedModelCompileReducedPrecisionBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Benchmark implementation for compiled reduced-precision model execution."""
 
-    signature_equivalence_group = "ch14_model_compile_bf16"
+    signature_equivalence_group = "ch14_model_compile_reduced_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
     
     def __init__(self):
@@ -105,7 +96,7 @@ class OptimizedModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
 
-        with nvtx_range("model_compile_bf16_optimized", enable=enable_nvtx):
+        with nvtx_range("model_compile_reduced_precision_optimized", enable=enable_nvtx):
             with torch.no_grad():
                 self.output = self.compiled_model(self.input_ids)
         if self.output is None or self.input_ids is None:
@@ -161,4 +152,4 @@ class OptimizedModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
-    return OptimizedModelCompileBf16Benchmark()
+    return OptimizedModelCompileReducedPrecisionBenchmark()

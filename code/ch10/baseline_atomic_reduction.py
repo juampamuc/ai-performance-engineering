@@ -40,6 +40,7 @@ class BaselineAtomicReductionBenchmark(CudaBinaryBenchmark):
             num_elements=64 * 1024 * 1024,
             elapsed_ms=self.last_time_ms,
             single_pass=False,
+            timed_output_reset_memset=False,
         )
 
     def get_input_signature(self) -> dict:
@@ -53,5 +54,4 @@ class BaselineAtomicReductionBenchmark(CudaBinaryBenchmark):
 def get_benchmark() -> BaseBenchmark:
     """Factory for discover_benchmarks()."""
     return BaselineAtomicReductionBenchmark()
-
 

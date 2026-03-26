@@ -9,6 +9,8 @@ import os.path
 from core.harness.benchmark_harness import BenchmarkConfig, LaunchVia, TorchrunLaunchSpec
 from core.harness import run_benchmarks
 from core.harness.run_benchmarks import (
+    _attach_failure_metadata,
+    _collect_required_profiler_failure_details,
     _build_torchrun_profile_command,
     _collect_required_profiler_failures,
     _format_required_profiler_failure,
@@ -66,6 +68,111 @@ def test_format_required_profiler_failure_is_explicit() -> None:
         "Required profilers did not succeed: "
         "baseline:torch:failed, optimized:nsys:skipped"
     )
+
+
+def test_collect_required_profiler_failure_details_returns_structured_errors() -> None:
+    result_entry = {
+        "baseline_profiler_statuses": {"nsys": "failed"},
+        "baseline_profiler_errors": {"nsys": "no report artifact produced"},
+    }
+    best_opt = {
+        "optimized_profiler_statuses": {"ncu": "skipped"},
+        "optimized_profiler_errors": {"ncu": "Nsight Compute unavailable on current host."},
+    }
+
+    details = _collect_required_profiler_failure_details(
+        result_entry,
+        best_opt,
+        profiling_requested=True,
+    )
+
+    assert details == {
+        "baseline:nsys": "no report artifact produced",
+        "optimized:ncu": "Nsight Compute unavailable on current host.",
+    }
+
+
+def test_format_required_profiler_failure_includes_detail_text() -> None:
+    message = _format_required_profiler_failure(
+        ["optimized:nsys:failed"],
+        failure_details={"optimized:nsys": "no report artifact produced"},
+    )
+
+    assert message == (
+        "Required profilers did not succeed: optimized:nsys:failed. "
+        "Details: optimized:nsys: no report artifact produced"
+    )
+
+
+def test_attach_failure_metadata_promotes_child_failure_to_parent() -> None:
+    result_entry = {
+        "status": "failed_error",
+        "error": "Baseline or optimization failed",
+        "optimizations": [
+            {
+                "technique": "default",
+                "status": "failed_error",
+                "error": (
+                    "Benchmark execution failed: ENVIRONMENT INVALID: "
+                    "Foreign CUDA compute process(es) detected on benchmark GPU before run."
+                ),
+            }
+        ],
+    }
+
+    _attach_failure_metadata(result_entry)
+
+    assert result_entry["error"].startswith("Benchmark execution failed: ENVIRONMENT INVALID:")
+    assert result_entry["failure_class"] == "environment_invalid"
+    assert result_entry["failure_details"] == [
+        {
+            "scope": "optimization",
+            "technique": "default",
+            "status": "failed_error",
+            "error": (
+                "Benchmark execution failed: ENVIRONMENT INVALID: "
+                "Foreign CUDA compute process(es) detected on benchmark GPU before run."
+            ),
+        }
+    ]
+
+
+def test_attach_failure_metadata_promotes_best_only_profiler_details_to_parent() -> None:
+    result_entry = {
+        "status": "failed_profiler",
+        "error": (
+            "Required profilers did not succeed: baseline:nsys:failed, "
+            "optimized:nsys:failed. Details: baseline:nsys: Nsight Systems timed out "
+            "after 120.0s; optimized:nsys: Nsight Systems timed out after 120.0s"
+        ),
+        "baseline_profiler_errors": {"nsys": "Nsight Systems timed out after 120.0s"},
+        "optimizations": [
+            {
+                "technique": "optimized_pipeline_3stage",
+                "status": "succeeded",
+                "optimized_profiler_statuses": {
+                    "nsys": "failed",
+                    "ncu": "succeeded",
+                    "torch": "succeeded",
+                },
+                "optimized_profiler_errors": {
+                    "nsys": "Nsight Systems timed out after 120.0s",
+                },
+            }
+        ],
+    }
+
+    _attach_failure_metadata(result_entry)
+
+    assert result_entry["failure_class"] == "profiler_failed"
+    assert result_entry["optimized_profiler_statuses"] == {
+        "nsys": "failed",
+        "ncu": "succeeded",
+        "torch": "succeeded",
+    }
+    assert result_entry["optimized_profiler_errors"] == {
+        "nsys": "Nsight Systems timed out after 120.0s",
+    }
 
 
 def test_temporary_python_profile_launch_uses_python_wrapper_by_default(tmp_path: Path) -> None:

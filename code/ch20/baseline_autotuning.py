@@ -15,37 +15,7 @@ import ch20.arch_config  # noqa: F401 - Apply chapter defaults
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-
-
-class AutotuneModel(nn.Module):
-    """Pointwise-heavy block that benefits from compiler fusion.
-
-    In eager mode this executes as many separate kernels; torch.compile can fuse the
-    pointwise chain into fewer kernels (and max-autotune will tune the generated
-    kernels).
-    """
-
-    def __init__(self, hidden_dim: int = 4096):
-        super().__init__()
-        self.scale = nn.Parameter(torch.ones(hidden_dim))
-        self.bias = nn.Parameter(torch.zeros(hidden_dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = x * 0.01
-        y = y * self.scale + self.bias
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        return y
+from ch20.autotuning_common import AUTOTUNING_SETUP_PREWARM_ITERS, AutotuneModel
 
 
 class BaselineAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -74,7 +44,7 @@ class BaselineAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.inputs = torch.randn(self.batch, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
         self._verify_input = self.inputs[0:1].clone()
 
-        for _ in range(3):
+        for _ in range(AUTOTUNING_SETUP_PREWARM_ITERS):
             with torch.no_grad():
                 _ = self.model(self.inputs)
 
@@ -118,5 +88,3 @@ class BaselineAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return BaselineAutotuningBenchmark()
-
-

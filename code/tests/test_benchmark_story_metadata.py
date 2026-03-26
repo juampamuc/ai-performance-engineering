@@ -20,6 +20,8 @@ from ch08.optimized_thresholdtma import OptimizedThresholdTMABenchmark
 from ch08.optimized_tiling import OptimizedTilingBenchmark
 from ch08.optimized_tiling_tcgen05 import OptimizedTilingBenchmarkTCGen05
 from ch08.optimized_tcgen05_custom_vs_cublas import OptimizedTcgen05CustomVsCublasBenchmark
+from ch04.baseline_pcie_staging import BaselinePcieStagingBenchmark
+from ch04.optimized_pcie_staging import OptimizedPcieStagingBenchmark
 from ch04.baseline_symmetric_memory_perf import BaselineSymmetricMemoryPerfBenchmark
 from ch04.optimized_symmetric_memory_perf import OptimizedSymmetricMemoryPerfBenchmark
 from ch13.baseline_context_parallel_multigpu import BaselineContextParallelMultigpuBenchmark
@@ -28,6 +30,8 @@ from ch13.optimized_context_parallel_multigpu import OptimizedContextParallelMul
 from ch13.optimized_expert_parallel_multigpu import OptimizedExpertParallelMultigpuBenchmark
 from ch17.baseline_inference_full import BaselineInferenceFullBenchmark
 from ch17.optimized_inference_full import OptimizedInferenceFullBenchmark
+from ch15.baseline_single_gpu_kv_handoff import get_benchmark as get_baseline_single_gpu_kv_handoff
+from ch15.optimized_single_gpu_kv_handoff import get_benchmark as get_optimized_single_gpu_kv_handoff
 from ch15.baseline_disaggregated_inference_multigpu import BaselineDisaggregatedInferenceMultiGPUBenchmark
 from ch15.optimized_disaggregated_inference_multigpu import OptimizedDisaggregatedInferenceMultiGPUBenchmark
 from core.analysis.performance_analyzer import load_benchmark_data
@@ -178,6 +182,58 @@ def test_ch04_symmetric_memory_perf_story_metadata_marks_compound_optimized_path
     assert optimized_story["comparison_axis"] == "allocation_blocking_copy_vs_preallocated_async_copy"
     assert optimized_story["optimization_mechanism"] == "preallocated_buffer_plus_nonblocking_copy"
     assert optimized_story["compound_optimization"] is True
+
+
+def test_ch04_pcie_staging_reports_control_story_explicitly() -> None:
+    baseline = BaselinePcieStagingBenchmark()
+    optimized = OptimizedPcieStagingBenchmark()
+
+    baseline_metrics = baseline.get_custom_metrics()
+    optimized_metrics = optimized.get_custom_metrics()
+    baseline_story = baseline.get_story_metadata()
+    optimized_story = optimized.get_story_metadata()
+
+    assert baseline_metrics is not None
+    assert optimized_metrics is not None
+    assert baseline_story is not None
+    assert optimized_story is not None
+    assert baseline_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.chapter_native_exemplar"] == 0.0
+    assert baseline_metrics["transfer.type"] == 0.0
+    assert baseline_metrics["pcie.host_buffer_pinned"] == 0.0
+    assert optimized_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
+    assert optimized_metrics["transfer.type"] == 0.0
+    assert optimized_metrics["pcie.host_buffer_pinned"] == 1.0
+    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["chapter_alignment"] == "supplementary"
+    assert optimized_story["chapter_alignment"] == "supplementary"
+    assert optimized_story["optimization_mechanism"] == "pinned host buffer plus nonblocking copies"
+
+
+def test_ch15_single_gpu_kv_handoff_wrappers_expose_control_story_metadata() -> None:
+    baseline = get_baseline_single_gpu_kv_handoff()
+    optimized = get_optimized_single_gpu_kv_handoff()
+
+    baseline_story = baseline.get_story_metadata()
+    optimized_story = optimized.get_story_metadata()
+    baseline_metrics = baseline.get_custom_metrics()
+    optimized_metrics = optimized.get_custom_metrics()
+
+    assert baseline_story is not None
+    assert optimized_story is not None
+    assert baseline_metrics is not None
+    assert optimized_metrics is not None
+    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["chapter_alignment"] == "supplementary"
+    assert baseline_story["chapter_native_exemplar"] is False
+    assert optimized_story["pair_role"] == "control"
+    assert optimized_story["chapter_alignment"] == "supplementary"
+    assert optimized_story["chapter_native_exemplar"] is False
+    assert baseline_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["single_gpu_kv_handoff.host_staged_kv"] == 1.0
+    assert optimized_metrics["single_gpu_kv_handoff.device_resident_kv"] == 1.0
 
 
 def test_ch13_multigpu_wrappers_expose_verification_and_launch_modes_in_story_metadata() -> None:

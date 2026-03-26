@@ -56,6 +56,9 @@ class _FakeTilingExtension:
     def matmul_naive(self, matrix_a: torch.Tensor, matrix_b: torch.Tensor, output: torch.Tensor) -> None:
         output.copy_(matrix_a @ matrix_b)
 
+    def matmul_tiled(self, matrix_a: torch.Tensor, matrix_b: torch.Tensor, output: torch.Tensor) -> None:
+        output.copy_(matrix_a @ matrix_b)
+
     def matmul_tiled_fast(self, matrix_a: torch.Tensor, matrix_b: torch.Tensor, output: torch.Tensor) -> None:
         output.copy_(matrix_a @ matrix_b)
 

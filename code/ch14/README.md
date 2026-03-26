@@ -21,7 +21,7 @@ Representative validated results from `artifacts/runs/20260303_163946__bench__pr
 
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
-| `model_compile_bf16` | `29.873 ms` | `7.978 ms` | `3.74x` | eager BF16 vs BF16 + `torch.compile` as a combined optimization stack |
+| `model_compile_reduced_precision` | `29.873 ms` | `7.978 ms` | `3.74x` | eager reduced precision vs reduced precision + `torch.compile` |
 | `regional_triton` | `1.944 ms` | `0.863 ms` | `2.25x` | regional compilation and Triton fusion |
 | `triton_persistent` | `0.830 ms` | `0.086 ms` | `9.68x` | persistent Triton kernel scheduling |
 
@@ -31,13 +31,13 @@ These are chapter-level proof points, not vendor peak numbers. The chapter is mo
 Use the same benchmark targets with deep-dive profiling when you want launch-count and kernel-attribution evidence instead of only the wall-clock delta:
 
 ```bash
-python -m cli.aisp bench run --targets ch14:model_compile_bf16 --profile deep_dive --single-gpu
+python -m cli.aisp bench run --targets ch14:model_compile_reduced_precision --profile deep_dive --single-gpu
 python -m cli.aisp bench run --targets ch14:regional_triton --profile deep_dive --single-gpu
 python -m cli.aisp bench run --targets ch14:triton_persistent --profile deep_dive --single-gpu
 ```
 
 The expected story is different per workload:
-- `model_compile_bf16`: fewer graph breaks and lower framework overhead, with both paths using the same reduced-precision dtype and the optimized path adding `torch.compile`
+- `model_compile_reduced_precision`: fewer graph breaks and lower framework overhead, with both paths using the same reduced-precision dtype and the optimized path adding `torch.compile`
 - `regional_triton`: fewer unfused launches and better steady-state scheduling
 - `triton_persistent`: materially longer-lived kernels with less relaunch churn
 
@@ -58,8 +58,8 @@ python -m cli.aisp bench run --targets ch14:triton_persistent --profile deep_div
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `baseline_model_compile_bf16.py`, `optimized_model_compile_bf16.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py` | Model-scale examples showcasing the eager-vs-compiled BF16 pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests. |
-| `baseline_cutlass.py`, `optimized_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py` | CUTLASS vs Triton comparisons plus advanced TMA/NVSHMEM Triton kernels. |
+| `baseline_model_compile_reduced_precision.py`, `optimized_model_compile_reduced_precision.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py` | Model-scale examples showcasing the eager-vs-compiled reduced-precision pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests. |
+| `baseline_cublas_vs_cutlass.py`, `optimized_cublas_vs_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py` | Explicit cuBLAS-vs-CUTLASS control pair plus advanced TMA/NVSHMEM Triton kernels. |
 | `baseline_attention_eager_sdpa.py`, `optimized_attention_eager_sdpa.py`, `baseline_flex_attention_sparse.py`, `optimized_flex_attention_sparse.py`, `flex_attention_sparse_demo.py` | Eager-vs-SDPA attention plus FlexAttention sparse workloads that validate custom score mods, masks, sparsity, and compile speedups. |
 | `baseline_nccl_quantization.py`, `optimized_nccl_quantization.py`, `deepseek_innovation_l2_bypass.py` | Quantization-aware communication and the DeepSeek-inspired L2 bypass experiment. |
 | `baseline_regional_triton.py`, `optimized_regional_triton.py`, `inspect_compiled_code.py`, `benchmark_tma_configs.py` | Regional compilation and TMA parameter sweeps for auto-tuning generated kernels. |
@@ -77,7 +77,7 @@ python -m cli.aisp bench run --targets ch14 --profile minimal
 - Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.
 
 ## Validation Checklist
-- `python -m cli.aisp bench run --targets ch14:model_compile_bf16 --profile minimal` produces compile-time summaries followed by steady-state throughput gains vs an eager baseline running the same reduced-precision model.
+- `python -m cli.aisp bench run --targets ch14:model_compile_reduced_precision --profile minimal` produces compile-time summaries followed by steady-state throughput gains vs an eager baseline running the same reduced-precision model.
 - `python -m ch14.triton_tma_blackwell --validate` compares Triton and CUDA outputs to double-check TMA scheduling logic.
 - `python -m ch14.compare --examples attention_eager_sdpa` shows the fused SDPA path reducing kernel launch count without changing accuracy.
 

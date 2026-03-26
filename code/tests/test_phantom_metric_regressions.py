@@ -16,7 +16,7 @@ STALE_PHANTOM_REPORT_PATHS = [
     "ch08/baseline_loop_unrolling.py",
     "ch09/baseline_sdpa_attention.py",
     "ch14/baseline_cuda_python.py",
-    "ch14/baseline_model_compile_bf16.py",
+    "ch14/baseline_model_compile_reduced_precision.py",
     "ch15/baseline_inference_placement.py",
     "ch15/baseline_kv_cache_management.py",
     "ch16/baseline_flash_sdp.py",

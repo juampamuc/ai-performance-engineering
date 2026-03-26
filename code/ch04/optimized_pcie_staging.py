@@ -1,4 +1,4 @@
-"""baseline_nvlink.py - Single-GPU baseline transfer with host staging."""
+"""optimized_pcie_staging.py - Pinned, nonblocking PCIe host-staging optimization."""
 
 from __future__ import annotations
 
@@ -14,9 +14,24 @@ from core.harness.benchmark_harness import (  # noqa: E402
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
-class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: synchronous device copy on a single GPU."""
-    
+class OptimizedPcieStagingBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Supplementary control pair: pinned, nonblocking host staging over PCIe."""
+
+    story_metadata = {
+        "pair_role": "control",
+        "variant_role": "optimized",
+        "chapter_alignment": "supplementary",
+        "chapter_native_exemplar": False,
+        "control_reason": (
+            "This single-GPU pair isolates pageable versus pinned host staging. "
+            "It is not an NVLink fabric benchmark."
+        ),
+        "comparison_axis": "pageable_blocking_vs_pinned_nonblocking_host_staging",
+        "execution_pattern": "single_gpu_host_staging",
+        "optimization_mechanism": "pinned host buffer plus nonblocking copies",
+        "chapter_native_targets": ["nvlink_topology_aware", "nvlink_multigpu", "nvlink_topology_aware_multigpu"],
+    }
+
     def __init__(self):
         super().__init__()
         self.data_gpu0 = None
@@ -24,7 +39,6 @@ class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.host_buffer = None
         self.output: Optional[torch.Tensor] = None
         self.N = 20_000_000
-        # Memory transfer benchmark - jitter check not applicable
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),
@@ -39,14 +53,14 @@ class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.manual_seed_all(42)
         self.data_gpu0 = torch.randn(self.N, device=self.device, dtype=torch.float32)
         self.data_gpu1 = torch.empty_like(self.data_gpu0)
-        self.host_buffer = torch.empty(self.N, device="cpu", dtype=torch.float32)
+        self.host_buffer = torch.empty(self.N, device="cpu", dtype=torch.float32, pin_memory=True)
         torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
-        """Benchmark: PCIe-based communication (no NVLink)."""
-        with self._nvtx_range("baseline_nvlink"):
-            self.host_buffer.copy_(self.data_gpu0, non_blocking=False)
-            self.data_gpu1.copy_(self.host_buffer, non_blocking=False)
+        """Benchmark: pinned CPU buffer with nonblocking staged copies."""
+        with self._nvtx_range("optimized_pcie_staging"):
+            self.host_buffer.copy_(self.data_gpu0, non_blocking=True)
+            self.data_gpu1.copy_(self.host_buffer, non_blocking=True)
 
     def capture_verification_payload(self) -> None:
         if self.data_gpu0 is None or self.data_gpu1 is None:
@@ -87,11 +101,20 @@ class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_memory_transfer_metrics
-        return compute_memory_transfer_metrics(
+        metrics = compute_memory_transfer_metrics(
             bytes_transferred=self._bytes_transferred if hasattr(self, '_bytes_transferred') else float(getattr(self, 'N', 1024) * 4),
             elapsed_ms=getattr(self, '_last_elapsed_ms', None),
-            transfer_type="hbm",
+            transfer_type="pcie",
         )
+        metrics.update(
+            {
+                "story.control_pair": 1.0,
+                "story.chapter_native_exemplar": 0.0,
+                "pcie.host_buffer_pinned": 1.0,
+                "pcie.non_blocking_copy": 1.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
@@ -99,14 +122,6 @@ class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
             return "Data not initialized"
         return None
 
-    def get_input_signature(self) -> dict:
-        """Return workload signature for input verification."""
-        return super().get_input_signature()
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        return super().get_verify_output()
-    
     def get_output_tolerance(self) -> tuple:
         """Return custom tolerance for memory transfer benchmark."""
         return (0.0, 0.0)
@@ -115,5 +130,4 @@ class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
-    return BaselineNVLinkBenchmark()
-
+    return OptimizedPcieStagingBenchmark()

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
+import pytest
 import torch
 
 from core.discovery import chapter_slug, discover_all_chapters, discover_benchmarks
+from ch15.speculative_decoding_benchmarks import SpeculativeDecodingBenchmark
 from ch08.tcgen05_custom_vs_cublas_benchmark_base import Tcgen05CustomVsCublasBase
 from ch08.threshold_tma_benchmark_base import ThresholdBenchmarkBaseTMA
 from ch08.tiling_benchmark_base import TilingBenchmarkBase
@@ -166,6 +169,26 @@ def test_ch08_threshold_tma_bridge_workload_uses_larger_row_count() -> None:
     assert "rows: int = 1 << 26" in threshold_base_text
 
 
+def test_ch08_tiling_optimized_wrapper_uses_shared_memory_kernel_not_cublas() -> None:
+    optimized_tiling = _read("ch08/optimized_tiling.py")
+
+    assert "matmul_tiled(self.matrix_a, self.matrix_b, self.output)" in optimized_tiling
+    assert "matmul_tiled_fast" not in optimized_tiling
+
+
+def test_ch08_loop_unrolling_binaries_share_identical_input_initialization() -> None:
+    baseline_text = _read("ch08/baseline_loop_unrolling.cu")
+    optimized_text = _read("ch08/optimized_loop_unrolling.cu")
+    common_text = _read("ch08/loop_unrolling_common.cuh")
+
+    for source in (baseline_text, optimized_text):
+        assert "init_input_value(i)" in source
+        assert "init_weight_value(i)" in source
+
+    assert "constexpr int kInputModulo = 1024" in common_text
+    assert "constexpr float kWeightBase = 0.5f" in common_text
+
+
 def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -> None:
     readme_text = _read("ch08/README.md")
     baseline_tcgen05_text = _read("ch08/baseline_tcgen05_custom_vs_cublas.py")
@@ -178,6 +201,82 @@ def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -
     assert "tcgen05-versus-cuBLAS bridge control" in baseline_tcgen05_text
     assert "Vendor cuBLAS reference side of the comparison pair." in baseline_tcgen05_text
     assert "Custom tcgen05 kernel side of the comparison pair." in optimized_tcgen05_text
+
+
+def test_ch10_double_buffered_pipeline_baseline_is_single_buffered_tiled_not_naive() -> None:
+    baseline_source = _read("ch10/baseline_double_buffered_pipeline.cu")
+    baseline_wrapper = _read("ch10/baseline_double_buffered_pipeline.py")
+
+    assert "gemm_single_buffered_kernel" in baseline_source
+    assert "shared-memory tiles" in baseline_source
+    assert "gemm_naive_kernel" not in baseline_source
+    assert 'double_buffered=False' in baseline_wrapper
+    assert 'num_stages=1' in baseline_wrapper
+
+
+def test_ch10_atomic_reduction_explicitly_reports_timed_memset_cost() -> None:
+    optimized_wrapper = _read("ch10/optimized_atomic_reduction.py")
+    optimized_source = _read("ch10/optimized_atomic_reduction.cu")
+
+    assert "timed_output_reset_memset=True" in optimized_wrapper
+    assert "timed_output_reset_bytes=4096.0" in optimized_wrapper
+    assert "Timing includes cudaMemset(d_output, 0, ...)" in optimized_source
+
+
+def test_ch12_conditional_graphs_optimized_path_keeps_runtime_condition_inside_graph() -> None:
+    optimized_source = _read("ch12/optimized_cuda_graphs_conditional.cu")
+
+    assert "conditional_dispatch_kernel" in optimized_source
+    assert "predicate_kernel<<<1, 1, 0, graph_stream>>>(d_condition, d_data, THRESHOLD);" in optimized_source
+    assert "conditional_dispatch_kernel<<<grid, block, 0, graph_stream>>>(" in optimized_source
+    assert "expensive_kernel<<<grid, block, 0, graph_stream>>>(d_data, N, 1.01f);" not in optimized_source
+
+
+def test_ch14_cutlass_pair_is_renamed_to_explicit_cublas_vs_cutlass() -> None:
+    baseline_source = _read("ch14/baseline_cublas_vs_cutlass.py")
+    binding_source = _read("core/benchmark/cutlass_binding.py")
+    extension_source = _read("core/benchmark/cuda/cutlass_gemm_extension.cu")
+
+    assert "BaselineCublasVsCutlassBenchmark" in baseline_source
+    assert "from core.benchmark.cutlass_binding import cublas_gemm_fp16" in baseline_source
+    assert "def cublas_gemm_fp16" in binding_source
+    assert "torch::Tensor cublas_gemm_fp16" in extension_source
+
+
+def test_ch14_model_compile_pair_uses_reduced_precision_name_not_bf16_alias() -> None:
+    baseline_source = _read("ch14/baseline_model_compile_reduced_precision.py")
+    optimized_source = _read("ch14/optimized_model_compile_reduced_precision.py")
+
+    assert "BaselineModelCompileReducedPrecisionBenchmark" in baseline_source
+    assert "OptimizedModelCompileReducedPrecisionBenchmark" in optimized_source
+    assert "signature_equivalence_group = \"ch14_model_compile_reduced_precision\"" in baseline_source
+    assert "model_compile_reduced_precision_optimized" in optimized_source
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for speculative decoding stability check")
+def test_ch15_speculative_decoding_acceptance_metrics_are_stable_run_to_run() -> None:
+    def _run_acceptance_rate() -> float:
+        bench = SpeculativeDecodingBenchmark(use_speculative=True, label="speculative_decode_stability")
+        bench.workload = replace(
+            bench.workload,
+            target_hidden=512,
+            target_layers=1,
+            draft_hidden=128,
+            speculative_k=8,
+            total_tokens=32,
+        )
+        try:
+            bench.setup()
+            bench.benchmark_fn()
+            metrics = bench.get_custom_metrics()
+            assert metrics is not None
+            return metrics["speculative.acceptance_rate_pct"]
+        finally:
+            bench.teardown()
+
+    first = _run_acceptance_rate()
+    second = _run_acceptance_rate()
+    assert first == second
 
 
 def test_ch15_split_moe_targets_isolate_dispatch_from_routing() -> None:
@@ -497,10 +596,10 @@ def test_portable_rerun_classifies_runtime_capability_skips_separately() -> None
     assert "requires torchrun/distributed launch context" in rerun_text
     assert "requires usable cufile/gds support" in rerun_text
     assert "requires usable tensor-map/tma support" in rerun_text
-    assert "requires sm90 hopper hardware" in rerun_text
+    assert "requires sm100+ blackwell-class hardware" in rerun_text
 
 
-def test_portable_rerun_reclassifies_hopper_only_cutlass_fp8_as_expected_unsupported() -> None:
+def test_portable_rerun_reclassifies_pre_sm100_cutlass_fp8_as_expected_unsupported() -> None:
     state = _canonicalize_state(
         {
             "target_records": {
@@ -510,7 +609,7 @@ def test_portable_rerun_reclassifies_hopper_only_cutlass_fp8_as_expected_unsuppo
                         {
                             "target": "ch09:cutlass_gemm_fp8",
                             "benchmark_status": "skipped",
-                            "error": "HARDWARE/SOFTWARE LIMITATION: baseline_cutlass_gemm_fp8 requires SM90 Hopper hardware.",
+                            "error": "HARDWARE/SOFTWARE LIMITATION: baseline_cutlass_gemm_fp8 requires SM100+ Blackwell-class hardware.",
                             "queue_reasons": ["skipped", "missing_successful_optimization"],
                         }
                     ],
@@ -528,6 +627,32 @@ def test_portable_rerun_reclassifies_hopper_only_cutlass_fp8_as_expected_unsuppo
     assert bench["queue_reasons"] == [EXPECTED_UNSUPPORTED_RUNTIME_REASON]
     assert record["queued_problem_count"] == 0
     assert record["expected_unsupported_count"] == 1
+
+
+def test_ch09_cutlass_fp8_pair_is_retuned_for_blackwell_sm100() -> None:
+    baseline_wrapper = _read("ch09/baseline_cutlass_gemm_fp8.py")
+    optimized_wrapper = _read("ch09/optimized_cutlass_gemm_fp8.py")
+    baseline_source = _read("ch09/baseline_cutlass_gemm_fp8.cu")
+    optimized_source = _read("ch09/optimized_cutlass_gemm_fp8.cu")
+
+    for wrapper in (baseline_wrapper, optimized_wrapper):
+        assert "requires SM100+ Blackwell-class hardware" in wrapper
+        assert "requires SM90 Hopper hardware" not in wrapper
+        assert "major < 10" in wrapper
+
+    assert 'self._selected_backend = "cutlass_sm100_1sm"' in baseline_wrapper
+    assert 'self._selected_backend = "cutlass_sm100_2sm"' in optimized_wrapper
+
+    for source in (baseline_source, optimized_source):
+        assert "CUTLASS_ARCH_MMA_SM100_SUPPORTED" in source
+        assert "cutlass::arch::Sm100" in source
+        assert "CUTLASS_ARCH_MMA_SM90_SUPPORTED" not in source
+        assert "cutlass::arch::Sm90" not in source
+
+    assert "KernelTmaWarpSpecialized1SmSm100" in baseline_source
+    assert "Shape<_128, _128, _64>" in baseline_source
+    assert "KernelTmaWarpSpecialized2SmSm100" in optimized_source
+    assert "Shape<_256, _128, _64>" in optimized_source
 
 
 def test_portable_rerun_reclassifies_multi_gpu_skip_records_on_load() -> None:

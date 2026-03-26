@@ -244,6 +244,95 @@ def _set_profiler_status(statuses: Dict[str, str], profiler: str, status: str) -
     statuses[profiler] = status
 
 
+_GENERIC_BENCHMARK_FAILURE_ERROR = "Baseline or optimization failed"
+_PROFILE_FAILURE_DETAILS: Dict[str, Optional[str]] = {
+    "nsys": None,
+    "ncu": None,
+    "torch": None,
+}
+
+
+def _normalize_failure_detail(detail: Optional[str], *, max_chars: int = 600) -> Optional[str]:
+    """Normalize failure detail text for stable structured output."""
+    if detail is None:
+        return None
+    cleaned = " ".join(str(detail).strip().split())
+    if not cleaned:
+        return None
+    if len(cleaned) > max_chars:
+        return cleaned[: max_chars - 3] + "..."
+    return cleaned
+
+
+def _set_profile_failure_detail(profiler: str, detail: Optional[str]) -> None:
+    """Persist the most recent profiler failure detail for the active capture."""
+    _PROFILE_FAILURE_DETAILS[profiler] = _normalize_failure_detail(detail)
+
+
+def _get_profile_failure_detail(profiler: str) -> Optional[str]:
+    """Return the most recent profiler failure detail for the given profiler."""
+    return _PROFILE_FAILURE_DETAILS.get(profiler)
+
+
+def _record_profiler_error(
+    errors: Dict[str, str],
+    profiler: str,
+    detail: Optional[str],
+) -> Optional[str]:
+    """Persist a structured profiler error when detail is available."""
+    normalized = _normalize_failure_detail(detail)
+    if normalized:
+        errors[profiler] = normalized
+    else:
+        errors.pop(profiler, None)
+    return normalized
+
+
+def _read_profile_failure_detail(*paths: Path) -> Optional[str]:
+    """Read and condense profiler stdout/stderr log detail."""
+    parts: List[str] = []
+    for path in paths:
+        text = _normalize_failure_detail(_read_profile_log_text(path))
+        if text and text not in parts:
+            parts.append(text)
+    if not parts:
+        return None
+    return " | ".join(parts)
+
+
+def _collect_required_profiler_failure_details(
+    result_entry: Dict[str, Any],
+    best_opt: Optional[Dict[str, Any]],
+    *,
+    profiling_requested: bool,
+) -> Dict[str, str]:
+    """Return structured detail for failed/skipped required profilers."""
+    if not profiling_requested:
+        return {}
+
+    details: Dict[str, str] = {}
+    baseline_statuses = result_entry.get("baseline_profiler_statuses") or {}
+    baseline_errors = result_entry.get("baseline_profiler_errors") or {}
+    for profiler, status in sorted(baseline_statuses.items()):
+        if status == "succeeded":
+            continue
+        detail = _normalize_failure_detail(baseline_errors.get(profiler))
+        if detail:
+            details[f"baseline:{profiler}"] = detail
+
+    if best_opt and isinstance(best_opt, dict):
+        optimized_statuses = best_opt.get("optimized_profiler_statuses") or {}
+        optimized_errors = best_opt.get("optimized_profiler_errors") or {}
+        for profiler, status in sorted(optimized_statuses.items()):
+            if status == "succeeded":
+                continue
+            detail = _normalize_failure_detail(optimized_errors.get(profiler))
+            if detail:
+                details[f"optimized:{profiler}"] = detail
+
+    return details
+
+
 def _collect_required_profiler_failures(
     result_entry: Dict[str, Any],
     best_opt: Optional[Dict[str, Any]],
@@ -273,9 +362,119 @@ def _collect_required_profiler_failures(
     return failures
 
 
-def _format_required_profiler_failure(failures: List[str]) -> str:
+def _format_required_profiler_failure(
+    failures: List[str],
+    failure_details: Optional[Dict[str, str]] = None,
+) -> str:
     detail = ", ".join(failures)
-    return f"Required profilers did not succeed: {detail}"
+    if not failure_details:
+        return f"Required profilers did not succeed: {detail}"
+
+    detail_parts: List[str] = []
+    for failure in failures:
+        failure_key = ":".join(str(failure).split(":", 2)[:2])
+        failure_detail = _normalize_failure_detail(failure_details.get(failure_key))
+        if failure_detail:
+            detail_parts.append(f"{failure_key}: {failure_detail}")
+    if not detail_parts:
+        return f"Required profilers did not succeed: {detail}"
+    return f"Required profilers did not succeed: {detail}. Details: {'; '.join(detail_parts)}"
+
+
+def _classify_failure_message(message: Optional[str]) -> Optional[str]:
+    """Classify a benchmark failure without changing the public status schema."""
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return None
+    if "environment invalid:" in normalized:
+        return "environment_invalid"
+    if "setup pre-computation detected:" in normalized:
+        return "setup_precomputation"
+    if "required profilers did not succeed:" in normalized:
+        return "profiler_failed"
+    if "no report artifact was produced" in normalized:
+        return "profiler_missing_artifact"
+    if "no optimizations passed verification" in normalized:
+        return "verification_failed"
+    return "runtime_error"
+
+
+def _attach_failure_metadata(result_entry: Dict[str, Any]) -> None:
+    """Promote precise child failure detail into the parent benchmark result."""
+    for field in (
+        "optimized_profiler_statuses",
+        "optimized_profiler_errors",
+        "optimized_profiler_metrics",
+    ):
+        if result_entry.get(field):
+            continue
+        for opt in result_entry.get("optimizations") or []:
+            value = opt.get(field)
+            if not value:
+                continue
+            result_entry[field] = dict(value) if isinstance(value, dict) else value
+            break
+
+    status = str(result_entry.get("status") or "")
+    if not status.startswith("failed"):
+        return
+
+    failure_details: List[Dict[str, Any]] = []
+    top_error = _normalize_failure_detail(result_entry.get("error"))
+    if top_error and top_error != _GENERIC_BENCHMARK_FAILURE_ERROR:
+        failure_details.append(
+            {
+                "scope": "benchmark",
+                "status": status,
+                "error": top_error,
+            }
+        )
+
+    child_failures: List[tuple[str, str]] = []
+    for opt in result_entry.get("optimizations") or []:
+        opt_status = str(opt.get("status") or "")
+        if not opt_status.startswith("failed"):
+            continue
+        child_error = _normalize_failure_detail(
+            opt.get("error") or opt.get("failure_reason") or opt.get("reason")
+        )
+        if not child_error:
+            continue
+        technique = str(opt.get("technique") or opt.get("file") or "optimized")
+        child_failures.append((technique, child_error))
+        failure_details.append(
+            {
+                "scope": "optimization",
+                "technique": technique,
+                "status": opt_status,
+                "error": child_error,
+            }
+        )
+
+    if (not top_error or top_error == _GENERIC_BENCHMARK_FAILURE_ERROR) and child_failures:
+        if len(child_failures) == 1:
+            result_entry["error"] = child_failures[0][1]
+        else:
+            rendered = [f"{technique}: {error}" for technique, error in child_failures]
+            result_entry["error"] = "; ".join(rendered[:3])
+            if len(rendered) > 3:
+                result_entry["error"] += f"; +{len(rendered) - 3} more"
+
+    final_error = _normalize_failure_detail(result_entry.get("error"))
+    if final_error:
+        result_entry["failure_class"] = _classify_failure_message(final_error)
+    if failure_details:
+        result_entry["failure_details"] = failure_details
+
+
+def _append_benchmark_result(
+    benchmark_results: List[Dict[str, Any]],
+    result_entry: Dict[str, Any],
+) -> None:
+    """Attach normalized failure metadata before persisting a benchmark row."""
+    _attach_failure_metadata(result_entry)
+    benchmark_results.append(result_entry)
+
 
 
 PROGRESS_TOTAL_PHASES = max(PROGRESS_PHASES.values())
@@ -2213,6 +2412,7 @@ def _retry_nsys_in_clean_helper(
     wait_mode: str,
     env: Dict[str, str],
 ) -> Optional[Path]:
+    _set_profile_failure_detail("nsys", None)
     payload = {
         "output_dir": str(output_dir),
         "output_name": output_name,
@@ -2257,16 +2457,37 @@ def _retry_nsys_in_clean_helper(
                 (proc.stderr or "").strip()[-400:],
             )
         if not result_path.exists():
+            helper_detail = _normalize_failure_detail(
+                " | ".join(
+                    part
+                    for part in ((proc.stderr or "").strip(), (proc.stdout or "").strip())
+                    if part and str(part).strip()
+                )
+            )
+            _set_profile_failure_detail("nsys", helper_detail)
             return None
         result_payload = json.loads(result_path.read_text(encoding="utf-8"))
         report = result_payload.get("report")
+        failure_detail = _normalize_failure_detail(result_payload.get("last_error"))
+        if not failure_detail:
+            failure_detail = _normalize_failure_detail(
+                " | ".join(
+                    part
+                    for part in ((proc.stderr or "").strip(), (proc.stdout or "").strip())
+                    if part and str(part).strip()
+                )
+            )
         if not report:
+            _set_profile_failure_detail("nsys", failure_detail)
             return None
         report_path = Path(report)
         if report_path.exists():
+            _set_profile_failure_detail("nsys", None)
             return report_path
+        _set_profile_failure_detail("nsys", failure_detail)
         return None
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        _set_profile_failure_detail("nsys", str(exc))
         if LOGGER_AVAILABLE:
             logger.warning("  Clean helper NSYS retry failed: %s", exc, exc_info=True)
         return None
@@ -2620,6 +2841,7 @@ def profile_python_benchmark(
     """
     if not check_nsys_available():
         return None
+    _set_profile_failure_detail("nsys", None)
 
     output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2750,9 +2972,12 @@ def profile_python_benchmark(
                         env=env,
                     )
             if nsys_report and Path(nsys_report).exists():
+                _set_profile_failure_detail("nsys", None)
                 return Path(nsys_report)
+            _set_profile_failure_detail("nsys", getattr(automation, "last_error", None))
             return None
     except Exception as exc:
+        _set_profile_failure_detail("nsys", str(exc))
         if LOGGER_AVAILABLE:
             logger.warning(
                 "  Nsight Systems profiling failed for %s (%s): %s",
@@ -2795,6 +3020,7 @@ def profile_cuda_executable(
     """
     if not check_nsys_available():
         return None
+    _set_profile_failure_detail("nsys", None)
 
     output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2830,9 +3056,12 @@ def profile_cuda_executable(
             sanitize_python_startup=True,
         )
         if nsys_report and Path(nsys_report).exists():
+            _set_profile_failure_detail("nsys", None)
             return Path(nsys_report)
+        _set_profile_failure_detail("nsys", getattr(automation, "last_error", None))
         return None
-    except (subprocess.TimeoutExpired, Exception):
+    except (subprocess.TimeoutExpired, Exception) as exc:
+        _set_profile_failure_detail("nsys", str(exc))
         return None
 
 
@@ -3325,6 +3554,7 @@ def profile_python_benchmark_ncu(
     """
     if not check_ncu_available():
         return None
+    _set_profile_failure_detail("ncu", None)
 
     output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3485,16 +3715,24 @@ def profile_python_benchmark_ncu(
                 )
                 if run_result.failure_warning:
                     _append_profile_warning(run_result.stderr_log, run_result.failure_warning)
+                    _set_profile_failure_detail(
+                        "ncu",
+                        _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log)
+                        or run_result.failure_warning,
+                    )
                     return None
 
                 # Check if file exists (ncu may create file even with non-zero exit code)
                 if not run_result.timed_out:
                     if ncu_output.exists():
+                        _set_profile_failure_detail("ncu", None)
                         return ncu_output
                     alt_path = output_dir / f"{benchmark_name}__{variant}.ncu-rep"
                     if alt_path.exists():
+                        _set_profile_failure_detail("ncu", None)
                         return alt_path
                     for ncu_file in output_dir.glob(f"{benchmark_name}__{variant}*.ncu-rep"):
+                        _set_profile_failure_detail("ncu", None)
                         return ncu_file
                     if (
                         run_result.process.returncode not in (0, None)
@@ -3516,9 +3754,14 @@ def profile_python_benchmark_ncu(
                         run_result.stderr_log,
                         f"NCU profiling timed out after {ncu_timeout_seconds}s for {benchmark_name} ({variant}).",
                     )
+                _set_profile_failure_detail(
+                    "ncu",
+                    _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log),
+                )
                 return None
         return None
     except (subprocess.SubprocessError, OSError) as exc:
+        _set_profile_failure_detail("ncu", str(exc))
         if LOGGER_AVAILABLE:
             logger.warning(
                 "  Failed to launch NCU profiling for %s (%s): %s",
@@ -3571,6 +3814,7 @@ def profile_cuda_executable_ncu(
     """
     if not check_ncu_available():
         return None
+    _set_profile_failure_detail("ncu", None)
 
     output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3634,16 +3878,24 @@ def profile_cuda_executable_ncu(
             )
             if run_result.failure_warning:
                 _append_profile_warning(run_result.stderr_log, run_result.failure_warning)
+                _set_profile_failure_detail(
+                    "ncu",
+                    _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log)
+                    or run_result.failure_warning,
+                )
                 return None
 
             # Check if file exists (ncu may create file even with non-zero exit code)
             if not run_result.timed_out:
                 if ncu_output.exists():
+                    _set_profile_failure_detail("ncu", None)
                     return ncu_output
                 alt_path = output_dir / f"{exec_name}__{variant}.ncu-rep"
                 if alt_path.exists():
+                    _set_profile_failure_detail("ncu", None)
                     return alt_path
                 for ncu_file in output_dir.glob(f"{exec_name}__{variant}*.ncu-rep"):
+                    _set_profile_failure_detail("ncu", None)
                     return ncu_file
                 if (
                     run_result.process.returncode not in (0, None)
@@ -3665,9 +3917,14 @@ def profile_cuda_executable_ncu(
                     run_result.stderr_log,
                     f"NCU profiling timed out after {ncu_timeout_seconds}s for executable {exec_name} ({variant}).",
                 )
+            _set_profile_failure_detail(
+                "ncu",
+                _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log),
+            )
             return None
         return None
     except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        _set_profile_failure_detail("ncu", str(exc))
         if LOGGER_AVAILABLE:
             logger.warning(
                 "  Failed to launch NCU profiling for executable %s (%s): %s",
@@ -3701,6 +3958,7 @@ def profile_python_benchmark_torch(
     """
     if not TORCH_PROFILER_AVAILABLE:
         return None
+    _set_profile_failure_detail("torch", None)
 
     output_dir = _resolve_profile_output_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3785,14 +4043,27 @@ def profile_python_benchmark_torch(
     if run_result.timed_out:
         with run_result.stderr_log.open("a") as handle:
             handle.write(f"\ntorch profiler timed out after {profile_timeout_seconds}s\n")
+        _set_profile_failure_detail(
+            "torch",
+            _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log),
+        )
         return None
     if run_result.failure_warning:
         _append_profile_warning(run_result.stderr_log, run_result.failure_warning)
+        _set_profile_failure_detail(
+            "torch",
+            _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log)
+            or run_result.failure_warning,
+        )
         return None
     if run_result.process.returncode != 0:
         _append_profile_warning(
             run_result.stderr_log,
             f"Torch profiler exited with code {run_result.process.returncode} for {benchmark_name} ({variant}). See {run_result.stderr_log} for details.",
+        )
+        _set_profile_failure_detail(
+            "torch",
+            _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log),
         )
         return None
     if not torch_output.exists():
@@ -3800,7 +4071,12 @@ def profile_python_benchmark_torch(
             run_result.stderr_log,
             f"Torch profiler completed without producing expected trace {torch_output} for {benchmark_name} ({variant}).",
         )
+        _set_profile_failure_detail(
+            "torch",
+            _read_profile_failure_detail(run_result.stdout_log, run_result.stderr_log),
+        )
         return None
+    _set_profile_failure_detail("torch", None)
     return torch_output
 
 
@@ -4818,7 +5094,7 @@ def _test_chapter_impl(
                 result_entry['status'] = 'skipped'
                 result_entry['error'] = skip_reason
                 result_entry['skip_reason'] = skip_reason
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 skipped_distributed += 1  # Count as skipped, not successful
                 emit_event(
                     event_logger,
@@ -4844,7 +5120,7 @@ def _test_chapter_impl(
                     result_entry['status'] = 'skipped'
                     result_entry['error'] = f'HARDWARE/SOFTWARE LIMITATION: {skip_reason}'
                     result_entry['skip_reason'] = skip_reason
-                    benchmark_results.append(result_entry)
+                    _append_benchmark_result(benchmark_results, result_entry)
                     skipped_hw += 1
                     emit_event(
                         event_logger,
@@ -4861,7 +5137,7 @@ def _test_chapter_impl(
                     if detail:
                         msg = f"{msg}: {detail}"
                     result_entry['error'] = msg
-                    benchmark_results.append(result_entry)
+                    _append_benchmark_result(benchmark_results, result_entry)
                     failed_error += 1
                     emit_event(
                         event_logger,
@@ -4930,7 +5206,7 @@ def _test_chapter_impl(
                         result_entry["status"] = "skipped"
                         result_entry["error"] = f"SKIPPED: {skip_reason}"
                         result_entry["skip_reason"] = skip_reason
-                        benchmark_results.append(result_entry)
+                        _append_benchmark_result(benchmark_results, result_entry)
                         skipped_hw += 1
                         emit_event(
                             event_logger,
@@ -4958,7 +5234,7 @@ def _test_chapter_impl(
                         logger.error(f"    Baseline FAILED: {error_message}")
                         result_entry["status"] = "failed_error"
                         result_entry["error"] = error_message
-                        benchmark_results.append(result_entry)
+                        _append_benchmark_result(benchmark_results, result_entry)
                         failed_error += 1
                         maybe_reset_gpu_for_error(error_message, f"{chapter_name}:{example_name}:baseline")
                         emit_event(
@@ -5108,7 +5384,7 @@ def _test_chapter_impl(
                     if not VERIFICATION_AVAILABLE:
                         result_entry["status"] = "failed_verification"
                         result_entry["error"] = "Verification system unavailable; cannot validate benchmark correctness"
-                        benchmark_results.append(result_entry)
+                        _append_benchmark_result(benchmark_results, result_entry)
                         failed_error += 1
                         emit_event(
                             event_logger,
@@ -5133,7 +5409,7 @@ def _test_chapter_impl(
                         logger.error("    ✗ BASELINE VERIFICATION SETUP FAILED: %s", exc)
                         result_entry["status"] = "failed_verification"
                         result_entry["error"] = f"Baseline verification artifacts missing: {exc}"
-                        benchmark_results.append(result_entry)
+                        _append_benchmark_result(benchmark_results, result_entry)
                         failed_error += 1
                         emit_event(
                             event_logger,
@@ -5167,6 +5443,7 @@ def _test_chapter_impl(
                     logger.info(f"    Profiling baseline...")
                     profiler_results = []
                     baseline_profiler_statuses: Dict[str, str] = {}
+                    baseline_profiler_errors: Dict[str, str] = {}
                     baseline_metrics = {}
                     
                     # nsys profiling
@@ -5197,6 +5474,7 @@ def _test_chapter_impl(
                             variant="baseline",
                             output_stem=example_profile_stem,
                         )
+                        nsys_error = _get_profile_failure_detail("nsys")
                         if nsys_path:
                             result_entry['baseline_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                             profiler_results.append("nsys✓")
@@ -5222,6 +5500,11 @@ def _test_chapter_impl(
                         else:
                             profiler_results.append("nsys✗")
                             _set_profiler_status(baseline_profiler_statuses, "nsys", "failed")
+                            nsys_error = _record_profiler_error(
+                                baseline_profiler_errors,
+                                "nsys",
+                                nsys_error,
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -5234,10 +5517,16 @@ def _test_chapter_impl(
                                 status="failed",
                                 output_path=None,
                                 metrics=None,
+                                error=nsys_error,
                             )
                     else:
                         profiler_results.append("nsys-")
                         _set_profiler_status(baseline_profiler_statuses, "nsys", "skipped")
+                        nsys_error = _record_profiler_error(
+                            baseline_profiler_errors,
+                            "nsys",
+                            "Nsight Systems unavailable on current host.",
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -5250,6 +5539,7 @@ def _test_chapter_impl(
                             status="skipped",
                             output_path=None,
                             metrics=None,
+                            error=nsys_error,
                         )
                     
                     # ncu profiling
@@ -5280,6 +5570,7 @@ def _test_chapter_impl(
                             variant="baseline",
                             output_stem=example_profile_stem,
                         )
+                        ncu_error = _get_profile_failure_detail("ncu")
                         if ncu_path:
                             result_entry['baseline_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                             profiler_results.append("ncu✓")
@@ -5305,6 +5596,11 @@ def _test_chapter_impl(
                         else:
                             profiler_results.append("ncu✗")
                             _set_profiler_status(baseline_profiler_statuses, "ncu", "failed")
+                            ncu_error = _record_profiler_error(
+                                baseline_profiler_errors,
+                                "ncu",
+                                ncu_error,
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -5317,10 +5613,16 @@ def _test_chapter_impl(
                                 status="failed",
                                 output_path=None,
                                 metrics=None,
+                                error=ncu_error,
                             )
                     else:
                         profiler_results.append("ncu-")
                         _set_profiler_status(baseline_profiler_statuses, "ncu", "skipped")
+                        ncu_error = _record_profiler_error(
+                            baseline_profiler_errors,
+                            "ncu",
+                            "Nsight Compute unavailable on current host.",
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -5333,6 +5635,7 @@ def _test_chapter_impl(
                             status="skipped",
                             output_path=None,
                             metrics=None,
+                            error=ncu_error,
                         )
                     
                     # PyTorch profiler
@@ -5362,6 +5665,7 @@ def _test_chapter_impl(
                             variant="baseline",
                             output_stem=example_profile_stem,
                         )
+                        torch_error = _get_profile_failure_detail("torch")
                         if torch_path:
                             result_entry['baseline_torch_trace'] = _repo_relative_path(torch_path, repo_root)
                             profiler_results.append("torch✓")
@@ -5387,6 +5691,11 @@ def _test_chapter_impl(
                         else:
                             profiler_results.append("torch✗")
                             _set_profiler_status(baseline_profiler_statuses, "torch", "failed")
+                            torch_error = _record_profiler_error(
+                                baseline_profiler_errors,
+                                "torch",
+                                torch_error,
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -5399,10 +5708,16 @@ def _test_chapter_impl(
                                 status="failed",
                                 output_path=None,
                                 metrics=None,
+                                error=torch_error,
                             )
                     else:
                         profiler_results.append("torch-")
                         _set_profiler_status(baseline_profiler_statuses, "torch", "skipped")
+                        torch_error = _record_profiler_error(
+                            baseline_profiler_errors,
+                            "torch",
+                            "PyTorch profiler unavailable on current host.",
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -5415,10 +5730,13 @@ def _test_chapter_impl(
                             status="skipped",
                             output_path=None,
                             metrics=None,
+                            error=torch_error,
                         )
                     
                     logger.info(f" ({', '.join(profiler_results)})")
                     result_entry["baseline_profiler_statuses"] = dict(baseline_profiler_statuses)
+                    if baseline_profiler_errors:
+                        result_entry["baseline_profiler_errors"] = dict(baseline_profiler_errors)
                     _reap_benchmark_process_leftovers(
                         f"{chapter_name}:{example_name}:baseline_profiling",
                         current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
@@ -5502,7 +5820,7 @@ def _test_chapter_impl(
                             error=result_entry['error'],
                         )
                 
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 _reset_parent_execution_state()  # Reset after failure
                 mark_progress(example_name)
                 continue
@@ -6012,6 +6330,7 @@ def _test_chapter_impl(
                         logger.info(f"\n    Profiling optimized...")
                         profiler_results = []
                         optimized_profiler_statuses: Dict[str, str] = {}
+                        optimized_profiler_errors: Dict[str, str] = {}
                         optimized_metrics = {}
                         
                         # nsys profiling
@@ -6043,6 +6362,7 @@ def _test_chapter_impl(
                                 variant="optimized",
                                 output_stem=example_profile_stem,
                             )
+                            nsys_error = _get_profile_failure_detail("nsys")
                             if nsys_path:
                                 opt_result['optimized_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                                 profiler_results.append("nsys✓")
@@ -6068,6 +6388,11 @@ def _test_chapter_impl(
                             else:
                                 profiler_results.append("nsys✗")
                                 _set_profiler_status(optimized_profiler_statuses, "nsys", "failed")
+                                nsys_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "nsys",
+                                    nsys_error,
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -6081,10 +6406,16 @@ def _test_chapter_impl(
                                     status="failed",
                                     output_path=None,
                                     metrics=None,
+                                    error=nsys_error,
                                 )
                         else:
                             profiler_results.append("nsys-")
                             _set_profiler_status(optimized_profiler_statuses, "nsys", "skipped")
+                            nsys_error = _record_profiler_error(
+                                optimized_profiler_errors,
+                                "nsys",
+                                "Nsight Systems unavailable on current host.",
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -6098,6 +6429,7 @@ def _test_chapter_impl(
                                 status="skipped",
                                 output_path=None,
                                 metrics=None,
+                                error=nsys_error,
                             )
                         
                         # ncu profiling
@@ -6129,6 +6461,7 @@ def _test_chapter_impl(
                                 variant="optimized",
                                 output_stem=example_profile_stem,
                             )
+                            ncu_error = _get_profile_failure_detail("ncu")
                             if ncu_path:
                                 opt_result['optimized_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                                 profiler_results.append("ncu✓")
@@ -6154,6 +6487,11 @@ def _test_chapter_impl(
                             else:
                                 profiler_results.append("ncu✗")
                                 _set_profiler_status(optimized_profiler_statuses, "ncu", "failed")
+                                ncu_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "ncu",
+                                    ncu_error,
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -6167,10 +6505,16 @@ def _test_chapter_impl(
                                     status="failed",
                                     output_path=None,
                                     metrics=None,
+                                    error=ncu_error,
                                 )
                         else:
                             profiler_results.append("ncu-")
                             _set_profiler_status(optimized_profiler_statuses, "ncu", "skipped")
+                            ncu_error = _record_profiler_error(
+                                optimized_profiler_errors,
+                                "ncu",
+                                "Nsight Compute unavailable on current host.",
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -6184,6 +6528,7 @@ def _test_chapter_impl(
                                 status="skipped",
                                 output_path=None,
                                 metrics=None,
+                                error=ncu_error,
                             )
                         
                         # PyTorch profiler
@@ -6214,6 +6559,7 @@ def _test_chapter_impl(
                                 variant="optimized",
                                 output_stem=example_profile_stem,
                             )
+                            torch_error = _get_profile_failure_detail("torch")
                             if torch_path:
                                 opt_result['optimized_torch_trace'] = _repo_relative_path(torch_path, repo_root)
                                 profiler_results.append("torch✓")
@@ -6239,6 +6585,11 @@ def _test_chapter_impl(
                             else:
                                 profiler_results.append("torch✗")
                                 _set_profiler_status(optimized_profiler_statuses, "torch", "failed")
+                                torch_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "torch",
+                                    torch_error,
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -6252,10 +6603,16 @@ def _test_chapter_impl(
                                     status="failed",
                                     output_path=None,
                                     metrics=None,
+                                    error=torch_error,
                                 )
                         else:
                             profiler_results.append("torch-")
                             _set_profiler_status(optimized_profiler_statuses, "torch", "skipped")
+                            torch_error = _record_profiler_error(
+                                optimized_profiler_errors,
+                                "torch",
+                                "PyTorch profiler unavailable on current host.",
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -6269,10 +6626,13 @@ def _test_chapter_impl(
                                 status="skipped",
                                 output_path=None,
                                 metrics=None,
+                                error=torch_error,
                             )
                         
                         logger.info(f" ({', '.join(profiler_results)})")
                         opt_result["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
+                        if optimized_profiler_errors:
+                            opt_result["optimized_profiler_errors"] = dict(optimized_profiler_errors)
                         _reap_benchmark_process_leftovers(
                             f"{chapter_name}:{example_name}:{technique}:optimized_profiling",
                             current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
@@ -6431,7 +6791,7 @@ def _test_chapter_impl(
                     _reset_parent_execution_state()  # Reset after failure
             
             if result_entry['status'] == 'skipped':
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 continue
     
             baseline_ok = result_entry.get('baseline_time_ms') is not None
@@ -6471,6 +6831,7 @@ def _test_chapter_impl(
                             logger.info(f"\n    Profiling optimized (best only: {best_key})...")
                             profiler_results = []
                             optimized_profiler_statuses: Dict[str, str] = {}
+                            optimized_profiler_errors: Dict[str, str] = {}
                             optimized_metrics = {}
 
                             optimized_benchmark = cand.get("benchmark")
@@ -6506,6 +6867,7 @@ def _test_chapter_impl(
                                     variant="optimized",
                                     output_stem=example_profile_stem,
                                 )
+                                nsys_error = _get_profile_failure_detail("nsys")
                                 if nsys_path:
                                     best_opt["optimized_nsys_rep"] = _repo_relative_path(nsys_path, repo_root)
                                     profiler_results.append("nsys✓")
@@ -6530,6 +6892,11 @@ def _test_chapter_impl(
                                 else:
                                     profiler_results.append("nsys✗")
                                     _set_profiler_status(optimized_profiler_statuses, "nsys", "failed")
+                                    nsys_error = _record_profiler_error(
+                                        optimized_profiler_errors,
+                                        "nsys",
+                                        nsys_error,
+                                    )
                                     emit_event(
                                         event_logger,
                                         logger,
@@ -6543,10 +6910,16 @@ def _test_chapter_impl(
                                         status="failed",
                                         output_path=None,
                                         metrics=None,
+                                        error=nsys_error,
                                     )
                             else:
                                 profiler_results.append("nsys-")
                                 _set_profiler_status(optimized_profiler_statuses, "nsys", "skipped")
+                                nsys_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "nsys",
+                                    "Nsight Systems unavailable on current host.",
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -6560,6 +6933,7 @@ def _test_chapter_impl(
                                     status="skipped",
                                     output_path=None,
                                     metrics=None,
+                                    error=nsys_error,
                                 )
 
                             # ncu profiling
@@ -6591,6 +6965,7 @@ def _test_chapter_impl(
                                     variant="optimized",
                                     output_stem=example_profile_stem,
                                 )
+                                ncu_error = _get_profile_failure_detail("ncu")
                                 if ncu_path:
                                     best_opt["optimized_ncu_rep"] = _repo_relative_path(ncu_path, repo_root)
                                     profiler_results.append("ncu✓")
@@ -6615,6 +6990,11 @@ def _test_chapter_impl(
                                 else:
                                     profiler_results.append("ncu✗")
                                     _set_profiler_status(optimized_profiler_statuses, "ncu", "failed")
+                                    ncu_error = _record_profiler_error(
+                                        optimized_profiler_errors,
+                                        "ncu",
+                                        ncu_error,
+                                    )
                                     emit_event(
                                         event_logger,
                                         logger,
@@ -6628,10 +7008,16 @@ def _test_chapter_impl(
                                         status="failed",
                                         output_path=None,
                                         metrics=None,
+                                        error=ncu_error,
                                     )
                             else:
                                 profiler_results.append("ncu-")
                                 _set_profiler_status(optimized_profiler_statuses, "ncu", "skipped")
+                                ncu_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "ncu",
+                                    "Nsight Compute unavailable on current host.",
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -6645,6 +7031,7 @@ def _test_chapter_impl(
                                     status="skipped",
                                     output_path=None,
                                     metrics=None,
+                                    error=ncu_error,
                                 )
 
                             # PyTorch profiler
@@ -6675,6 +7062,7 @@ def _test_chapter_impl(
                                     variant="optimized",
                                     output_stem=example_profile_stem,
                                 )
+                                torch_error = _get_profile_failure_detail("torch")
                                 if torch_path:
                                     best_opt["optimized_torch_trace"] = _repo_relative_path(torch_path, repo_root)
                                     profiler_results.append("torch✓")
@@ -6699,6 +7087,11 @@ def _test_chapter_impl(
                                 else:
                                     profiler_results.append("torch✗")
                                     _set_profiler_status(optimized_profiler_statuses, "torch", "failed")
+                                    torch_error = _record_profiler_error(
+                                        optimized_profiler_errors,
+                                        "torch",
+                                        torch_error,
+                                    )
                                     emit_event(
                                         event_logger,
                                         logger,
@@ -6712,10 +7105,16 @@ def _test_chapter_impl(
                                         status="failed",
                                         output_path=None,
                                         metrics=None,
+                                        error=torch_error,
                                     )
                             else:
                                 profiler_results.append("torch-")
                                 _set_profiler_status(optimized_profiler_statuses, "torch", "skipped")
+                                torch_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "torch",
+                                    "PyTorch profiler unavailable on current host.",
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -6729,10 +7128,13 @@ def _test_chapter_impl(
                                     status="skipped",
                                     output_path=None,
                                     metrics=None,
+                                    error=torch_error,
                                 )
 
                             logger.info(f" ({', '.join(profiler_results)})")
                             best_opt["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
+                            if optimized_profiler_errors:
+                                best_opt["optimized_profiler_errors"] = dict(optimized_profiler_errors)
                             _reap_benchmark_process_leftovers(
                                 f"{chapter_name}:{example_name}:{best_key}:optimized_profiling",
                                 current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
@@ -6874,9 +7276,17 @@ def _test_chapter_impl(
                     best_opt,
                     profiling_requested=bool(enable_profiling and profiling_output_dir),
                 )
+                profiler_failure_details = _collect_required_profiler_failure_details(
+                    result_entry,
+                    best_opt,
+                    profiling_requested=bool(enable_profiling and profiling_output_dir),
+                )
                 if profiler_failures:
                     result_entry["status"] = "failed_profiler"
-                    result_entry["error"] = _format_required_profiler_failure(profiler_failures)
+                    result_entry["error"] = _format_required_profiler_failure(
+                        profiler_failures,
+                        failure_details=profiler_failure_details,
+                    )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
                 elif is_rejected_regression:
@@ -6905,9 +7315,17 @@ def _test_chapter_impl(
                     None,
                     profiling_requested=bool(enable_profiling and profiling_output_dir),
                 )
+                profiler_failure_details = _collect_required_profiler_failure_details(
+                    result_entry,
+                    None,
+                    profiling_requested=bool(enable_profiling and profiling_output_dir),
+                )
                 if profiler_failures:
                     result_entry["status"] = "failed_profiler"
-                    result_entry["error"] = _format_required_profiler_failure(profiler_failures)
+                    result_entry["error"] = _format_required_profiler_failure(
+                        profiler_failures,
+                        failure_details=profiler_failure_details,
+                    )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
                 else:
@@ -6920,7 +7338,7 @@ def _test_chapter_impl(
             else:
                 result_entry['status'] = 'failed_error'
                 if not result_entry.get('error'):
-                    result_entry['error'] = 'Baseline or optimization failed'
+                    result_entry['error'] = _GENERIC_BENCHMARK_FAILURE_ERROR
                 failed_error += 1
             
             emit_event(
@@ -6936,7 +7354,7 @@ def _test_chapter_impl(
                 optimization_goal=result_entry.get("optimization_goal"),
                 error=result_entry.get("error"),
             )
-            benchmark_results.append(result_entry)
+            _append_benchmark_result(benchmark_results, result_entry)
             mark_progress(example_name)
             
             # Reset CUDA state after each benchmark pair (always, to ensure clean state)
@@ -7003,7 +7421,7 @@ def _test_chapter_impl(
                 result_entry['status'] = 'skipped'
                 result_entry['error'] = reason
                 result_entry['skip_reason'] = reason
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 skipped_hw += 1
                 emit_event(
                     event_logger,
@@ -7058,7 +7476,7 @@ def _test_chapter_impl(
             )
             if baseline_result is None:
                 result_entry['error'] = f'Baseline execution failed or timed out ({cuda_timeout}s timeout)'
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 failed_error += 1
                 emit_event(
                     event_logger,
@@ -7082,7 +7500,7 @@ def _test_chapter_impl(
                 result_entry['status'] = 'skipped'
                 result_entry['error'] = reason
                 result_entry['skip_reason'] = reason
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 skipped_hw += 1
                 emit_event(
                     event_logger,
@@ -7187,6 +7605,7 @@ def _test_chapter_impl(
                 logger.info(f"    Profiling baseline...")
                 profiler_results = []
                 baseline_profiler_statuses: Dict[str, str] = {}
+                baseline_profiler_errors: Dict[str, str] = {}
                 baseline_metrics = {}
 
                 # nsys profiling
@@ -7218,6 +7637,7 @@ def _test_chapter_impl(
                         output_stem=example_profile_stem,
                         timeout_seconds=baseline_config.get_effective_timeout("nsys"),
                     )
+                    nsys_error = _get_profile_failure_detail("nsys")
                     if nsys_path:
                         result_entry['baseline_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                         profiler_results.append("nsys✓")
@@ -7243,6 +7663,11 @@ def _test_chapter_impl(
                     else:
                         profiler_results.append("nsys✗")
                         _set_profiler_status(baseline_profiler_statuses, "nsys", "failed")
+                        nsys_error = _record_profiler_error(
+                            baseline_profiler_errors,
+                            "nsys",
+                            nsys_error,
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -7255,10 +7680,16 @@ def _test_chapter_impl(
                             status="failed",
                             output_path=None,
                             metrics=None,
+                            error=nsys_error,
                         )
                 else:
                     profiler_results.append("nsys-")
                     _set_profiler_status(baseline_profiler_statuses, "nsys", "skipped")
+                    nsys_error = _record_profiler_error(
+                        baseline_profiler_errors,
+                        "nsys",
+                        "Nsight Systems unavailable on current host.",
+                    )
                     emit_event(
                         event_logger,
                         logger,
@@ -7271,6 +7702,7 @@ def _test_chapter_impl(
                         status="skipped",
                         output_path=None,
                         metrics=None,
+                        error=nsys_error,
                     )
 
                 # ncu profiling
@@ -7301,6 +7733,7 @@ def _test_chapter_impl(
                         variant="baseline",
                         output_stem=example_profile_stem,
                     )
+                    ncu_error = _get_profile_failure_detail("ncu")
                     if ncu_path:
                         result_entry['baseline_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                         profiler_results.append("ncu✓")
@@ -7326,6 +7759,11 @@ def _test_chapter_impl(
                     else:
                         profiler_results.append("ncu✗")
                         _set_profiler_status(baseline_profiler_statuses, "ncu", "failed")
+                        ncu_error = _record_profiler_error(
+                            baseline_profiler_errors,
+                            "ncu",
+                            ncu_error,
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -7338,10 +7776,16 @@ def _test_chapter_impl(
                             status="failed",
                             output_path=None,
                             metrics=None,
+                            error=ncu_error,
                         )
                 else:
                     profiler_results.append("ncu-")
                     _set_profiler_status(baseline_profiler_statuses, "ncu", "skipped")
+                    ncu_error = _record_profiler_error(
+                        baseline_profiler_errors,
+                        "ncu",
+                        "Nsight Compute unavailable on current host.",
+                    )
                     emit_event(
                         event_logger,
                         logger,
@@ -7354,10 +7798,13 @@ def _test_chapter_impl(
                         status="skipped",
                         output_path=None,
                         metrics=None,
+                        error=ncu_error,
                     )
 
                 logger.info(f" ({', '.join(profiler_results)})")
                 result_entry["baseline_profiler_statuses"] = dict(baseline_profiler_statuses)
+                if baseline_profiler_errors:
+                    result_entry["baseline_profiler_errors"] = dict(baseline_profiler_errors)
                 _reap_benchmark_process_leftovers(
                     f"{chapter_name}:{example_name}:cuda_baseline_profiling",
                     current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
@@ -7665,6 +8112,7 @@ def _test_chapter_impl(
                     logger.info(f"\n    Profiling optimized...")
                     profiler_results = []
                     optimized_profiler_statuses: Dict[str, str] = {}
+                    optimized_profiler_errors: Dict[str, str] = {}
                     optimized_metrics = {}
 
                     # nsys profiling
@@ -7697,6 +8145,7 @@ def _test_chapter_impl(
                             output_stem=example_profile_stem,
                             timeout_seconds=optimized_config.get_effective_timeout("nsys"),
                         )
+                        nsys_error = _get_profile_failure_detail("nsys")
                         if nsys_path:
                             opt_result['optimized_nsys_rep'] = _repo_relative_path(nsys_path, repo_root)
                             profiler_results.append("nsys✓")
@@ -7722,6 +8171,11 @@ def _test_chapter_impl(
                         else:
                             profiler_results.append("nsys✗")
                             _set_profiler_status(optimized_profiler_statuses, "nsys", "failed")
+                            nsys_error = _record_profiler_error(
+                                optimized_profiler_errors,
+                                "nsys",
+                                nsys_error,
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -7735,10 +8189,16 @@ def _test_chapter_impl(
                                 status="failed",
                                 output_path=None,
                                 metrics=None,
+                                error=nsys_error,
                             )
                     else:
                         profiler_results.append("nsys-")
                         _set_profiler_status(optimized_profiler_statuses, "nsys", "skipped")
+                        nsys_error = _record_profiler_error(
+                            optimized_profiler_errors,
+                            "nsys",
+                            "Nsight Systems unavailable on current host.",
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -7752,6 +8212,7 @@ def _test_chapter_impl(
                             status="skipped",
                             output_path=None,
                             metrics=None,
+                            error=nsys_error,
                         )
 
                     # ncu profiling
@@ -7783,6 +8244,7 @@ def _test_chapter_impl(
                             variant="optimized",
                             output_stem=example_profile_stem,
                         )
+                        ncu_error = _get_profile_failure_detail("ncu")
                         if ncu_path:
                             opt_result['optimized_ncu_rep'] = _repo_relative_path(ncu_path, repo_root)
                             profiler_results.append("ncu✓")
@@ -7808,6 +8270,11 @@ def _test_chapter_impl(
                         else:
                             profiler_results.append("ncu✗")
                             _set_profiler_status(optimized_profiler_statuses, "ncu", "failed")
+                            ncu_error = _record_profiler_error(
+                                optimized_profiler_errors,
+                                "ncu",
+                                ncu_error,
+                            )
                             emit_event(
                                 event_logger,
                                 logger,
@@ -7821,10 +8288,16 @@ def _test_chapter_impl(
                                 status="failed",
                                 output_path=None,
                                 metrics=None,
+                                error=ncu_error,
                             )
                     else:
                         profiler_results.append("ncu-")
                         _set_profiler_status(optimized_profiler_statuses, "ncu", "skipped")
+                        ncu_error = _record_profiler_error(
+                            optimized_profiler_errors,
+                            "ncu",
+                            "Nsight Compute unavailable on current host.",
+                        )
                         emit_event(
                             event_logger,
                             logger,
@@ -7838,10 +8311,13 @@ def _test_chapter_impl(
                             status="skipped",
                             output_path=None,
                             metrics=None,
+                            error=ncu_error,
                         )
 
                     logger.info(f" ({', '.join(profiler_results)})")
                     opt_result["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
+                    if optimized_profiler_errors:
+                        opt_result["optimized_profiler_errors"] = dict(optimized_profiler_errors)
                     _reap_benchmark_process_leftovers(
                         f"{chapter_name}:{example_name}:{technique}:cuda_optimized_profiling",
                         current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
@@ -7892,7 +8368,7 @@ def _test_chapter_impl(
             if result_entry['best_speedup'] > 1.0:
                 logger.info(f"    Best speedup: {result_entry['best_speedup']:.2f}x")
             if result_entry['status'] == 'skipped':
-                benchmark_results.append(result_entry)
+                _append_benchmark_result(benchmark_results, result_entry)
                 mark_progress(example_name)
                 continue
 
@@ -7931,6 +8407,7 @@ def _test_chapter_impl(
                             logger.info(f"\n    Profiling optimized (best only: {best_key})...")
                             profiler_results = []
                             optimized_profiler_statuses: Dict[str, str] = {}
+                            optimized_profiler_errors: Dict[str, str] = {}
                             optimized_metrics = {}
 
                             optimized_executable = cand.get("executable")
@@ -7965,6 +8442,7 @@ def _test_chapter_impl(
                                     output_stem=example_profile_stem,
                                     timeout_seconds=optimized_config.get_effective_timeout("nsys") if optimized_config else None,
                                 )
+                                nsys_error = _get_profile_failure_detail("nsys")
                                 if nsys_path:
                                     best_opt["optimized_nsys_rep"] = _repo_relative_path(nsys_path, repo_root)
                                     profiler_results.append("nsys✓")
@@ -7989,6 +8467,11 @@ def _test_chapter_impl(
                                 else:
                                     profiler_results.append("nsys✗")
                                     _set_profiler_status(optimized_profiler_statuses, "nsys", "failed")
+                                    nsys_error = _record_profiler_error(
+                                        optimized_profiler_errors,
+                                        "nsys",
+                                        nsys_error,
+                                    )
                                     emit_event(
                                         event_logger,
                                         logger,
@@ -8002,10 +8485,16 @@ def _test_chapter_impl(
                                         status="failed",
                                         output_path=None,
                                         metrics=None,
+                                        error=nsys_error,
                                     )
                             else:
                                 profiler_results.append("nsys-")
                                 _set_profiler_status(optimized_profiler_statuses, "nsys", "skipped")
+                                nsys_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "nsys",
+                                    "Nsight Systems unavailable on current host.",
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -8019,6 +8508,7 @@ def _test_chapter_impl(
                                     status="skipped",
                                     output_path=None,
                                     metrics=None,
+                                    error=nsys_error,
                                 )
 
                             if check_ncu_available():
@@ -8049,6 +8539,7 @@ def _test_chapter_impl(
                                     variant="optimized",
                                     output_stem=example_profile_stem,
                                 )
+                                ncu_error = _get_profile_failure_detail("ncu")
                                 if ncu_path:
                                     best_opt["optimized_ncu_rep"] = _repo_relative_path(ncu_path, repo_root)
                                     profiler_results.append("ncu✓")
@@ -8073,6 +8564,11 @@ def _test_chapter_impl(
                                 else:
                                     profiler_results.append("ncu✗")
                                     _set_profiler_status(optimized_profiler_statuses, "ncu", "failed")
+                                    ncu_error = _record_profiler_error(
+                                        optimized_profiler_errors,
+                                        "ncu",
+                                        ncu_error,
+                                    )
                                     emit_event(
                                         event_logger,
                                         logger,
@@ -8086,10 +8582,16 @@ def _test_chapter_impl(
                                         status="failed",
                                         output_path=None,
                                         metrics=None,
+                                        error=ncu_error,
                                     )
                             else:
                                 profiler_results.append("ncu-")
                                 _set_profiler_status(optimized_profiler_statuses, "ncu", "skipped")
+                                ncu_error = _record_profiler_error(
+                                    optimized_profiler_errors,
+                                    "ncu",
+                                    "Nsight Compute unavailable on current host.",
+                                )
                                 emit_event(
                                     event_logger,
                                     logger,
@@ -8103,10 +8605,13 @@ def _test_chapter_impl(
                                     status="skipped",
                                     output_path=None,
                                     metrics=None,
+                                    error=ncu_error,
                                 )
 
                             logger.info(f" ({', '.join(profiler_results)})")
                             best_opt["optimized_profiler_statuses"] = dict(optimized_profiler_statuses)
+                            if optimized_profiler_errors:
+                                best_opt["optimized_profiler_errors"] = dict(optimized_profiler_errors)
                             _reap_benchmark_process_leftovers(
                                 f"{chapter_name}:{example_name}:{best_key}:cuda_optimized_profiling",
                                 current_run_id=os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", ""),
@@ -8240,9 +8745,17 @@ def _test_chapter_impl(
                     best_opt,
                     profiling_requested=bool(enable_profiling and profiling_output_dir),
                 )
+                profiler_failure_details = _collect_required_profiler_failure_details(
+                    result_entry,
+                    best_opt,
+                    profiling_requested=bool(enable_profiling and profiling_output_dir),
+                )
                 if profiler_failures:
                     result_entry["status"] = "failed_profiler"
-                    result_entry["error"] = _format_required_profiler_failure(profiler_failures)
+                    result_entry["error"] = _format_required_profiler_failure(
+                        profiler_failures,
+                        failure_details=profiler_failure_details,
+                    )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
                 elif is_rejected_regression:
@@ -8282,9 +8795,17 @@ def _test_chapter_impl(
                     None,
                     profiling_requested=bool(enable_profiling and profiling_output_dir),
                 )
+                profiler_failure_details = _collect_required_profiler_failure_details(
+                    result_entry,
+                    None,
+                    profiling_requested=bool(enable_profiling and profiling_output_dir),
+                )
                 if profiler_failures:
                     result_entry["status"] = "failed_profiler"
-                    result_entry["error"] = _format_required_profiler_failure(profiler_failures)
+                    result_entry["error"] = _format_required_profiler_failure(
+                        profiler_failures,
+                        failure_details=profiler_failure_details,
+                    )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
                 else:
@@ -8293,7 +8814,7 @@ def _test_chapter_impl(
             else:
                 result_entry['status'] = 'failed_error'
                 if not result_entry.get('error'):
-                    result_entry['error'] = 'Baseline or optimization failed'
+                    result_entry['error'] = _GENERIC_BENCHMARK_FAILURE_ERROR
                 failed_error += 1
 
             emit_event(
@@ -8308,7 +8829,7 @@ def _test_chapter_impl(
                 optimization_goal=result_entry.get("optimization_goal"),
                 error=result_entry.get("error"),
             )
-            benchmark_results.append(result_entry)
+            _append_benchmark_result(benchmark_results, result_entry)
             mark_progress(example_name)
 
     logger.info(f"  Recorded benchmark entries: {len(benchmark_results)}")

@@ -27,6 +27,7 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         self._matmul: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
         self._graph: Optional[torch.cuda.CUDAGraph] = None
         self._graph_stream: Optional[torch.cuda.Stream] = None
+        self._output_buffer: Optional[torch.Tensor] = None
 
     def setup(self) -> None:
         ensure_dsmem_supported(description="tcgen05 cluster pipeline")
@@ -40,20 +41,30 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         self._matmul = self.extension.matmul_tcgen05_cluster
         self._graph_stream = torch.cuda.Stream(device=self.device)
         with torch.inference_mode():
-            self.output = self._matmul(self.matrix_a, self.matrix_b)
+            _ = self._matmul(self.matrix_a, self.matrix_b)
         self._synchronize()
         self._graph = torch.cuda.CUDAGraph()
+        captured_output: Optional[torch.Tensor] = None
         with torch.cuda.stream(self._graph_stream):
             with torch.cuda.graph(self._graph, stream=self._graph_stream):
-                self.output = self._matmul(self.matrix_a, self.matrix_b)
+                captured_output = self._matmul(self.matrix_a, self.matrix_b)
         self._synchronize()
+        self._output_buffer = captured_output
+        self.output = None
 
     def benchmark_fn(self) -> None:
-        if self._matmul is None or self.matrix_a is None or self.matrix_b is None or self._graph is None:
+        if (
+            self._matmul is None
+            or self.matrix_a is None
+            or self.matrix_b is None
+            or self._graph is None
+            or self._output_buffer is None
+        ):
             raise RuntimeError("Inputs, extension, or graph not initialized")
         with self._nvtx_range(self.nvtx_label):
             with torch.inference_mode():
                 self._graph.replay()
+                self.output = self._output_buffer
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=10, warmup=5)
@@ -61,6 +72,7 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
     def teardown(self) -> None:
         self._graph = None
         self._graph_stream = None
+        self._output_buffer = None
         super().teardown()
 
     def get_custom_metrics(self) -> Optional[dict]:

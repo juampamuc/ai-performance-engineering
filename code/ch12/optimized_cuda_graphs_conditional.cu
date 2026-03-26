@@ -1,9 +1,11 @@
-// optimized_cuda_graphs_conditional.cu -- CUDA graph with static path (optimized).
+// optimized_cuda_graphs_conditional.cu -- CUDA graph replay with device-side branching.
 
 #include <cuda_runtime.h>
+
 #include <cmath>
 #include <cstdio>
 #include <vector>
+
 #include "../core/common/headers/cuda_verify.cuh"
 #include "../core/common/nvtx_utils.cuh"
 
@@ -20,94 +22,113 @@
 constexpr int N = 1 << 16;
 constexpr int KERNEL_ITERS = 1024;
 
-__global__ void expensive_kernel(float* data, int n, float scale) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        float val = data[idx];
-        #pragma unroll 4
-        for (int i = 0; i < KERNEL_ITERS; ++i) {
-            val = sqrtf(val * val + scale) * 0.99f;
-        }
-        data[idx] = val;
+__device__ __forceinline__ float expensive_path(float val, float scale) {
+    #pragma unroll 4
+    for (int i = 0; i < KERNEL_ITERS; ++i) {
+        val = sqrtf(val * val + scale) * 0.99f;
     }
+    return val;
 }
 
-__global__ void cheap_kernel(float* data, int n, float scale) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        data[idx] *= scale;
-    }
+__device__ __forceinline__ float cheap_path(float val, float scale) {
+    return val * scale;
 }
 
-__global__ void predicate_kernel(int* condition, float* data, int n, float threshold) {
+__global__ void predicate_kernel(int* condition, const float* data, float threshold) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         *condition = (data[0] > threshold) ? 1 : 0;
     }
+}
+
+__global__ void conditional_dispatch_kernel(
+    const int* condition,
+    float* data,
+    int n,
+    float expensive_scale,
+    float cheap_scale) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) {
+        return;
+    }
+    const bool run_expensive = (*condition != 0);
+    const float val = data[idx];
+    data[idx] = run_expensive
+        ? expensive_path(val, expensive_scale)
+        : cheap_path(val, cheap_scale);
 }
 
 int main() {
     NVTX_RANGE("main");
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
-    std::printf("Optimized Conditional Graphs (CUDA graph static path) on %s (SM %d.%d)\n", 
-                prop.name, prop.major, prop.minor);
-    
-    bool supports_graphs = (prop.major >= 7 && prop.minor >= 5) || prop.major >= 8;
+    std::printf(
+        "Optimized Conditional Graphs (CUDA graph + device-side branching) on %s (SM %d.%d)\n",
+        prop.name,
+        prop.major,
+        prop.minor);
+
+    const bool supports_graphs = (prop.major >= 7 && prop.minor >= 5) || prop.major >= 8;
     if (!supports_graphs) {
         std::printf("CUDA Graphs require compute capability 7.5 or newer.\n");
         return 0;
     }
-    
-    size_t bytes = N * sizeof(float);
-    float *d_data = nullptr;
-    
+
+    const size_t bytes = N * sizeof(float);
+    float* d_data = nullptr;
     CUDA_CHECK(cudaMalloc(&d_data, bytes));
-    
+
     std::vector<float> h_data(N);
     for (int i = 0; i < N; ++i) {
         NVTX_RANGE("setup");
         h_data[i] = 1.0f + (i % 100) * 0.01f;
     }
     CUDA_CHECK(cudaMemcpy(d_data, h_data.data(), bytes, cudaMemcpyHostToDevice));
-    
+
     dim3 block(256);
     dim3 grid((N + block.x - 1) / block.x);
-    
     constexpr float THRESHOLD = 0.5f;
 
-    int *d_condition = nullptr;
+    int* d_condition = nullptr;
     CUDA_CHECK(cudaMalloc(&d_condition, sizeof(int)));
 
     cudaStream_t graph_stream;
     CUDA_CHECK(cudaStreamCreateWithFlags(&graph_stream, cudaStreamNonBlocking));
-    
-    cudaGraph_t graph_static;
-    cudaGraphExec_t graph_exec_static;
-    
+
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t graph_exec = nullptr;
+
     CUDA_CHECK(cudaStreamBeginCapture(graph_stream, cudaStreamCaptureModeGlobal));
-    predicate_kernel<<<1, 1, 0, graph_stream>>>(d_condition, d_data, N, THRESHOLD);
-    expensive_kernel<<<grid, block, 0, graph_stream>>>(d_data, N, 1.01f);
-    CUDA_CHECK(cudaStreamEndCapture(graph_stream, &graph_static));
-    CUDA_CHECK(cudaGraphInstantiate(&graph_exec_static, graph_static, nullptr, nullptr, 0));
-    
+    predicate_kernel<<<1, 1, 0, graph_stream>>>(d_condition, d_data, THRESHOLD);
+    conditional_dispatch_kernel<<<grid, block, 0, graph_stream>>>(
+        d_condition,
+        d_data,
+        N,
+        1.01f,
+        0.99f);
+    CUDA_CHECK(cudaStreamEndCapture(graph_stream, &graph));
+    CUDA_CHECK(cudaGraphInstantiate(&graph_exec, graph, nullptr, nullptr, 0));
+
     constexpr int ITERS = 5000;
-    
+
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
-    
+
     CUDA_CHECK(cudaEventRecord(start, graph_stream));
     for (int i = 0; i < ITERS; ++i) {
         NVTX_RANGE("compute_graph:launch");
-        CUDA_CHECK(cudaGraphLaunch(graph_exec_static, graph_stream));
+        CUDA_CHECK(cudaGraphLaunch(graph_exec, graph_stream));
     }
     CUDA_CHECK(cudaEventRecord(stop, graph_stream));
     CUDA_CHECK(cudaStreamSynchronize(graph_stream));
-    
+
     float ms = 0.0f;
     CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
-    
-    std::printf("Optimized (CUDA graph static path): %.2f ms (%.3f ms/iter)\n", ms, ms / ITERS);
+
+    std::printf(
+        "Optimized (graph replay with device-side branch): %.2f ms (%.3f ms/iter)\n",
+        ms,
+        ms / ITERS);
 
 #ifdef VERIFY
     CUDA_CHECK(cudaMemcpy(h_data.data(), d_data, bytes, cudaMemcpyDeviceToHost));
@@ -117,14 +138,14 @@ int main() {
     }
     VERIFY_PRINT_CHECKSUM(static_cast<float>(checksum));
 #endif
-    
-    CUDA_CHECK(cudaGraphExecDestroy(graph_exec_static));
-    CUDA_CHECK(cudaGraphDestroy(graph_static));
+
+    CUDA_CHECK(cudaGraphExecDestroy(graph_exec));
+    CUDA_CHECK(cudaGraphDestroy(graph));
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
     CUDA_CHECK(cudaStreamDestroy(graph_stream));
     CUDA_CHECK(cudaFree(d_condition));
     CUDA_CHECK(cudaFree(d_data));
-    
+
     return 0;
 }

@@ -164,7 +164,7 @@ class BaselineRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchma
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
-        return compute_inference_metrics(
+        metrics = compute_inference_metrics(
             ttft_ms=None,
             tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
@@ -172,6 +172,14 @@ class BaselineRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchma
             batch_size=getattr(self, 'batch_size', 1),
             max_batch_size=getattr(self, 'max_batch_size', 32),
         )
+        metrics.update(
+            {
+                "regional_compilation.capture_ms": 0.0,
+                "regional_compilation.graph_bucket_count": 0.0,
+                "regional_compilation.steady_state_only": 0.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.model is None or self.inputs is None:

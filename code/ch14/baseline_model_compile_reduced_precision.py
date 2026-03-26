@@ -1,4 +1,4 @@
-"""baseline_model_compile_bf16.py - Eager BF16 model execution baseline."""
+"""baseline_model_compile_reduced_precision.py - Eager reduced-precision baseline."""
 
 from __future__ import annotations
 
@@ -23,14 +23,14 @@ from ch14.model_eager_common import (  # noqa: E402
 )
 
 
-class BaselineModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline for the combined BF16 + torch.compile chapter pair.
+class BaselineModelCompileReducedPrecisionBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Baseline for the reduced-precision eager-vs-compiled chapter pair.
 
     This path keeps the same reduced-precision model and workload as the
     optimized sample, but executes it eagerly without compilation.
     """
 
-    signature_equivalence_group = "ch14_model_compile_bf16"
+    signature_equivalence_group = "ch14_model_compile_reduced_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
     
     def __init__(self):
@@ -78,7 +78,7 @@ class BaselineModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
 
-        with nvtx_range("model_compile_bf16_baseline", enable=enable_nvtx):
+        with nvtx_range("model_compile_reduced_precision_baseline", enable=enable_nvtx):
             with torch.no_grad():
                 self.output = self.model(self.input_ids)
         if self.output is None or self.input_ids is None:
@@ -132,4 +132,4 @@ class BaselineModelCompileBf16Benchmark(VerificationPayloadMixin, BaseBenchmark)
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
-    return BaselineModelCompileBf16Benchmark()
+    return BaselineModelCompileReducedPrecisionBenchmark()

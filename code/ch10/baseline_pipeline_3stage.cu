@@ -85,8 +85,8 @@ int main() {
     
     // Initialize
     std::vector<float> h_input(N);
+    NVTX_RANGE("setup");
     for (int i = 0; i < N; ++i) {
-        NVTX_RANGE("setup");
         h_input[i] = 0.5f;
     }
     CUDA_CHECK(cudaMemcpy(d_input, h_input.data(), N * sizeof(float), cudaMemcpyHostToDevice));
@@ -102,10 +102,9 @@ int main() {
     const int iterations = 20;
     
     // Warmup
+    NVTX_RANGE("warmup");
     for (int iter = 0; iter < warmup; ++iter) {
-        NVTX_RANGE("warmup");
         for (int seg = 0; seg < NUM_SEGMENTS; ++seg) {
-            NVTX_RANGE("warmup");
             int offset = seg * SEGMENT_SIZE;
             compute_segment<<<grid, block>>>(d_input, d_output, offset, SEGMENT_SIZE);
         }
@@ -113,11 +112,10 @@ int main() {
     CUDA_CHECK(cudaDeviceSynchronize());
     
     // Benchmark - sequential execution on default stream
+    NVTX_RANGE("benchmark");
     CUDA_CHECK(cudaEventRecord(start));
     for (int iter = 0; iter < iterations; ++iter) {
-        NVTX_RANGE("compute_kernel");
         for (int seg = 0; seg < NUM_SEGMENTS; ++seg) {
-            NVTX_RANGE("compute_kernel:compute_segment");
             int offset = seg * SEGMENT_SIZE;
             compute_segment<<<grid, block>>>(d_input, d_output, offset, SEGMENT_SIZE);
         }
@@ -138,8 +136,8 @@ int main() {
     std::vector<float> h_output(N);
     CUDA_CHECK(cudaMemcpy(h_output.data(), d_output, N * sizeof(float), cudaMemcpyDeviceToHost));
     double checksum = 0.0;
+    NVTX_RANGE("verify");
     for (float v : h_output) {
-        NVTX_RANGE("verify");
         checksum += static_cast<double>(v);
     }
     VERIFY_PRINT_CHECKSUM(static_cast<float>(checksum));

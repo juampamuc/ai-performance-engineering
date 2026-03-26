@@ -35,6 +35,13 @@ def default_workload(*, dtype: torch.dtype = torch.bfloat16) -> SpecDecodingWork
     )
 
 
+def resolve_speculative_decode_dtype() -> torch.dtype:
+    """Prefer BF16 to match chapter context, with FP16 fallback on older GPUs."""
+    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
 class TokenMLP(nn.Module):
     """Position-independent toy LM: next-token logits from token ids."""
 

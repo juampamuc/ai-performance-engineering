@@ -10,7 +10,7 @@ from core.benchmark.cuda_binary_benchmark import CudaBinaryBenchmark
 
 
 class OptimizedCutlassGemmFp8Benchmark(CudaBinaryBenchmark):
-    """Wraps the optimized CUDA binary."""
+    """Wraps the Blackwell-native optimized CUDA binary."""
 
     def __init__(self) -> None:
         chapter_dir = Path(__file__).parent
@@ -30,7 +30,7 @@ class OptimizedCutlassGemmFp8Benchmark(CudaBinaryBenchmark):
                 "dtype": "fp8_e4m3",
             },
         )
-        self._selected_backend = "cutlass_sm90"
+        self._selected_backend = "cutlass_sm100_2sm"
 
     def setup(self) -> None:
         import torch
@@ -38,12 +38,12 @@ class OptimizedCutlassGemmFp8Benchmark(CudaBinaryBenchmark):
         if not torch.cuda.is_available():
             raise RuntimeError("SKIPPED: CUDA required for CUTLASS FP8")
         major, _minor = torch.cuda.get_device_capability()
-        if major != 9:
+        if major < 10:
             raise RuntimeError(
-                "SKIPPED: optimized_cutlass_gemm_fp8 requires SM90 Hopper hardware. "
-                "This benchmark no longer falls back to CuBLASLt on other architectures."
+                "SKIPPED: optimized_cutlass_gemm_fp8 requires SM100+ Blackwell-class hardware. "
+                "This benchmark no longer falls back to CuBLASLt or Hopper-only kernels on older architectures."
             )
-        self._selected_backend = "cutlass_sm90"
+        self._selected_backend = "cutlass_sm100_2sm"
         super().setup()
 
     def get_custom_metrics(self) -> Optional[dict]:
@@ -52,4 +52,3 @@ class OptimizedCutlassGemmFp8Benchmark(CudaBinaryBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedCutlassGemmFp8Benchmark()
-

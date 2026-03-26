@@ -588,7 +588,7 @@ def benchmark_targets(_: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
-    from core.benchmark.e2e_sweep import e2e_run_dir, resolve_e2e_run_id, run_benchmark_e2e_sweep
+    from core.benchmark.e2e_sweep import e2e_progress_path, e2e_run_dir, resolve_e2e_run_id, run_benchmark_e2e_sweep
 
     run_async = bool(params.get("async", False))
     dry_run = bool(params.get("dry_run", False))
@@ -631,10 +631,15 @@ def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
             "benchmark_e2e_sweep",
             lambda: run_benchmark_e2e_sweep(**kwargs),
             arguments=params,
-            run_metadata={"run_id": resolved_run_id, "run_dir": str(run_dir)},
+            run_metadata={
+                "run_id": resolved_run_id,
+                "run_dir": str(run_dir),
+                "progress_path": str(e2e_progress_path(run_dir)),
+            },
         )
         ticket["run_id"] = resolved_run_id
         ticket["run_dir"] = str(run_dir)
+        ticket["progress_path"] = str(e2e_progress_path(run_dir))
         return ticket
 
     return run_benchmark_e2e_sweep(**kwargs)

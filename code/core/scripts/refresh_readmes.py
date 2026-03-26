@@ -1334,7 +1334,7 @@ ENTRIES["ch04"] = chapter_entry(
         ("`baseline_dataparallel.py`, `optimized_dataparallel.py`", "Single-GPU DataParallel anti-pattern vs direct GPU execution."),
         ("`baseline_dataparallel_multigpu.py`, `optimized_dataparallel_multigpu.py`", "Multi-GPU DataParallel vs manual gradient reduction with pre-staged shards."),
         ("`baseline_no_overlap.py`, `optimized_no_overlap.py`", "Strict distributed DDP overlap benchmarks; they now require `torchrun` plus `>=2` GPUs and fail fast with `SKIPPED:` when launched on unsupported hosts."),
-        ("`baseline_nvlink.py`, `optimized_nvlink.py`, `baseline_nvlink_topology_aware.py`, `optimized_nvlink_topology_aware.py`, `baseline_nvlink_multigpu.py`, `optimized_nvlink_multigpu.py`, `baseline_nvlink_topology_aware_multigpu.py`, `optimized_nvlink_topology_aware_multigpu.py`", "NVLink exercises for validating peer bandwidth and topology effects (single- and multi-GPU)."),
+        ("`baseline_pcie_staging.py`, `optimized_pcie_staging.py`, `baseline_nvlink_topology_aware.py`, `optimized_nvlink_topology_aware.py`, `baseline_nvlink_multigpu.py`, `optimized_nvlink_multigpu.py`, `baseline_nvlink_topology_aware_multigpu.py`, `optimized_nvlink_topology_aware_multigpu.py`", "PCIe host-staging control pair plus NVLink exercises for validating peer bandwidth and topology effects (single- and multi-GPU)."),
         ("`baseline_nixl_tier_handoff.py`, `optimized_nixl_tier_handoff.py`, `nixl_tier_handoff_tool.py`", "Chapter-local NIXL-style memory-tier handoff analogue built on the same selected-block transport workload used by the communication-stack lab, with both benchmark and probe entrypoints."),
         ("`baseline_continuous_batching.py`, `optimized_continuous_batching.py`, `baseline_disaggregated.py`, `optimized_disaggregated.py`, `baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py`, `baseline_disaggregated_multigpu.py`, `optimized_disaggregated_multigpu.py`", "Continuous batching + disaggregated inference demos that showcase pooling and remote KV reuse."),
         ("`baseline_gradient_compression_fp16.py`, `optimized_gradient_compression_fp16.py`, `baseline_gradient_compression_int8.py`, `optimized_gradient_compression_int8.py`, `baseline_gradient_compression_fp16_multigpu.py`, `optimized_gradient_compression_fp16_multigpu.py`, `baseline_gradient_compression_int8_multigpu.py`, `optimized_gradient_compression_int8_multigpu.py`", "Gradient compression all-reduce benchmarks comparing small-bucket vs full-buffer compression (single GPU and multi-GPU FP16/INT8 paths)."),
@@ -2182,7 +2182,7 @@ ENTRIES["ch12"] = chapter_entry(
         "Implement GPU-resident work queues and uneven partition schedulers.",
     ],
     contents=[
-        ("`baseline_cuda_graphs.py`, `optimized_cuda_graphs.py`, `baseline_cuda_graphs_conditional*.cu`, `optimized_cuda_graphs_conditional*.cu`", "Graph capture demos that evolve from simple replay to conditional and DSM-aware execution."),
+        ("`baseline_cuda_graphs.py`, `optimized_cuda_graphs.py`, `baseline_cuda_graphs_conditional*.cu`, `optimized_cuda_graphs_conditional*.cu`", "Graph capture demos that evolve from simple replay to conditional and DSM-aware execution, including a supplementary host-dispatch-versus-device-branching conditional graph demo."),
         ("`baseline_graph_bandwidth.{py,cu}`, `optimized_graph_bandwidth.{py,cu}`, `baseline_kernel_launches.py`, `optimized_kernel_launches.py`", "Launch- and bandwidth-focused studies illustrating how graphs reduce CPU overhead."),
         ("`baseline_dynamic_parallelism_host.cu`, `baseline_dynamic_parallelism_device.cu`, `optimized_dynamic_parallelism_host.cu`, `optimized_dynamic_parallelism_device.cu`, `dynamic_parallelism_sm121/`", "Device-side launch samples showing when dynamic parallelism helps or hurts."),
         ("`baseline_work_queue.{py,cu}`, `optimized_work_queue.{py,cu}`, `work_queue_common.cuh`", "GPU work queues for irregular batch sizes, including NVTX instrumentation."),
@@ -2352,7 +2352,7 @@ ENTRIES["ch14"] = chapter_entry(
 
                 | Target | Baseline | Optimized | Measured delta | What changed |
                 | --- | ---: | ---: | ---: | --- |
-                | `model_compile_bf16` | `29.873 ms` | `7.978 ms` | `3.74x` | eager BF16 vs BF16 + `torch.compile` as a combined optimization stack |
+                | `model_compile_reduced_precision` | `29.873 ms` | `7.978 ms` | `3.74x` | eager reduced precision vs reduced precision + `torch.compile` |
                 | `regional_triton` | `1.944 ms` | `0.863 ms` | `2.25x` | regional compilation and Triton fusion |
                 | `triton_persistent` | `0.830 ms` | `0.086 ms` | `9.68x` | persistent Triton kernel scheduling |
 
@@ -2366,13 +2366,13 @@ ENTRIES["ch14"] = chapter_entry(
                 Use the same benchmark targets with deep-dive profiling when you want launch-count and kernel-attribution evidence instead of only the wall-clock delta:
 
                 ```bash
-                python -m cli.aisp bench run --targets ch14:model_compile_bf16 --profile deep_dive --single-gpu
+                python -m cli.aisp bench run --targets ch14:model_compile_reduced_precision --profile deep_dive --single-gpu
                 python -m cli.aisp bench run --targets ch14:regional_triton --profile deep_dive --single-gpu
                 python -m cli.aisp bench run --targets ch14:triton_persistent --profile deep_dive --single-gpu
                 ```
 
                 The expected story is different per workload:
-                - `model_compile_bf16`: fewer graph breaks and lower framework overhead, with both paths using the same reduced-precision dtype and the optimized path adding `torch.compile`
+                - `model_compile_reduced_precision`: fewer graph breaks and lower framework overhead, with both paths using the same reduced-precision dtype and the optimized path adding `torch.compile`
                 - `regional_triton`: fewer unfused launches and better steady-state scheduling
                 - `triton_persistent`: materially longer-lived kernels with less relaunch churn"""
             ),
@@ -2397,15 +2397,15 @@ ENTRIES["ch14"] = chapter_entry(
         "Blend quantization with NCCL and pipeline overlap without regressions.",
     ],
     contents=[
-        ("`baseline_model_compile_bf16.py`, `optimized_model_compile_bf16.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py`", "Model-scale examples showcasing the eager-vs-compiled BF16 pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests."),
-        ("`baseline_cutlass.py`, `optimized_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py`", "CUTLASS vs Triton comparisons plus advanced TMA/NVSHMEM Triton kernels."),
+        ("`baseline_model_compile_reduced_precision.py`, `optimized_model_compile_reduced_precision.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py`", "Model-scale examples showcasing the eager-vs-compiled reduced-precision pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests."),
+        ("`baseline_cublas_vs_cutlass.py`, `optimized_cublas_vs_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py`", "Explicit cuBLAS-vs-CUTLASS control pair plus advanced TMA/NVSHMEM Triton kernels."),
         ("`baseline_attention_eager_sdpa.py`, `optimized_attention_eager_sdpa.py`, `baseline_flex_attention_sparse.py`, `optimized_flex_attention_sparse.py`, `flex_attention_sparse_demo.py`", "Eager-vs-SDPA attention plus FlexAttention sparse workloads that validate custom score mods, masks, sparsity, and compile speedups."),
         ("`baseline_nccl_quantization.py`, `optimized_nccl_quantization.py`, `deepseek_innovation_l2_bypass.py`", "Quantization-aware communication and the DeepSeek-inspired L2 bypass experiment."),
         ("`baseline_regional_triton.py`, `optimized_regional_triton.py`, `inspect_compiled_code.py`, `benchmark_tma_configs.py`", "Regional compilation and TMA parameter sweeps for auto-tuning generated kernels."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`, `train.py`, `transformer.py`", "Harness entry plus model definitions and dependency pins."),
     ],
     validation=[
-        "`python -m cli.aisp bench run --targets ch14:model_compile_bf16 --profile minimal` produces compile-time summaries followed by steady-state throughput gains vs an eager baseline running the same reduced-precision model.",
+        "`python -m cli.aisp bench run --targets ch14:model_compile_reduced_precision --profile minimal` produces compile-time summaries followed by steady-state throughput gains vs an eager baseline running the same reduced-precision model.",
         "`python -m ch14.triton_tma_blackwell --validate` compares Triton and CUDA outputs to double-check TMA scheduling logic.",
         "`python -m ch14.compare --examples attention_eager_sdpa` shows the fused SDPA path reducing kernel launch count without changing accuracy.",
     ],
@@ -2502,7 +2502,7 @@ ENTRIES["ch15"] = chapter_entry(
     contents=[
         ("`baseline_inference_monolithic.py`, `optimized_inference_monolithic.py`", "Single-box inference loops that establish the baseline before disaggregation."),
         ("`disaggregated_inference_multigpu.py`", "Disaggregated inference demo that layers speculative decoding on top of prefill/decode pools."),
-        ("`baseline_disaggregated_inference.py`, `optimized_disaggregated_inference.py`, `baseline_disaggregated_inference_multigpu.py`, `optimized_disaggregated_inference_multigpu.py`, `baseline_prefill_decode_disagg.py`, `optimized_prefill_decode_disagg.py`, `baseline_prefill_decode_disagg_multigpu.py`, `optimized_prefill_decode_disagg_multigpu.py`, `disaggregated_inference_single_common.py`", "Disaggregated pipelines modeling remote prefills, decode overlap, and NVLink pooling (single- and multi-GPU), plus shared single-GPU helpers."),
+        ("`baseline_single_gpu_kv_handoff.py`, `optimized_single_gpu_kv_handoff.py`, `baseline_disaggregated_inference_multigpu.py`, `optimized_disaggregated_inference_multigpu.py`, `baseline_prefill_decode_disagg.py`, `optimized_prefill_decode_disagg.py`, `baseline_prefill_decode_disagg_multigpu.py`, `optimized_prefill_decode_disagg_multigpu.py`, `disaggregated_inference_single_common.py`", "Disaggregated pipelines modeling remote prefills, decode overlap, and NVLink pooling (multi-GPU), plus a supplementary single-GPU KV-handoff control pair."),
         ("`baseline_kv_cache_management.py`, `optimized_kv_cache_management.py`, `kv_cache_management_math.py`, `baseline_kv_cache_nvlink_pool.py`, `optimized_kv_cache_nvlink_pool.py`, `baseline_kv_cache_nvlink_pool_multigpu.py`, `optimized_kv_cache_nvlink_pool_multigpu.py`", "KV-cache orchestration utilities with local-only, math-only, and NVLink-pooled variants."),
         ("`baseline_continuous_batching.py`, `optimized_continuous_batching.py`", "Single-GPU continuous batching scheduler for TTFT-aware queueing."),
         ("`baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py`", "Multi-GPU continuous batching scheduler for scaled queueing throughput."),
@@ -2610,7 +2610,7 @@ ENTRIES["ch16"] = chapter_entry(
     contents=[
         ("`inference_optimizations_blackwell.py`, `inference_profiling.py`, `inference_server_load_test.py`, `inference_serving_multigpu.py`", "Top-level orchestration scripts for profiling and load testing multi-GPU inference deployments."),
         ("`baseline_flash_sdp.py`, `optimized_flash_sdp.py`, `baseline_dense_attention_flash.py`, `optimized_dense_attention_flash.py`, `optimized_dense_attention_flash_blackwell_variant.py`", "Attention kernels that compare naive implementations versus Flash backends, including an explicit non-canonical hardware variant for the Blackwell-tagged dense-attention path."),
-        ("`baseline_piece_graphs.py`, `optimized_piece_graphs.py`, `baseline_regional_compilation.py`, `optimized_regional_compilation.py`", "Piecewise graph capture and regional compilation for stable low-latency decode."),
+        ("`baseline_piece_graphs.py`, `optimized_piece_graphs.py`, `baseline_regional_compilation.py`, `optimized_regional_compilation.py`", "Piecewise graph capture and regional compilation for stable low-latency decode, with explicit steady-state replay metrics such as `regional_compilation.capture_ms`, `regional_compilation.graph_bucket_count`, and `regional_compilation.steady_state_only`."),
         ("`fp8_transformer_engine.py`, `test_fp8_quantization_real.py`, `symmetric_memory_inference.py`, `multi_gpu_validation.py`", "Serving-time FP8 and symmetric-memory validations to guarantee accuracy and NVLink efficiency."),
         ("`moe_performance_benchmark.py`, `synthetic_moe_inference_benchmark.py`, `moe_workload.py`", "MoE inference harnesses that stress router placement and per-expert batching."),
         ("`cache_monitoring.py`, `dcgm_prometheus_exporter.py`, `scheduler.py`, `perplexity_eval.py`", "Telemetry, scheduling, and accuracy utilities wired into the inference pipeline."),
@@ -2620,6 +2620,7 @@ ENTRIES["ch16"] = chapter_entry(
         "`python optimized_dense_attention_flash.py --profile minimal` yields fewer page faults and improved throughput relative to the baseline script.",
         "`python symmetric_memory_inference.py --validate` confirms NVLink-backed KV replicas stay in sync with negligible skew.",
         "`python inference_server_load_test.py --duration 120` exercises the scheduler and should report stable TTFT/TPOT metrics after warm-up.",
+        "`python -m cli.aisp bench run --targets ch16:regional_compilation --profile minimal --single-gpu` should emit `regional_compilation.capture_ms`, `regional_compilation.graph_bucket_count`, and `regional_compilation.steady_state_only=1` so replay-only timing stays auditable.",
     ],
     notes=[
         "`dcgm_prometheus_exporter.py` emits per-GPU metrics consumable by Prometheus/Grafana without extra setup.",
@@ -4497,7 +4498,7 @@ ENTRIES["labs/training_hotpath"] = lab_entry(
         "The padding-aware target should preserve outputs while flipping `padding_aware.enabled` and reporting a non-trivial padded-token fraction.",
     ],
     notes=[
-        "Keep `ch14:model_compile_bf16` as the primary compile + BF16 training story.",
+        "Keep `ch14:model_compile_reduced_precision` as the primary compile + reduced-precision training story.",
         "Keep `ch12:cuda_graphs` as the primary CUDA Graph replay story.",
         "Keep `labs/async_input_pipeline:async_input_pipeline` as the primary copy-stream overlap story.",
     ],

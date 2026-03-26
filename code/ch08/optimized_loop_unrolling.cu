@@ -23,11 +23,11 @@ int main() {
 
     for (size_t i = 0; i < input_elements; ++i) {
         NVTX_RANGE("setup");
-        h_inputs[i] = static_cast<float>((i % 2048) - 1024) / 1024.0f;
+        h_inputs[i] = init_input_value(i);
     }
     for (int i = 0; i < kWeightPeriod; ++i) {
         NVTX_RANGE("setup");
-        h_weights[i] = 0.25f + 0.05f * static_cast<float>(i);
+        h_weights[i] = init_weight_value(i);
     }
 
     float* d_inputs = nullptr;

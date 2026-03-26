@@ -217,8 +217,27 @@ class TestPythonBenchmarkDiscovery:
 
         assert "sliding_window" in names
         assert "triton_persistent" in names
+        assert "cublas_vs_cutlass" in names
+        assert "model_compile_reduced_precision" in names
         assert "sliding_window_bench" not in names
         assert "triton_persistent_bench" not in names
+        assert "cutlass" not in names
+        assert "model_compile_bf16" not in names
+
+    def test_discover_benchmarks_ch04_and_ch15_expose_renamed_control_targets(self):
+        chapter_expectations = {
+            "ch04": ({"pcie_staging"}, {"nvlink"}),
+            "ch15": ({"single_gpu_kv_handoff"}, {"disaggregated_inference"}),
+        }
+
+        for chapter, (present, absent) in chapter_expectations.items():
+            chapter_dir = repo_root / chapter
+            if not chapter_dir.exists():
+                pytest.skip(f"{chapter} directory not found")
+            pairs = discover_benchmarks(chapter_dir)
+            names = {example_name for _, _, example_name in pairs}
+            assert present <= names
+            assert not (absent & names)
 
     def test_discover_benchmarks_ch10_removes_off_theme_matmul_pair(self):
         """Chapter 10 auto-discovery should stay aligned with the book-native target set."""

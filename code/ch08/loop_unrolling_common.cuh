@@ -13,8 +13,21 @@ constexpr int kVectorWidth = 4;
 constexpr int kRedundantAccums = 16;
 constexpr int kThreadsPerGroup = 32;
 constexpr int kRowPairsPerIter = kThreadsPerBlock / kThreadsPerGroup;
+constexpr int kInputModulo = 1024;
+constexpr int kInputCenter = 512;
+constexpr float kInputScale = 512.0f;
+constexpr float kWeightBase = 0.5f;
+constexpr float kWeightStep = 0.1f;
 static_assert(kThreadsPerBlock % kThreadsPerGroup == 0, "Block size must be a multiple of warp size");
 static_assert(kWeightPeriod <= kThreadsPerGroup, "Weight period must fit within a warp");
+
+__host__ __device__ inline float init_input_value(size_t idx) {
+    return static_cast<float>((idx % kInputModulo) - kInputCenter) / kInputScale;
+}
+
+__host__ __device__ inline float init_weight_value(int idx) {
+    return kWeightBase + kWeightStep * static_cast<float>(idx);
+}
 
 __global__ void loop_unrolling_naive_kernel(
     const float* __restrict__ inputs,

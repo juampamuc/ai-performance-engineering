@@ -16,32 +16,7 @@ import ch20.arch_config  # noqa: F401 - Apply chapter defaults
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.utils.compile_utils import compile_model
-
-
-class AutotuneModel(nn.Module):
-    """Pointwise-heavy block that benefits from compiler fusion."""
-
-    def __init__(self, hidden_dim: int = 4096):
-        super().__init__()
-        self.scale = nn.Parameter(torch.ones(hidden_dim))
-        self.bias = nn.Parameter(torch.zeros(hidden_dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = x * 0.01
-        y = y * self.scale + self.bias
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        y = torch.nn.functional.silu(y)
-        y = (y * 1.0001) + 0.0001
-        y = y * 0.999 + 0.001
-        return y
+from ch20.autotuning_common import AUTOTUNING_SETUP_PREWARM_ITERS, AutotuneModel
 
 
 class OptimizedAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -74,8 +49,7 @@ class OptimizedAutotuningBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         self.inputs = torch.randn(self.batch, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
         self._verify_input = self.inputs[0:1].clone()
-        # Warm enough runs to ensure autotuning completes before timing.
-        for _ in range(10):
+        for _ in range(AUTOTUNING_SETUP_PREWARM_ITERS):
             with torch.no_grad():
                 _ = self.model(self.inputs)
 

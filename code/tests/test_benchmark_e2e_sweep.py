@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,6 +73,7 @@ def test_run_benchmark_e2e_sweep_derives_stage_ids_and_skips_duplicate_fabric(tm
             "total_skipped": 0,
         },
     )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
 
     def _fake_cluster_eval(**kwargs):
         cluster_calls.append(kwargs)
@@ -100,7 +102,12 @@ def test_run_benchmark_e2e_sweep_derives_stage_ids_and_skips_duplicate_fabric(tm
     assert stages["fabric"]["run_id"] == "e2e_001__fabric"
     assert stages["fabric"]["status"] == "skipped_duplicate"
     assert result["overall_status"] == "succeeded"
+    assert Path(result["progress_path"]).exists()
     assert "--skip-render-localhost-report" in cluster_calls[0]["extra_args"]
+    progress_payload = json.loads(Path(result["progress_path"]).read_text(encoding="utf-8"))
+    assert progress_payload["run_id"] == "e2e_001"
+    assert progress_payload["current"]["metrics"]["run_state"] == "completed"
+    assert progress_payload["current"]["metrics"]["overall_status"] == "succeeded"
     json.dumps(result)
     assert Path(result["manifest_path"]).exists()
 
@@ -126,6 +133,7 @@ def test_run_benchmark_e2e_sweep_marks_partial_when_multi_gpu_bucket_is_skipped(
         "detect_execution_environment",
         lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
     )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
     monkeypatch.setattr(e2e_sweep, "_visible_gpu_count", lambda **kwargs: 1)
     monkeypatch.setattr(
         e2e_sweep,
@@ -278,6 +286,7 @@ def test_benchmark_e2e_sweep_handler_returns_async_ticket(monkeypatch) -> None:
     assert ticket["status"] == "queued"
     assert ticket["run_id"] == "handler_async_e2e"
     assert ticket["run_dir"].endswith("artifacts/e2e_runs/handler_async_e2e")
+    assert ticket["progress_path"].endswith("artifacts/e2e_runs/handler_async_e2e/progress.json")
 
     record = handlers.JobStore.get().get_status(ticket["job_id"])
     if record is not None:

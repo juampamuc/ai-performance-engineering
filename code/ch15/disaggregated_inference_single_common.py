@@ -1,4 +1,4 @@
-"""Shared single-GPU disaggregated inference benchmark logic."""
+"""Shared single-GPU KV-handoff control benchmark logic."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def _apply_profile_overrides(cfg: DisaggConfig) -> DisaggConfig:
 
 
 class _DisaggregatedInferenceSingleGPUBase(VerificationPayloadMixin, BaseBenchmark):
-    """Shared single-GPU disaggregated inference setup/verification logic."""
+    """Shared single-GPU KV-handoff setup/verification logic."""
 
     ncu_env_overrides = {
         "AISP_NCU_PROFILE_REQUESTS": "4",
@@ -210,9 +210,26 @@ class _DisaggregatedInferenceSingleGPUBase(VerificationPayloadMixin, BaseBenchma
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        metrics = {
+            "story.control_pair": 1.0,
+            "story.chapter_native_exemplar": 0.0,
+            "single_gpu_kv_handoff.requests_per_rank": float(self.cfg.requests_per_rank),
+            "single_gpu_kv_handoff.context_window": float(self.cfg.context_window),
+            "single_gpu_kv_handoff.decode_tokens": float(self.cfg.decode_tokens),
+            "single_gpu_kv_handoff.hidden_size": float(self.cfg.hidden_size),
+            "single_gpu_kv_handoff.host_staged_kv": 0.0,
+            "single_gpu_kv_handoff.device_resident_kv": 0.0,
+        }
+        metrics.update(self._variant_metrics())
+        return metrics
+
+    def _variant_metrics(self) -> dict[str, float]:
+        raise NotImplementedError
+
 
 class BaselineDisaggregatedInferenceSingleGPUBenchmark(_DisaggregatedInferenceSingleGPUBase):
-    """Baseline single-GPU disaggregated inference with host-staged KV handoff."""
+    """Baseline single-GPU KV handoff with host-staged cache transfer."""
 
     allowed_benchmark_fn_antipatterns = ("host_transfer",)
 
@@ -233,9 +250,15 @@ class BaselineDisaggregatedInferenceSingleGPUBenchmark(_DisaggregatedInferenceSi
 
         self._set_output_from_tokens(outputs)
 
+    def _variant_metrics(self) -> dict[str, float]:
+        return {
+            "single_gpu_kv_handoff.host_staged_kv": 1.0,
+            "single_gpu_kv_handoff.device_resident_kv": 0.0,
+        }
+
 
 class OptimizedDisaggregatedInferenceSingleGPUBenchmark(_DisaggregatedInferenceSingleGPUBase):
-    """Optimized single-GPU disaggregated inference with batched device-resident KV reuse."""
+    """Optimized single-GPU KV handoff with batched device-resident reuse."""
 
     def setup(self) -> None:
         super().setup()
@@ -273,3 +296,9 @@ class OptimizedDisaggregatedInferenceSingleGPUBenchmark(_DisaggregatedInferenceS
             requests_per_rank=self.cfg.requests_per_rank,
             batch_size=self.cfg.batch_size,
         )
+
+    def _variant_metrics(self) -> dict[str, float]:
+        return {
+            "single_gpu_kv_handoff.host_staged_kv": 0.0,
+            "single_gpu_kv_handoff.device_resident_kv": 1.0,
+        }

@@ -68,7 +68,7 @@ def load_compile_analysis(code_root: Path = CODE_ROOT, benchmarks: List[Dict[str
             is_compile = any(
                 [
                     "compile" in name,
-                    "model_compile_bf16" in name,
+                    "model_compile_reduced_precision" in name,
                     "torch_compile" in techniques,
                     "inductor" in techniques,
                     chapter == "ch14" and ("model" in name or "eager" in name),

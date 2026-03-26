@@ -77,6 +77,32 @@ def test_ch08_readme_marks_bridge_controls_vs_native_exemplars() -> None:
     assert "historical baseline/optimized filenames" not in readme_text
 
 
+def test_ch04_readme_calls_single_gpu_staging_pair_pcie_not_nvlink() -> None:
+    readme_text = (REPO_ROOT / "ch04" / "README.md").read_text(encoding="utf-8")
+
+    assert "baseline_pcie_staging.py" in readme_text
+    assert "optimized_pcie_staging.py" in readme_text
+    assert "PCIe host-staging control pair" in readme_text
+
+
+def test_ch14_readme_uses_renamed_compile_and_library_targets() -> None:
+    readme_text = (REPO_ROOT / "ch14" / "README.md").read_text(encoding="utf-8")
+
+    assert "model_compile_reduced_precision" in readme_text
+    assert "baseline_model_compile_reduced_precision.py" in readme_text
+    assert "baseline_cublas_vs_cutlass.py" in readme_text
+    assert "model_compile_bf16" not in readme_text
+    assert "baseline_cutlass.py" not in readme_text
+
+
+def test_ch15_readme_calls_single_gpu_pair_a_control_handoff() -> None:
+    readme_text = (REPO_ROOT / "ch15" / "README.md").read_text(encoding="utf-8")
+
+    assert "baseline_single_gpu_kv_handoff.py" in readme_text
+    assert "supplementary single-GPU KV-handoff control pair" in readme_text
+    assert "baseline_disaggregated_inference.py" not in readme_text
+
+
 def test_ch17_inference_full_docs_mark_control_pair_not_disagg_exemplar() -> None:
     baseline_text = (REPO_ROOT / "ch17" / "baseline_inference_full.py").read_text(encoding="utf-8")
     optimized_text = (REPO_ROOT / "ch17" / "optimized_inference_full.py").read_text(encoding="utf-8")

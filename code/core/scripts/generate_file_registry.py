@@ -24,7 +24,7 @@ def extract_concept_from_filename(filename: str) -> str:
     """Extract concept name from filename.
     
     Examples:
-        baseline_cutlass.py -> cutlass
+        baseline_cublas_vs_cutlass.py -> cublas
         baseline_shared_memory.py -> shared_memory
         optimized_moe_sparse.py -> moe
     """

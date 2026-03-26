@@ -20,6 +20,7 @@ from core.benchmark.artifact_manager import build_run_id
 from core.benchmark.expectations import detect_expectation_key
 from core.benchmark.run_manifest import get_git_info
 from core.discovery import chapter_slug, discover_all_chapters, discover_benchmarks, is_cuda_binary_benchmark_file
+from core.harness.progress import ProgressEvent, ProgressRecorder
 from core.harness.validity_checks import detect_execution_environment
 from core.harness.validity_profile import normalize_validity_profile
 
@@ -34,6 +35,10 @@ def e2e_runs_root(repo_root: Optional[Path] = None) -> Path:
 
 def e2e_run_dir(run_id: str, repo_root: Optional[Path] = None) -> Path:
     return e2e_runs_root(repo_root) / run_id
+
+
+def e2e_progress_path(run_dir: Path) -> Path:
+    return Path(run_dir) / "progress.json"
 
 
 def resolve_e2e_run_id(run_id: Optional[str] = None, *, repo_root: Optional[Path] = None) -> str:
@@ -444,6 +449,169 @@ def _stage_entry(
     return payload
 
 
+def _planned_stage_entries(
+    *,
+    run_tier1: bool,
+    run_full_sweep: bool,
+    run_cluster: bool,
+    run_fabric: bool,
+    cluster_preset: str,
+    stage_run_ids: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    stages = [
+        _stage_entry(
+            name="tier1",
+            enabled=run_tier1,
+            stage_run_id=stage_run_ids["tier1"],
+            status="planned" if run_tier1 else "skipped",
+            reason=None if run_tier1 else "disabled by flag",
+        ),
+        _stage_entry(
+            name="full_sweep",
+            enabled=run_full_sweep,
+            stage_run_id=stage_run_ids["full_sweep"],
+            status="planned" if run_full_sweep else "skipped",
+            reason=None if run_full_sweep else "disabled by flag",
+        ),
+        _stage_entry(
+            name="cluster",
+            enabled=run_cluster,
+            stage_run_id=stage_run_ids["cluster"],
+            status="planned" if run_cluster else "skipped",
+            reason=None if run_cluster else "disabled by flag",
+        ),
+    ]
+    fabric_duplicate = run_fabric and run_cluster and cluster_preset.strip().lower() == "fabric-systems"
+    fabric_status = "planned" if run_fabric else "skipped"
+    fabric_reason = None if run_fabric else "disabled by flag"
+    if fabric_duplicate:
+        fabric_status = "skipped_duplicate"
+        fabric_reason = "cluster preset already includes fabric evaluation"
+    stages.append(
+        _stage_entry(
+            name="fabric",
+            enabled=run_fabric,
+            stage_run_id=stage_run_ids["fabric"],
+            status=fabric_status,
+            reason=fabric_reason,
+        )
+    )
+    return stages
+
+
+def _stage_index(stages: List[Dict[str, Any]], name: str) -> int:
+    for idx, stage in enumerate(stages):
+        if stage.get("name") == name:
+            return idx
+    raise KeyError(f"Unknown E2E stage '{name}'")
+
+
+def _replace_stage(
+    stages: List[Dict[str, Any]],
+    *,
+    name: str,
+    status: str,
+    reason: Optional[str] = None,
+    command: Optional[List[str]] = None,
+    returncode: Optional[int] = None,
+    result: Optional[Dict[str, Any]] = None,
+    artifacts: Optional[Dict[str, Any]] = None,
+    issues: Optional[List[str]] = None,
+    duration_ms: Optional[int] = None,
+) -> None:
+    index = _stage_index(stages, name)
+    existing = stages[index]
+    stages[index] = _stage_entry(
+        name=name,
+        enabled=bool(existing.get("enabled")),
+        stage_run_id=str(existing.get("run_id")),
+        status=status,
+        reason=reason,
+        command=command,
+        returncode=returncode,
+        result=result,
+        artifacts=artifacts,
+        issues=issues,
+        duration_ms=duration_ms,
+    )
+
+
+def _enabled_stages(stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [stage for stage in stages if stage.get("enabled")]
+
+
+def _completed_enabled_stage_count(stages: List[Dict[str, Any]]) -> int:
+    return sum(
+        1
+        for stage in _enabled_stages(stages)
+        if stage.get("status") not in {"planned", "running"}
+    )
+
+
+def _current_stage_name(stages: List[Dict[str, Any]]) -> Optional[str]:
+    for stage in _enabled_stages(stages):
+        if stage.get("status") == "running":
+            return str(stage["name"])
+    for stage in _enabled_stages(stages):
+        if stage.get("status") == "planned":
+            return str(stage["name"])
+    return None
+
+
+def _progress_percent(stages: List[Dict[str, Any]], *, run_state: str) -> float:
+    enabled = _enabled_stages(stages)
+    if not enabled:
+        return 100.0 if run_state == "completed" else 0.0
+    if run_state == "completed":
+        return 100.0
+    return (float(_completed_enabled_stage_count(stages)) / float(len(enabled))) * 100.0
+
+
+def _emit_live_progress(
+    progress_recorder: Optional[ProgressRecorder],
+    *,
+    stages: List[Dict[str, Any]],
+    run_state: str,
+    overall_status: str,
+    artifact_paths: Dict[str, Path],
+) -> None:
+    if progress_recorder is None:
+        return
+
+    enabled = _enabled_stages(stages)
+    total_phases = max(1, len(enabled))
+    current_stage = _current_stage_name(stages)
+    if current_stage and enabled:
+        phase_index = next(
+            (idx for idx, stage in enumerate(enabled, start=1) if stage.get("name") == current_stage),
+            1,
+        )
+    elif enabled:
+        phase_index = len(enabled)
+    else:
+        phase_index = 1
+
+    progress_recorder.emit(
+        ProgressEvent(
+            phase="e2e_sweep",
+            phase_index=phase_index,
+            total_phases=total_phases,
+            step=current_stage or ("complete" if run_state == "completed" else "idle"),
+            step_detail=f"run_state={run_state}, overall_status={overall_status}",
+            percent_complete=_progress_percent(stages, run_state=run_state),
+            artifacts=[str(path) for path in artifact_paths.values()],
+            metrics={
+                "run_state": run_state,
+                "overall_status": overall_status,
+                "current_stage": current_stage,
+                "completed_stages": _completed_enabled_stage_count(stages),
+                "total_stages": len(enabled),
+                "stages": _json_safe(stages),
+            },
+        )
+    )
+
+
 def _render_summary_markdown(summary: Dict[str, Any]) -> str:
     lines = [
         "# Benchmark E2E Sweep",
@@ -471,6 +639,7 @@ def _render_summary_markdown(summary: Dict[str, Any]) -> str:
             f"- Manifest: `{summary['manifest_path']}`",
             f"- Summary JSON: `{summary['summary_path']}`",
             f"- Summary Markdown: `{summary['summary_markdown_path']}`",
+            f"- Progress JSON: `{summary['progress_path']}`",
             f"- Target inventory: `{summary['target_inventory_path']}`",
             f"- Events: `{summary['events_path']}`",
         ]
@@ -540,11 +709,40 @@ def run_benchmark_e2e_sweep(
     manifest_path = run_dir / "manifest.json"
     summary_path = run_dir / "summary.json"
     summary_markdown_path = run_dir / "summary.md"
+    progress_path = e2e_progress_path(run_dir)
     target_inventory_path = run_dir / "target_inventory.json"
     events_path = run_dir / "events.jsonl"
     generated_at = _utc_now()
+    progress_recorder = None if dry_run else ProgressRecorder(run_id=resolved_run_id, progress_path=progress_path)
+    artifact_paths = {
+        "manifest_path": manifest_path,
+        "summary_path": summary_path,
+        "summary_markdown_path": summary_markdown_path,
+        "progress_path": progress_path,
+        "target_inventory_path": target_inventory_path,
+        "events_path": events_path,
+    }
+    stage_run_ids = {
+        "tier1": f"{resolved_run_id}__tier1",
+        "full_sweep": f"{resolved_run_id}__full_sweep",
+        "cluster": f"{resolved_run_id}__cluster",
+        "fabric": f"{resolved_run_id}__fabric",
+    }
+    planned_stages = _planned_stage_entries(
+        run_tier1=run_tier1,
+        run_full_sweep=run_full_sweep,
+        run_cluster=run_cluster,
+        run_fabric=run_fabric,
+        cluster_preset=cluster_preset,
+        stage_run_ids=stage_run_ids,
+    )
 
-    def _finalize_result(payload: Dict[str, Any], *, persist: bool) -> Dict[str, Any]:
+    def _finalize_result(
+        payload: Dict[str, Any],
+        *,
+        persist: bool,
+        stages_for_progress: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         safe_payload = _json_safe(payload)
         if persist:
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -552,6 +750,13 @@ def run_benchmark_e2e_sweep(
             _write_json(summary_path, safe_payload)
             summary_markdown_path.write_text(_render_summary_markdown(safe_payload), encoding="utf-8")
             _write_json(manifest_path, safe_payload)
+            _emit_live_progress(
+                progress_recorder,
+                stages=stages_for_progress or safe_payload.get("stages", planned_stages),
+                run_state="completed",
+                overall_status=str(safe_payload.get("overall_status", "failed")),
+                artifact_paths=artifact_paths,
+            )
         return safe_payload
 
     expectation_error = _validate_expectation_policy(
@@ -582,10 +787,11 @@ def run_benchmark_e2e_sweep(
                 "manifest_path": str(manifest_path),
                 "summary_path": str(summary_path),
                 "summary_markdown_path": str(summary_markdown_path),
+                "progress_path": str(progress_path),
                 "target_inventory_path": str(target_inventory_path),
                 "events_path": str(events_path),
                 "inventory": inventory,
-                "stages": [],
+                "stages": planned_stages,
                 "provenance": {
                     "generated_at": generated_at,
                     "git": get_git_info(),
@@ -593,6 +799,7 @@ def run_benchmark_e2e_sweep(
                 },
             },
             persist=not dry_run,
+            stages_for_progress=planned_stages,
         )
     gpu_count = _visible_gpu_count(single_gpu=single_gpu)
     cluster_extra_args = _with_e2e_cluster_extra_args(extra_cluster_args)
@@ -609,13 +816,6 @@ def run_benchmark_e2e_sweep(
         "bench_root": str(active_bench_root),
     }
 
-    stage_run_ids = {
-        "tier1": f"{resolved_run_id}__tier1",
-        "full_sweep": f"{resolved_run_id}__full_sweep",
-        "cluster": f"{resolved_run_id}__cluster",
-        "fabric": f"{resolved_run_id}__fabric",
-    }
-
     if expectation_error:
         result = {
             "success": False,
@@ -627,64 +827,19 @@ def run_benchmark_e2e_sweep(
             "manifest_path": str(manifest_path),
             "summary_path": str(summary_path),
             "summary_markdown_path": str(summary_markdown_path),
+            "progress_path": str(progress_path),
             "target_inventory_path": str(target_inventory_path),
             "events_path": str(events_path),
             "inventory": inventory,
-            "stages": [],
+            "stages": planned_stages,
             "provenance": provenance,
         }
         if not dry_run:
-            run_dir.mkdir(parents=True, exist_ok=True)
-            _write_json(target_inventory_path, inventory)
-            _write_json(summary_path, result)
-            summary_markdown_path.write_text(_render_summary_markdown(result), encoding="utf-8")
-            _write_json(manifest_path, result)
             _append_event(events_path, "run_failed_preflight", error=expectation_error, run_id=resolved_run_id)
-        return _json_safe(result)
+        return _finalize_result(result, persist=not dry_run, stages_for_progress=planned_stages)
 
-    stages: List[Dict[str, Any]] = []
+    stages: List[Dict[str, Any]] = [dict(stage) for stage in planned_stages]
     if dry_run:
-        stages.append(
-            _stage_entry(
-                name="tier1",
-                enabled=run_tier1,
-                stage_run_id=stage_run_ids["tier1"],
-                status="planned" if run_tier1 else "skipped",
-                reason=None if run_tier1 else "disabled by flag",
-            )
-        )
-        stages.append(
-            _stage_entry(
-                name="full_sweep",
-                enabled=run_full_sweep,
-                stage_run_id=stage_run_ids["full_sweep"],
-                status="planned" if run_full_sweep else "skipped",
-                reason=None if run_full_sweep else "disabled by flag",
-            )
-        )
-        stages.append(
-            _stage_entry(
-                name="cluster",
-                enabled=run_cluster,
-                stage_run_id=stage_run_ids["cluster"],
-                status="planned" if run_cluster else "skipped",
-                reason=None if run_cluster else "disabled by flag",
-            )
-        )
-        fabric_status = "planned" if run_fabric else "skipped"
-        fabric_reason = None if run_fabric else "disabled by flag"
-        if run_fabric and run_cluster and cluster_preset.strip().lower() == "fabric-systems":
-            fabric_status = "skipped_duplicate"
-            fabric_reason = "cluster preset already includes fabric evaluation"
-        stages.append(
-            _stage_entry(
-                name="fabric",
-                enabled=run_fabric,
-                stage_run_id=stage_run_ids["fabric"],
-                status=fabric_status,
-                reason=fabric_reason,
-            )
-        )
         return _json_safe({
             "success": True,
             "dry_run": True,
@@ -695,6 +850,7 @@ def run_benchmark_e2e_sweep(
             "manifest_path": str(manifest_path),
             "summary_path": str(summary_path),
             "summary_markdown_path": str(summary_markdown_path),
+            "progress_path": str(progress_path),
             "target_inventory_path": str(target_inventory_path),
             "events_path": str(events_path),
             "inventory": inventory,
@@ -706,10 +862,25 @@ def run_benchmark_e2e_sweep(
     run_dir.mkdir(parents=True, exist_ok=True)
     _write_json(target_inventory_path, inventory)
     _append_event(events_path, "run_started", run_id=resolved_run_id)
+    _emit_live_progress(
+        progress_recorder,
+        stages=stages,
+        run_state="running",
+        overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+        artifact_paths=artifact_paths,
+    )
 
     if run_tier1:
         started = time.monotonic()
+        _replace_stage(stages, name="tier1", status="running")
         _append_event(events_path, "stage_started", stage="tier1", run_id=stage_run_ids["tier1"])
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
+        )
         tier1_command = [
             "python",
             "-m",
@@ -757,40 +928,42 @@ def run_benchmark_e2e_sweep(
             required_paths=["summary_path", "regression_summary_path", "trend_snapshot_path"],
         )
         tier1_returncode = 1 if tier1_status == "failed" else 0
-        stages.append(
-            _stage_entry(
-                name="tier1",
-                enabled=True,
-                stage_run_id=stage_run_ids["tier1"],
-                status=tier1_status,
-                command=tier1_command,
-                returncode=tier1_returncode,
-                result=tier1_result,
-                artifacts={
-                    "summary_path": tier1_result.get("summary_path"),
-                    "regression_summary_path": tier1_result.get("regression_summary_path"),
-                    "trend_snapshot_path": tier1_result.get("trend_snapshot_path"),
-                    "history_root": tier1_result.get("history_root"),
-                },
-                issues=tier1_issues,
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
+        _replace_stage(
+            stages,
+            name="tier1",
+            status=tier1_status,
+            command=tier1_command,
+            returncode=tier1_returncode,
+            result=tier1_result,
+            artifacts={
+                "summary_path": tier1_result.get("summary_path"),
+                "regression_summary_path": tier1_result.get("regression_summary_path"),
+                "trend_snapshot_path": tier1_result.get("trend_snapshot_path"),
+                "history_root": tier1_result.get("history_root"),
+            },
+            issues=tier1_issues,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
         _append_event(events_path, "stage_finished", stage="tier1", status=tier1_status, run_id=stage_run_ids["tier1"])
-    else:
-        stages.append(
-            _stage_entry(
-                name="tier1",
-                enabled=False,
-                stage_run_id=stage_run_ids["tier1"],
-                status="skipped",
-                reason="disabled by flag",
-            )
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
         )
 
     if run_full_sweep:
         started = time.monotonic()
+        _replace_stage(stages, name="full_sweep", status="running")
         _append_event(events_path, "stage_started", stage="full_sweep", run_id=stage_run_ids["full_sweep"])
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
+        )
         full_stage_issues: List[str] = []
         bucket_results: Dict[str, Any] = {}
         single_targets = list(inventory.get("single_gpu", []))
@@ -935,34 +1108,36 @@ def run_benchmark_e2e_sweep(
                         full_status = "partial"
                     full_stage_issues.extend(multi_issues)
 
-        stages.append(
-            _stage_entry(
-                name="full_sweep",
-                enabled=True,
-                stage_run_id=stage_run_ids["full_sweep"],
-                status=full_status,
-                returncode=1 if full_status == "failed" else 0,
-                result={"buckets": bucket_results},
-                artifacts={"target_inventory_path": str(target_inventory_path)},
-                issues=full_stage_issues,
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
+        _replace_stage(
+            stages,
+            name="full_sweep",
+            status=full_status,
+            returncode=1 if full_status == "failed" else 0,
+            result={"buckets": bucket_results},
+            artifacts={"target_inventory_path": str(target_inventory_path)},
+            issues=full_stage_issues,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
         _append_event(events_path, "stage_finished", stage="full_sweep", status=full_status, run_id=stage_run_ids["full_sweep"])
-    else:
-        stages.append(
-            _stage_entry(
-                name="full_sweep",
-                enabled=False,
-                stage_run_id=stage_run_ids["full_sweep"],
-                status="skipped",
-                reason="disabled by flag",
-            )
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
         )
 
     if run_cluster:
         started = time.monotonic()
+        _replace_stage(stages, name="cluster", status="running")
         _append_event(events_path, "stage_started", stage="cluster", run_id=stage_run_ids["cluster"])
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
+        )
         cluster_result = _invoke_run_cluster_common_eval(
             preset=cluster_preset,
             run_id=stage_run_ids["cluster"],
@@ -987,50 +1162,50 @@ def run_benchmark_e2e_sweep(
             timeout_seconds=timeout_seconds,
         )
         cluster_status, cluster_issues, cluster_scorecard = _cluster_stage_status(cluster_result)
-        stages.append(
-            _stage_entry(
-                name="cluster",
-                enabled=True,
-                stage_run_id=stage_run_ids["cluster"],
-                status=cluster_status,
-                command=cluster_result.get("command"),
-                returncode=int(cluster_result.get("returncode", 0) or 0),
-                result=cluster_result,
-                artifacts={
-                    "run_dir": cluster_result.get("run_dir"),
-                    "manifest_path": cluster_result.get("manifest_path"),
-                    "fabric_scorecard": cluster_scorecard,
-                },
-                issues=cluster_issues,
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
+        _replace_stage(
+            stages,
+            name="cluster",
+            status=cluster_status,
+            command=cluster_result.get("command"),
+            returncode=int(cluster_result.get("returncode", 0) or 0),
+            result=cluster_result,
+            artifacts={
+                "run_dir": cluster_result.get("run_dir"),
+                "manifest_path": cluster_result.get("manifest_path"),
+                "fabric_scorecard": cluster_scorecard,
+            },
+            issues=cluster_issues,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
         _append_event(events_path, "stage_finished", stage="cluster", status=cluster_status, run_id=stage_run_ids["cluster"])
-    else:
-        stages.append(
-            _stage_entry(
-                name="cluster",
-                enabled=False,
-                stage_run_id=stage_run_ids["cluster"],
-                status="skipped",
-                reason="disabled by flag",
-            )
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
         )
 
     fabric_duplicate = run_fabric and run_cluster and cluster_preset.strip().lower() == "fabric-systems"
     if fabric_duplicate:
-        stages.append(
-            _stage_entry(
-                name="fabric",
-                enabled=True,
-                stage_run_id=stage_run_ids["fabric"],
-                status="skipped_duplicate",
-                reason="cluster preset already includes fabric evaluation",
-            )
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
         )
     elif run_fabric:
         started = time.monotonic()
+        _replace_stage(stages, name="fabric", status="running")
         _append_event(events_path, "stage_started", stage="fabric", run_id=stage_run_ids["fabric"])
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
+        )
         fabric_result = _invoke_run_cluster_fabric_eval(
             run_id=stage_run_ids["fabric"],
             hosts=cluster_host_config["hosts"],
@@ -1054,34 +1229,28 @@ def run_benchmark_e2e_sweep(
             timeout_seconds=timeout_seconds,
         )
         fabric_status, fabric_issues, fabric_scorecard = _cluster_stage_status(fabric_result)
-        stages.append(
-            _stage_entry(
-                name="fabric",
-                enabled=True,
-                stage_run_id=stage_run_ids["fabric"],
-                status=fabric_status,
-                command=fabric_result.get("command"),
-                returncode=int(fabric_result.get("returncode", 0) or 0),
-                result=fabric_result,
-                artifacts={
-                    "run_dir": fabric_result.get("run_dir"),
-                    "manifest_path": fabric_result.get("manifest_path"),
-                    "fabric_scorecard": fabric_scorecard,
-                },
-                issues=fabric_issues,
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
+        _replace_stage(
+            stages,
+            name="fabric",
+            status=fabric_status,
+            command=fabric_result.get("command"),
+            returncode=int(fabric_result.get("returncode", 0) or 0),
+            result=fabric_result,
+            artifacts={
+                "run_dir": fabric_result.get("run_dir"),
+                "manifest_path": fabric_result.get("manifest_path"),
+                "fabric_scorecard": fabric_scorecard,
+            },
+            issues=fabric_issues,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
         _append_event(events_path, "stage_finished", stage="fabric", status=fabric_status, run_id=stage_run_ids["fabric"])
-    else:
-        stages.append(
-            _stage_entry(
-                name="fabric",
-                enabled=False,
-                stage_run_id=stage_run_ids["fabric"],
-                status="skipped",
-                reason="disabled by flag",
-            )
+        _emit_live_progress(
+            progress_recorder,
+            stages=stages,
+            run_state="running",
+            overall_status=_roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")]),
+            artifact_paths=artifact_paths,
         )
 
     overall_status = _roll_up_overall_status([stage["status"] for stage in stages if stage.get("enabled")])
@@ -1095,6 +1264,7 @@ def run_benchmark_e2e_sweep(
         "manifest_path": str(manifest_path),
         "summary_path": str(summary_path),
         "summary_markdown_path": str(summary_markdown_path),
+        "progress_path": str(progress_path),
         "target_inventory_path": str(target_inventory_path),
         "events_path": str(events_path),
         "inventory": {
@@ -1114,4 +1284,11 @@ def run_benchmark_e2e_sweep(
     _write_json(summary_path, _json_safe(summary))
     summary_markdown_path.write_text(_render_summary_markdown(_json_safe(summary)), encoding="utf-8")
     _write_json(manifest_path, _json_safe(manifest))
+    _emit_live_progress(
+        progress_recorder,
+        stages=stages,
+        run_state="completed",
+        overall_status=overall_status,
+        artifact_paths=artifact_paths,
+    )
     return _json_safe(summary)

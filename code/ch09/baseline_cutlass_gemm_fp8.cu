@@ -1,6 +1,6 @@
 // baseline_cutlass_gemm_fp8.cu -- CUTLASS FP8 GEMM baseline.
 //
-// NOTE: CUTLASS 2.x DefaultGemmConfiguration does not cover FP8 types for Sm90/Sm100.
+// NOTE: CUTLASS 2.x DefaultGemmConfiguration does not cover FP8 types for Sm100.
 // Use CUTLASS 3.x collective builders (GemmUniversalAdapter) so the kernel is fully specified.
 
 #include <cuda_runtime.h>
@@ -102,7 +102,7 @@ static void initialize_tensor(cutlass::TensorView<Element, Layout> view, uint64_
   cutlass::reference::host::TensorFillRandomUniform(view, seed, scope_max, scope_min, 0);
 }
 
-#if defined(CUTLASS_ARCH_MMA_SM90_SUPPORTED)
+#if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
 
 // A matrix configuration
 using ElementA = cutlass::float_e4m3_t;
@@ -123,11 +123,11 @@ constexpr int AlignmentC = 128 / cutlass::sizeof_bits<ElementC>::value;  // 8
 constexpr int AlignmentD = 128 / cutlass::sizeof_bits<ElementD>::value;  // 8
 
 using ElementAccumulator = float;
-using ArchTag = cutlass::arch::Sm90;
+using ArchTag = cutlass::arch::Sm100;
 using OperatorClass = cutlass::arch::OpClassTensorOp;
 
-// Baseline uses a smaller tile.
-using TileShape = Shape<_64, _128, _128>;   // (M, N, K)
+// Baseline uses a smaller Blackwell-native 1SM tile.
+using TileShape = Shape<_128, _128, _64>;   // (M, N, K)
 using ClusterShape = Shape<_1, _1, _1>;
 
 using EpilogueSchedule = cutlass::epilogue::collective::EpilogueScheduleAuto;
@@ -147,7 +147,7 @@ using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBui
     AlignmentD,
     EpilogueSchedule>::CollectiveOp;
 
-using KernelSchedule = cutlass::gemm::collective::KernelScheduleAuto;
+using KernelSchedule = cutlass::gemm::KernelTmaWarpSpecialized1SmSm100;
 using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
     ArchTag,
     OperatorClass,
@@ -272,7 +272,7 @@ static int run_cutlass(const Options& options) {
   return 0;
 }
 
-#endif  // CUTLASS_ARCH_MMA_SM90_SUPPORTED
+#endif  // CUTLASS_ARCH_MMA_SM100_SUPPORTED
 
 int main() {
   NVTX_RANGE("main");
@@ -286,10 +286,10 @@ int main() {
   options.alpha = 1.0f;
   options.beta = 0.0f;
 
-#if defined(CUTLASS_ARCH_MMA_SM90_SUPPORTED)
+#if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
   return run_cutlass(options);
 #else
-  std::cerr << "SKIPPED: CUTLASS FP8 kernel requires CUDA 12.0+ and SM90+." << std::endl;
+  std::cerr << "SKIPPED: CUTLASS FP8 kernel requires CUDA 13.0+ and SM100+." << std::endl;
   return 1;
 #endif
 }

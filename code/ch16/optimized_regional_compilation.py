@@ -64,6 +64,7 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         self.compiled_layers = 0
         self.output: Optional[torch.Tensor] = None
         self.graph_cache: Dict[int, GraphCacheEntry] = {}
+        self.capture_ms: float = 0.0
         self._verify_input: Optional[torch.Tensor] = None
         self.parameter_count: int = 0
         tokens = self.max_seq_len * self.d_model
@@ -125,6 +126,9 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         self.graph_cache.clear()
         torch.cuda.synchronize()
         unique_lengths = sorted(set(self.sequence_schedule))
+        capture_start = torch.cuda.Event(enable_timing=True)
+        capture_stop = torch.cuda.Event(enable_timing=True)
+        capture_start.record()
 
         for seq_len in unique_lengths:
             static_input = (
@@ -143,6 +147,9 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
                     static_output = self.model(static_input)
             self.graph_cache[seq_len] = (graph, static_input, static_output)
         self.compiled_layers = len(self.graph_cache)
+        capture_stop.record()
+        torch.cuda.synchronize()
+        self.capture_ms = float(capture_start.elapsed_time(capture_stop))
 
     def benchmark_fn(self) -> None:
         from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
@@ -227,7 +234,7 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_inference_metrics
-        return compute_inference_metrics(
+        metrics = compute_inference_metrics(
             ttft_ms=None,
             tpot_ms=None,
             total_tokens=getattr(self, 'total_tokens', 256),
@@ -235,6 +242,14 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
             batch_size=getattr(self, 'batch_size', 1),
             max_batch_size=getattr(self, 'max_batch_size', 32),
         )
+        metrics.update(
+            {
+                "regional_compilation.capture_ms": float(self.capture_ms),
+                "regional_compilation.graph_bucket_count": float(len(self.graph_cache)),
+                "regional_compilation.steady_state_only": 1.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.model is None or self._verify_input is None:
@@ -275,4 +290,3 @@ def main():
     print("=" * 80)
     print("Baseline: eager transformer blocks in the timed region.")
     print("Optimized: the same blocks routed through nested compile regions and replayed via CUDA graphs.")
-

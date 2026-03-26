@@ -14,6 +14,7 @@ from ch15.speculative_decoding_common import (
     TokenMLP,
     build_draft_from_target,
     default_workload,
+    resolve_speculative_decode_dtype,
     scale_tail_dims_,
 )
 
@@ -28,8 +29,7 @@ class SpeculativeDecodingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.use_speculative = bool(use_speculative)
         self.label = label
 
-        # Use FP32 for deterministic argmax stability across kernel launch shapes.
-        self.workload = default_workload(dtype=torch.float32)
+        self.workload = default_workload(dtype=resolve_speculative_decode_dtype())
 
         self.target_model: Optional[TokenMLP] = None
         self.draft_model: Optional[TokenMLP] = None
@@ -211,7 +211,14 @@ class SpeculativeDecodingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        return dict(self._metrics) if self._metrics else None
+        metrics = dict(self._metrics) if self._metrics else {}
+        metrics.update(
+            {
+                "speculative.dtype_bf16": 1.0 if self.workload.dtype == torch.bfloat16 else 0.0,
+                "speculative.dtype_fp16": 1.0 if self.workload.dtype == torch.float16 else 0.0,
+            }
+        )
+        return metrics
 
     def validate_result(self) -> Optional[str]:
         if self.output is None:

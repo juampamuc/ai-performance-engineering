@@ -180,6 +180,7 @@ int main() {
     
     printf("Single-Pass Atomic Reduction (Optimized):\n");
     printf("  Time: %.3f ms\n", ms / iterations);
+    printf("  Timing includes cudaMemset(d_output, 0, ...) before each iteration\n");
     printf("  Sum: %.0f (expected: %d) - %s\n", total, N,
            (abs(total - N) < 1000) ? "PASS" : "FAIL");
     printf("\nAdvantages over two-pass:\n");
@@ -198,4 +199,3 @@ int main() {
     
     return 0;
 }
-

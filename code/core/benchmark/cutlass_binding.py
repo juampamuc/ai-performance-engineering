@@ -65,8 +65,15 @@ def _load_cutlass_module(verbose: bool = False):
         cuda_source_file=str(cuda_source),
         include_dirs=[include_dir],
         extra_cuda_cflags=extra_flags,
+        extra_ldflags=["-lcublas"],
         verbose=verbose,
     )
+
+
+def cublas_gemm_fp16(a: torch.Tensor, b: torch.Tensor, verbose: bool = False) -> torch.Tensor:
+    """Invoke the explicit cuBLAS FP16 GEMM helper from Python."""
+    module = _load_cutlass_module(verbose=verbose)
+    return module.cublas_gemm_fp16(a, b)
 
 
 def cutlass_gemm_fp16(a: torch.Tensor, b: torch.Tensor, verbose: bool = False) -> torch.Tensor:
