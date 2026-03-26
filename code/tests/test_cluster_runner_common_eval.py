@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Dict
 
 import core.cluster.runner as cluster_runner
@@ -186,6 +188,40 @@ def test_run_cluster_fabric_eval_adds_management_plane_flag(monkeypatch) -> None
     assert captured["cumulus_user"] == "cumulus"
     assert captured["cumulus_ssh_key"] == "/tmp/cumulus-key"
     assert captured["extra_args"] == ["--skip-render-localhost-report", "--require-management-plane"]
+
+
+def test_cluster_suite_progress_current_uses_suite_steps_and_inflight_log(tmp_path: Path) -> None:
+    suite_steps_path = tmp_path / "structured" / "2026-03-26_suite_steps.json"
+    suite_log_dir = tmp_path / "raw" / "2026-03-26_suite"
+    suite_steps_path.parent.mkdir(parents=True, exist_ok=True)
+    suite_log_dir.mkdir(parents=True, exist_ok=True)
+    suite_steps_path.write_text(
+        json.dumps(
+            [
+                {"name": "bootstrap_nodes", "exit_code": 0},
+                {"name": "preflight_services", "exit_code": 0},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (suite_log_dir / "vllm_serve_sweep.log").write_text("running\n", encoding="utf-8")
+
+    payload = cluster_runner._cluster_suite_progress_current(
+        run_id="2026-03-26",
+        planned_steps=[
+            "bootstrap_nodes",
+            "preflight_services",
+            "discovery",
+            "vllm_serve_sweep",
+        ],
+        suite_steps_path=suite_steps_path,
+        suite_log_dir=suite_log_dir,
+    )
+
+    assert payload["step"] == "vllm_serve_sweep"
+    assert payload["step_detail"] == "completed 2/4 suite steps"
+    assert payload["percent_complete"] == 50.0
+    assert payload["metrics"]["current_step"] == "vllm_serve_sweep"
 
 
 def test_build_cluster_nmx_partition_lab_wraps_payload(monkeypatch) -> None:

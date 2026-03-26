@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import threading
 import time
 import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from core.harness.progress import ProgressEvent, ProgressRecorder
+
+_CLUSTER_PROGRESS_POLL_SECONDS = 2.0
 
 
 def _repo_root() -> Path:
@@ -40,8 +45,629 @@ def _cluster_run_layout(run_id: str, *, repo_root: Optional[Path] = None) -> Dic
         "raw_dir": str(run_dir / "raw"),
         "figures_dir": str(run_dir / "figures"),
         "reports_dir": str(run_dir / "reports"),
+        "progress_dir": str(run_dir / "progress"),
+        "progress_path": str(run_dir / "progress" / "run_progress.json"),
+        "suite_steps_path": str(run_dir / "structured" / f"{run_id}_suite_steps.json"),
         "manifest_path": str(run_dir / "manifest.json"),
     }
+
+
+def _sanitize_label(raw: str) -> str:
+    return str(raw).replace(".", "_").replace(":", "_")
+
+
+def _cluster_host_labels(hosts: List[str], labels: Optional[List[str]]) -> List[str]:
+    resolved: List[str] = []
+    label_values = list(labels or [])
+    for index, host in enumerate(hosts):
+        label = label_values[index].strip() if index < len(label_values) and str(label_values[index]).strip() else ""
+        resolved.append(label or _sanitize_label(host))
+    return resolved
+
+
+def _is_local_host_name(host: str) -> bool:
+    host_value = str(host or "").strip()
+    if not host_value:
+        return False
+    fqdn = socket.getfqdn() or socket.gethostname()
+    candidates = {
+        "localhost",
+        "127.0.0.1",
+        socket.gethostname(),
+        socket.gethostname().split(".", 1)[0],
+        fqdn,
+        fqdn.split(".", 1)[0],
+    }
+    return host_value in candidates
+
+
+def _split_cli_values(raw: str) -> List[str]:
+    values = str(raw or "").replace(",", " ").split()
+    return [value for value in values if value]
+
+
+def _cluster_suite_progress_state(
+    *,
+    hosts: List[str],
+    labels: Optional[List[str]],
+    primary_label: Optional[str],
+    extra_args: Optional[List[str]],
+    coverage_baseline_run_id: Optional[str],
+    oob_if: Optional[str],
+    socket_ifname: Optional[str],
+) -> Dict[str, Any]:
+    state: Dict[str, Any] = {
+        "bootstrap_nodes": True,
+        "run_quick_friction": True,
+        "run_monitoring_expectations": True,
+        "run_nccl_env_sensitivity": True,
+        "health_suite_mode": "collectives",
+        "run_vllm_request_rate_sweep": False,
+        "run_vllm_multinode_mode": "auto",
+        "vllm_multinode_concurrency_values": ["64"],
+        "enable_fp4": True,
+        "enable_mamf": False,
+        "enable_allreduce_stability": False,
+        "enable_allreduce_latency_comp": False,
+        "enable_allgather_control_plane": False,
+        "enable_nccl_alltoall": False,
+        "enable_nccl_algo_comparison": False,
+        "run_c2c": False,
+        "run_numa_mem_bw": False,
+        "run_train_step": False,
+        "run_train_step_explicit": False,
+        "train_step_single_node": True,
+        "train_step_multi_node": True,
+        "run_checkpoint_io": False,
+        "run_nvbandwidth_mode": "auto",
+        "run_gpu_stream_mode": "on",
+        "run_fabric_eval": False,
+        "render_localhost_report_mode": "auto",
+        "check_ib_sharp": False,
+        "modern_llm_profile": False,
+        "coverage_baseline": bool(str(coverage_baseline_run_id or "").strip()),
+    }
+    args = [str(arg) for arg in (extra_args or [])]
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--skip-quick-friction":
+            state["run_quick_friction"] = False
+        elif arg == "--run-quick-friction":
+            state["run_quick_friction"] = True
+        elif arg == "--skip-monitoring-expectations":
+            state["run_monitoring_expectations"] = False
+        elif arg == "--run-monitoring-expectations":
+            state["run_monitoring_expectations"] = True
+        elif arg == "--skip-nccl-env-sensitivity":
+            state["run_nccl_env_sensitivity"] = False
+        elif arg == "--run-nccl-env-sensitivity":
+            state["run_nccl_env_sensitivity"] = True
+        elif arg == "--health-suite" and index + 1 < len(args):
+            index += 1
+            state["health_suite_mode"] = args[index]
+        elif arg == "--run-vllm-request-rate-sweep":
+            state["run_vllm_request_rate_sweep"] = True
+        elif arg == "--skip-vllm-request-rate-sweep":
+            state["run_vllm_request_rate_sweep"] = False
+        elif arg == "--run-vllm-multinode":
+            state["run_vllm_multinode_mode"] = "on"
+        elif arg == "--skip-vllm-multinode":
+            state["run_vllm_multinode_mode"] = "off"
+        elif arg == "--vllm-multinode-concurrency-range" and index + 1 < len(args):
+            index += 1
+            values = _split_cli_values(args[index])
+            if values:
+                state["vllm_multinode_concurrency_values"] = values
+        elif arg == "--vllm-multinode-concurrency" and index + 1 < len(args):
+            index += 1
+            state["vllm_multinode_concurrency_values"] = [args[index]]
+        elif arg == "--enable-fp4":
+            state["enable_fp4"] = True
+        elif arg == "--disable-fp4":
+            state["enable_fp4"] = False
+        elif arg == "--enable-mamf":
+            state["enable_mamf"] = True
+        elif arg == "--enable-allreduce-stability":
+            state["enable_allreduce_stability"] = True
+        elif arg == "--disable-allreduce-stability":
+            state["enable_allreduce_stability"] = False
+        elif arg == "--enable-allreduce-latency-comp":
+            state["enable_allreduce_latency_comp"] = True
+        elif arg == "--enable-allgather-control-plane":
+            state["enable_allgather_control_plane"] = True
+        elif arg == "--enable-nccl-alltoall":
+            state["enable_nccl_alltoall"] = True
+        elif arg == "--disable-nccl-alltoall":
+            state["enable_nccl_alltoall"] = False
+        elif arg == "--enable-nccl-algo-comparison":
+            state["enable_nccl_algo_comparison"] = True
+        elif arg == "--disable-nccl-algo-comparison":
+            state["enable_nccl_algo_comparison"] = False
+        elif arg == "--run-c2c":
+            state["run_c2c"] = True
+        elif arg == "--run-numa-mem-bw":
+            state["run_numa_mem_bw"] = True
+        elif arg == "--run-train-step":
+            state["run_train_step"] = True
+            state["run_train_step_explicit"] = True
+        elif arg == "--train-step-single-node":
+            state["train_step_single_node"] = True
+        elif arg == "--train-step-multi-node":
+            state["train_step_multi_node"] = True
+        elif arg == "--run-checkpoint-io":
+            state["run_checkpoint_io"] = True
+        elif arg == "--run-nvbandwidth":
+            state["run_nvbandwidth_mode"] = "on"
+        elif arg == "--skip-nvbandwidth":
+            state["run_nvbandwidth_mode"] = "off"
+        elif arg == "--run-gpu-stream":
+            state["run_gpu_stream_mode"] = "on"
+        elif arg == "--skip-gpu-stream":
+            state["run_gpu_stream_mode"] = "off"
+        elif arg == "--run-fabric-eval":
+            state["run_fabric_eval"] = True
+        elif arg == "--skip-fabric-eval":
+            state["run_fabric_eval"] = False
+        elif arg == "--render-localhost-report":
+            state["render_localhost_report_mode"] = "on"
+        elif arg == "--skip-render-localhost-report":
+            state["render_localhost_report_mode"] = "off"
+        elif arg == "--check-ib-sharp":
+            state["check_ib_sharp"] = True
+        elif arg == "--modern-llm-profile":
+            state["modern_llm_profile"] = True
+        elif arg == "--coverage-baseline-run-id" and index + 1 < len(args):
+            index += 1
+            state["coverage_baseline"] = bool(str(args[index]).strip())
+        index += 1
+
+    host_count = len(hosts)
+    has_socket_bootstrap = bool(str(socket_ifname or oob_if or "").strip())
+    if state["modern_llm_profile"]:
+        state["run_vllm_request_rate_sweep"] = True
+        state["run_nvbandwidth_mode"] = "on"
+        state["enable_allreduce_stability"] = True
+        state["enable_allreduce_latency_comp"] = True
+        state["enable_allgather_control_plane"] = True
+        state["enable_nccl_alltoall"] = True
+        state["enable_nccl_algo_comparison"] = True
+        if not state["run_train_step_explicit"]:
+            state["run_train_step"] = True
+    if state["run_vllm_multinode_mode"] == "on":
+        state["run_vllm_multinode"] = True
+    elif state["run_vllm_multinode_mode"] == "off":
+        state["run_vllm_multinode"] = False
+    else:
+        state["run_vllm_multinode"] = host_count > 1
+    if state["run_nvbandwidth_mode"] == "on":
+        state["run_nvbandwidth"] = True
+    elif state["run_nvbandwidth_mode"] == "off":
+        state["run_nvbandwidth"] = False
+    else:
+        state["run_nvbandwidth"] = host_count > 1
+    state["run_gpu_stream"] = state["run_gpu_stream_mode"] == "on"
+    label_values = _cluster_host_labels(hosts, labels)
+    resolved_primary_label = str(primary_label or "").strip() or (label_values[0] if label_values else _default_primary_label())
+    is_localhost_package = host_count == 1 and bool(hosts) and _is_local_host_name(hosts[0])
+    state.update(
+        {
+            "host_count": host_count,
+            "has_socket_bootstrap": has_socket_bootstrap,
+            "labels": label_values,
+            "primary_label": resolved_primary_label,
+            "is_localhost_package": is_localhost_package,
+            "render_localhost_report": state["render_localhost_report_mode"] == "on"
+            or (state["render_localhost_report_mode"] == "auto" and is_localhost_package),
+        }
+    )
+    return state
+
+
+def _cluster_suite_planned_steps(
+    *,
+    run_id: str,
+    hosts: List[str],
+    labels: Optional[List[str]],
+    primary_label: Optional[str],
+    extra_args: Optional[List[str]],
+    coverage_baseline_run_id: Optional[str],
+    oob_if: Optional[str],
+    socket_ifname: Optional[str],
+) -> List[str]:
+    state = _cluster_suite_progress_state(
+        hosts=hosts,
+        labels=labels,
+        primary_label=primary_label,
+        extra_args=extra_args,
+        coverage_baseline_run_id=coverage_baseline_run_id,
+        oob_if=oob_if,
+        socket_ifname=socket_ifname,
+    )
+    steps: List[str] = []
+    host_count = int(state["host_count"])
+    labels_resolved = list(state["labels"])
+    run_vllm_multinode = bool(state["run_vllm_multinode"])
+
+    if state["bootstrap_nodes"]:
+        steps.append("bootstrap_nodes")
+    steps.extend(
+        [
+            "preflight_services",
+            "discovery",
+        ]
+    )
+    if state["run_quick_friction"]:
+        steps.append("quick_friction_all_nodes")
+    if state["run_monitoring_expectations"]:
+        steps.append("monitoring_expectations_all_nodes")
+    steps.extend(
+        [
+            "hang_triage_bundle",
+            "connectivity_probe",
+            "nccl_single_node",
+        ]
+    )
+    if host_count > 1 and bool(str(oob_if or "").strip()):
+        steps.append("nccl_multi_node")
+    if state["run_nccl_env_sensitivity"]:
+        steps.append("nccl_env_sensitivity")
+    health_suite_mode = str(state["health_suite_mode"])
+    if host_count > 1 and health_suite_mode != "off":
+        steps.append(f"health_suite_{health_suite_mode}")
+    if host_count > 1 and state["check_ib_sharp"] and bool(str(oob_if or "").strip()):
+        steps.append("ib_sharp_check")
+    steps.append("vllm_serve_sweep")
+    if state["run_vllm_request_rate_sweep"]:
+        steps.append("vllm_request_rate_sweep")
+    if run_vllm_multinode and host_count > 1:
+        for value in state["vllm_multinode_concurrency_values"]:
+            steps.append(f"vllm_serve_multinode_c{value}")
+    steps.append("gemm_sanity")
+    if state["run_gpu_stream"]:
+        steps.append("gpu_stream_all_nodes")
+    if state["enable_fp4"]:
+        steps.append("fp4_checks")
+    if state["enable_mamf"]:
+        steps.append("mamf_finder")
+    if state["enable_allreduce_stability"]:
+        steps.append("allreduce_stability")
+    if state["enable_allreduce_latency_comp"]:
+        steps.append("allreduce_latency_comp")
+    if state["enable_allgather_control_plane"]:
+        steps.append("allgather_control_plane")
+    if state["enable_nccl_alltoall"]:
+        steps.append("nccl_alltoall_single_node")
+        if host_count > 1 and bool(str(oob_if or "").strip()):
+            steps.append("nccl_alltoall_multi_node")
+    if state["enable_nccl_algo_comparison"]:
+        steps.append("nccl_algo_comparison")
+    if state["run_c2c"]:
+        steps.append("c2c_memcpy")
+    if state["run_numa_mem_bw"]:
+        steps.append("numa_mem_bw")
+    if state["run_train_step"]:
+        if state["train_step_single_node"]:
+            steps.append("train_step_single_node")
+        if state["train_step_multi_node"] and host_count > 1:
+            steps.append("train_step_multi_node")
+    if state["run_checkpoint_io"]:
+        steps.append("checkpoint_io")
+    steps.append("fio_all_nodes")
+    if state["run_nvbandwidth"]:
+        steps.append("nvbandwidth_all_nodes")
+
+    steps.append("plot_nccl_single_node")
+    if host_count > 1 and bool(str(oob_if or "").strip()):
+        steps.append("plot_nccl_multi_node")
+    if state["enable_nccl_alltoall"]:
+        steps.append("plot_nccl_alltoall_single_node")
+        if host_count > 1 and bool(str(oob_if or "").strip()):
+            steps.append("plot_nccl_alltoall_multi_node")
+    if state["run_nccl_env_sensitivity"]:
+        steps.append("plot_nccl_env_sensitivity")
+    steps.extend(
+        [
+            "plot_vllm_serve",
+            "analyze_vllm_slo_goodput",
+            "plot_vllm_slo_goodput",
+        ]
+    )
+    if state["run_vllm_request_rate_sweep"]:
+        steps.extend(
+            [
+                "analyze_vllm_request_rate_slo_goodput",
+                "plot_vllm_request_rate_sweep",
+                "plot_vllm_request_rate_slo_goodput",
+            ]
+        )
+    if run_vllm_multinode and host_count > 1:
+        steps.extend(
+            [
+                "plot_vllm_serve_multinode",
+                "analyze_vllm_multinode_slo_goodput",
+                "plot_vllm_multinode_slo_goodput",
+            ]
+        )
+    if host_count > 1 and health_suite_mode != "off":
+        steps.append("plot_iperf3_oob")
+    steps.append("plot_gemm_sanity")
+    if state["enable_mamf"]:
+        steps.append("plot_mamf")
+    if state["enable_allreduce_stability"]:
+        steps.append("plot_allreduce_stability")
+    if state["enable_allreduce_latency_comp"]:
+        steps.append("plot_allreduce_latency_comp")
+    if state["enable_allgather_control_plane"]:
+        steps.append("plot_allgather_control_plane")
+    if state["enable_nccl_algo_comparison"]:
+        steps.append("plot_nccl_algo_comparison")
+    for label in labels_resolved:
+        steps.append(f"plot_fio_{run_id}_{label}_fio")
+    if state["run_nvbandwidth"]:
+        for label in labels_resolved:
+            steps.append(f"plot_nvbandwidth_{run_id}_{label}_nvbandwidth")
+    if state["run_gpu_stream"]:
+        for label in labels_resolved:
+            steps.append(f"plot_gpu_stream_{run_id}_{label}_gpu_stream")
+    if state["run_c2c"]:
+        steps.append("plot_c2c_memcpy")
+    if state["run_numa_mem_bw"]:
+        for label in labels_resolved:
+            steps.append(f"plot_numa_mem_bw_{run_id}_{label}_numa_mem_bw")
+    if state["run_train_step"] and state["train_step_single_node"]:
+        steps.append("plot_train_step_single")
+    if state["run_train_step"] and state["train_step_multi_node"] and host_count > 1:
+        steps.append("plot_train_step_multi")
+    for label in labels_resolved:
+        steps.append(f"plot_nvlink_topology_{run_id}_{label}_meta")
+    steps.append("plot_cluster_story_dashboard")
+    if state["run_quick_friction"] or state["run_monitoring_expectations"]:
+        steps.append("plot_operator_checks_dashboard")
+    if state["run_fabric_eval"]:
+        steps.append("build_fabric_eval")
+    steps.extend(
+        [
+            "build_cluster_scorecard",
+            "build_mlperf_alignment",
+            "analyze_benchmark_coverage",
+        ]
+    )
+    if state["coverage_baseline"]:
+        steps.append("build_coverage_delta")
+    steps.extend(
+        [
+            "validate_required_artifacts",
+            "manifest_refresh",
+        ]
+    )
+    if state["render_localhost_report"]:
+        steps.append("render_localhost_field_report_package")
+    if not steps:
+        return ["cluster_eval_suite"]
+    return steps
+
+
+def _read_cluster_suite_steps(path: Path) -> Dict[str, Dict[str, Any]]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, list):
+        return {}
+    latest: Dict[str, Dict[str, Any]] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        latest[name] = row
+    return latest
+
+
+def _cluster_suite_current_step(suite_log_dir: Path, *, completed_steps: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    if not suite_log_dir.exists():
+        return None
+    latest_candidate: Optional[Path] = None
+    latest_mtime = -1.0
+    for log_path in suite_log_dir.glob("*.log"):
+        step_name = log_path.stem
+        recorded = completed_steps.get(step_name)
+        if recorded is not None:
+            try:
+                exit_code = int(recorded.get("exit_code"))
+            except Exception:
+                exit_code = 0
+            if exit_code != 75:
+                continue
+        try:
+            mtime = log_path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime >= latest_mtime:
+            latest_candidate = log_path
+            latest_mtime = mtime
+    return latest_candidate.stem if latest_candidate is not None else None
+
+
+def _cluster_suite_progress_current(
+    *,
+    run_id: str,
+    planned_steps: List[str],
+    suite_steps_path: Path,
+    suite_log_dir: Path,
+) -> Dict[str, Any]:
+    latest_by_name = _read_cluster_suite_steps(suite_steps_path)
+    completed_names = set()
+    for name, row in latest_by_name.items():
+        try:
+            exit_code = int(row.get("exit_code", 0) or 0)
+        except Exception:
+            exit_code = 0
+        if exit_code != 75:
+            completed_names.add(name)
+    current_step = _cluster_suite_current_step(suite_log_dir, completed_steps=latest_by_name)
+    known_steps = set(planned_steps)
+    extra_steps = {name for name in completed_names if name not in known_steps}
+    if current_step and current_step not in known_steps:
+        extra_steps.add(current_step)
+    total_steps = max(1, len(planned_steps) + len(extra_steps))
+    completed_count = len(completed_names)
+    percent_complete = min(100.0, (float(completed_count) / float(total_steps)) * 100.0)
+    active_step = current_step or (planned_steps[completed_count] if completed_count < len(planned_steps) else None)
+    phase_index = completed_count + 1 if active_step else completed_count
+    phase_index = max(1, min(total_steps, phase_index))
+    return {
+        "phase": "cluster_eval_suite",
+        "phase_index": phase_index,
+        "total_phases": total_steps,
+        "step": active_step or ("complete" if completed_count >= total_steps else "starting"),
+        "step_detail": f"completed {completed_count}/{total_steps} suite steps",
+        "percent_complete": percent_complete,
+        "metrics": {
+            "completed_steps": completed_count,
+            "total_steps": total_steps,
+            "current_step": active_step,
+            "planned_steps": planned_steps,
+            "suite_steps_path": str(suite_steps_path),
+        },
+    }
+
+
+def _emit_cluster_suite_progress(
+    progress_recorder: ProgressRecorder,
+    *,
+    run_id: str,
+    planned_steps: List[str],
+    suite_steps_path: Path,
+    suite_log_dir: Path,
+    status: str,
+) -> None:
+    current = _cluster_suite_progress_current(
+        run_id=run_id,
+        planned_steps=planned_steps,
+        suite_steps_path=suite_steps_path,
+        suite_log_dir=suite_log_dir,
+    )
+    percent_complete = 100.0 if status == "completed" else current["percent_complete"]
+    progress_recorder.emit(
+        ProgressEvent(
+            phase=str(current.get("phase") or "cluster_eval_suite"),
+            phase_index=int(current.get("phase_index") or 1),
+            total_phases=int(current.get("total_phases") or max(1, len(planned_steps))),
+            step=str(current.get("step") or status),
+            step_detail=str(current.get("step_detail") or f"status={status}"),
+            percent_complete=percent_complete,
+            artifacts=[str(suite_steps_path)],
+            metrics={
+                **dict(current.get("metrics") or {}),
+                "status": status,
+            },
+        )
+    )
+
+
+def _run_cluster_suite_with_progress(
+    cmd: List[str],
+    *,
+    cwd: Path,
+    timeout_seconds: Optional[int],
+    run_id: str,
+    planned_steps: List[str],
+    repo_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    layout = _cluster_run_layout(run_id, repo_root=repo_root)
+    progress_recorder = ProgressRecorder(run_id=run_id, progress_path=Path(layout["progress_path"]))
+    suite_steps_path = Path(layout["suite_steps_path"])
+    suite_log_dir = Path(layout["raw_dir"]) / f"{run_id}_suite"
+    _emit_cluster_suite_progress(
+        progress_recorder,
+        run_id=run_id,
+        planned_steps=planned_steps,
+        suite_steps_path=suite_steps_path,
+        suite_log_dir=suite_log_dir,
+        status="running",
+    )
+
+    start = time.monotonic()
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stop_event = threading.Event()
+
+    def _poll_progress() -> None:
+        while not stop_event.wait(_CLUSTER_PROGRESS_POLL_SECONDS):
+            _emit_cluster_suite_progress(
+                progress_recorder,
+                run_id=run_id,
+                planned_steps=planned_steps,
+                suite_steps_path=suite_steps_path,
+                suite_log_dir=suite_log_dir,
+                status="running",
+            )
+
+    thread = threading.Thread(
+        target=_poll_progress,
+        name=f"cluster-progress-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        stdout, stderr = proc.communicate(
+            timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
+        )
+        duration_ms = int((time.monotonic() - start) * 1000)
+        returncode = proc.returncode
+        return {
+            "command": cmd,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "duration_ms": duration_ms,
+        }
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        duration_ms = int((time.monotonic() - start) * 1000)
+        return {
+            "command": cmd,
+            "returncode": None,
+            "stdout": stdout,
+            "stderr": stderr,
+            "error": f"timeout after {timeout_seconds}s",
+            "duration_ms": duration_ms,
+        }
+    except Exception as exc:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        duration_ms = int((time.monotonic() - start) * 1000)
+        return {
+            "command": cmd,
+            "returncode": None,
+            "stdout": stdout,
+            "stderr": stderr,
+            "error": str(exc),
+            "duration_ms": duration_ms,
+        }
+    finally:
+        stop_event.set()
+        thread.join(timeout=5.0)
+        status = "completed" if proc.poll() == 0 else "failed"
+        _emit_cluster_suite_progress(
+            progress_recorder,
+            run_id=run_id,
+            planned_steps=planned_steps,
+            suite_steps_path=suite_steps_path,
+            suite_log_dir=suite_log_dir,
+            status=status,
+        )
 
 
 def _run_cmd(cmd: List[str], *, cwd: Optional[Path] = None, timeout_seconds: Optional[int] = None) -> Dict[str, Any]:
@@ -378,7 +1004,23 @@ def run_cluster_eval_suite(
     if extra_args:
         cmd.extend([str(x) for x in extra_args if str(x).strip()])
 
-    result = _run_cmd(cmd, cwd=cluster_root, timeout_seconds=timeout)
+    planned_steps = _cluster_suite_planned_steps(
+        run_id=run_id_value,
+        hosts=hosts_list,
+        labels=labels,
+        primary_label=primary_label,
+        extra_args=extra_args,
+        coverage_baseline_run_id=None,
+        oob_if=oob_if,
+        socket_ifname=socket_ifname,
+    )
+    result = _run_cluster_suite_with_progress(
+        cmd,
+        cwd=cluster_root,
+        timeout_seconds=timeout,
+        run_id=run_id_value,
+        planned_steps=planned_steps,
+    )
     success = result.get("returncode") == 0
     return {
         "success": bool(success),

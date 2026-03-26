@@ -27,6 +27,8 @@ from core.harness.progress import ProgressEvent, ProgressRecorder
 from core.harness.validity_checks import detect_execution_environment
 from core.harness.validity_profile import normalize_validity_profile
 
+_STAGE_PROGRESS_POLL_SECONDS = 2.0
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -1014,6 +1016,14 @@ def _benchmark_run_event_paths(
     }
 
 
+def _cluster_run_progress_path(
+    run_id: str,
+    *,
+    repo_root: Path,
+) -> Path:
+    return repo_root / "cluster" / "runs" / run_id / "progress" / "run_progress.json"
+
+
 def _load_benchmark_run_start(
     run_id: str,
     *,
@@ -1940,13 +1950,15 @@ def run_benchmark_e2e_sweep(
         stop_event = threading.Event()
 
         def _mirror_worker() -> None:
-            while not stop_event.wait(2.0):
+            while True:
                 _emit_stage_progress_snapshot(
                     stage_name,
                     child_run_id,
                     child_progress_path,
                     bucket=bucket,
                 )
+                if stop_event.wait(_STAGE_PROGRESS_POLL_SECONDS):
+                    break
 
         thread = threading.Thread(
             target=_mirror_worker,
@@ -2449,28 +2461,33 @@ def run_benchmark_e2e_sweep(
                 )
                 cluster_stage.setdefault("attempts", []).append(cluster_attempt)
                 _start_stage("cluster", cluster_run_id)
-                cluster_result = _invoke_run_cluster_common_eval(
-                    preset=cluster_preset,
-                    run_id=cluster_run_id,
-                    hosts=cluster_host_config["hosts"],
-                    labels=cluster_host_config["labels"],
-                    ssh_user=cluster_host_config["ssh_user"],
-                    ssh_key=cluster_host_config["ssh_key"],
-                    oob_if=oob_if,
-                    socket_ifname=socket_ifname,
-                    nccl_ib_hca=nccl_ib_hca,
-                    nmx_url=nmx_url,
-                    nmx_token=nmx_token,
-                    ib_mgmt_host=ib_mgmt_host,
-                    ib_mgmt_user=ib_mgmt_user,
-                    ib_mgmt_ssh_key=ib_mgmt_ssh_key,
-                    cumulus_hosts=cumulus_hosts,
-                    cumulus_user=cumulus_user,
-                    cumulus_ssh_key=cumulus_ssh_key,
-                    primary_label=primary_label,
-                    coverage_baseline_run_id=coverage_baseline_run_id,
-                    extra_args=cluster_extra_args,
-                    timeout_seconds=timeout_seconds,
+                cluster_result = _run_with_stage_progress_mirror(
+                    "cluster",
+                    cluster_run_id,
+                    _cluster_run_progress_path(cluster_run_id, repo_root=repo_root),
+                    lambda: _invoke_run_cluster_common_eval(
+                        preset=cluster_preset,
+                        run_id=cluster_run_id,
+                        hosts=cluster_host_config["hosts"],
+                        labels=cluster_host_config["labels"],
+                        ssh_user=cluster_host_config["ssh_user"],
+                        ssh_key=cluster_host_config["ssh_key"],
+                        oob_if=oob_if,
+                        socket_ifname=socket_ifname,
+                        nccl_ib_hca=nccl_ib_hca,
+                        nmx_url=nmx_url,
+                        nmx_token=nmx_token,
+                        ib_mgmt_host=ib_mgmt_host,
+                        ib_mgmt_user=ib_mgmt_user,
+                        ib_mgmt_ssh_key=ib_mgmt_ssh_key,
+                        cumulus_hosts=cumulus_hosts,
+                        cumulus_user=cumulus_user,
+                        cumulus_ssh_key=cumulus_ssh_key,
+                        primary_label=primary_label,
+                        coverage_baseline_run_id=coverage_baseline_run_id,
+                        extra_args=cluster_extra_args,
+                        timeout_seconds=timeout_seconds,
+                    ),
                 )
                 cluster_status, cluster_issues, cluster_scorecard = _cluster_stage_status(cluster_result)
                 cluster_attempt.update(
@@ -2529,27 +2546,32 @@ def run_benchmark_e2e_sweep(
             )
             fabric_stage.setdefault("attempts", []).append(fabric_attempt)
             _start_stage("fabric", fabric_run_id)
-            fabric_result = _invoke_run_cluster_fabric_eval(
-                run_id=fabric_run_id,
-                hosts=cluster_host_config["hosts"],
-                labels=cluster_host_config["labels"],
-                ssh_user=cluster_host_config["ssh_user"],
-                ssh_key=cluster_host_config["ssh_key"],
-                oob_if=oob_if,
-                socket_ifname=socket_ifname,
-                nccl_ib_hca=nccl_ib_hca,
-                nmx_url=nmx_url,
-                nmx_token=nmx_token,
-                ib_mgmt_host=ib_mgmt_host,
-                ib_mgmt_user=ib_mgmt_user,
-                ib_mgmt_ssh_key=ib_mgmt_ssh_key,
-                cumulus_hosts=cumulus_hosts,
-                cumulus_user=cumulus_user,
-                cumulus_ssh_key=cumulus_ssh_key,
-                primary_label=primary_label,
-                coverage_baseline_run_id=coverage_baseline_run_id,
-                extra_args=cluster_extra_args,
-                timeout_seconds=timeout_seconds,
+            fabric_result = _run_with_stage_progress_mirror(
+                "fabric",
+                fabric_run_id,
+                _cluster_run_progress_path(fabric_run_id, repo_root=repo_root),
+                lambda: _invoke_run_cluster_fabric_eval(
+                    run_id=fabric_run_id,
+                    hosts=cluster_host_config["hosts"],
+                    labels=cluster_host_config["labels"],
+                    ssh_user=cluster_host_config["ssh_user"],
+                    ssh_key=cluster_host_config["ssh_key"],
+                    oob_if=oob_if,
+                    socket_ifname=socket_ifname,
+                    nccl_ib_hca=nccl_ib_hca,
+                    nmx_url=nmx_url,
+                    nmx_token=nmx_token,
+                    ib_mgmt_host=ib_mgmt_host,
+                    ib_mgmt_user=ib_mgmt_user,
+                    ib_mgmt_ssh_key=ib_mgmt_ssh_key,
+                    cumulus_hosts=cumulus_hosts,
+                    cumulus_user=cumulus_user,
+                    cumulus_ssh_key=cumulus_ssh_key,
+                    primary_label=primary_label,
+                    coverage_baseline_run_id=coverage_baseline_run_id,
+                    extra_args=cluster_extra_args,
+                    timeout_seconds=timeout_seconds,
+                ),
             )
             fabric_status, fabric_issues, fabric_scorecard = _cluster_stage_status(fabric_result)
             fabric_attempt.update(

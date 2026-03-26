@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import getpass
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -221,6 +222,136 @@ def test_run_benchmark_e2e_sweep_marks_fabric_partial_for_not_configured_scoreca
     assert fabric_stage["artifacts"]["fabric_scorecard"]["degraded_families"] == [
         {"family": "infiniband", "completeness": "not_configured"}
     ]
+
+
+def test_run_benchmark_e2e_sweep_mirrors_cluster_stage_progress(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    cluster_run_dir = tmp_path / "cluster" / "runs" / "e2e_cluster_progress__cluster"
+    manifest_path = cluster_run_dir / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_STAGE_PROGRESS_POLL_SECONDS", 0.01)
+
+    def _fake_cluster_eval(**kwargs):
+        child_progress_path = cluster_run_dir / "progress" / "run_progress.json"
+        recorder = e2e_sweep.ProgressRecorder(run_id=kwargs["run_id"], progress_path=child_progress_path)
+        recorder.emit(
+            e2e_sweep.ProgressEvent(
+                phase="cluster_eval_suite",
+                phase_index=2,
+                total_phases=10,
+                step="vllm_serve_sweep",
+                step_detail="completed 2/10 suite steps",
+                percent_complete=20.0,
+            )
+        )
+        time.sleep(0.05)
+        observed["payload"] = json.loads(
+            (e2e_sweep.e2e_run_dir("e2e_cluster_progress", tmp_path) / "progress.json").read_text(encoding="utf-8")
+        )
+        return {
+            "success": True,
+            "run_id": kwargs["run_id"],
+            "run_dir": str(cluster_run_dir),
+            "manifest_path": str(manifest_path),
+            "returncode": 0,
+            "command": ["fake-cluster"],
+        }
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_run_cluster_common_eval", _fake_cluster_eval)
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_cluster_progress",
+        run_tier1=False,
+        run_full_sweep=False,
+        run_cluster=True,
+        run_fabric=False,
+    )
+
+    assert result["overall_status"] == "succeeded"
+    payload = observed["payload"]
+    assert payload["current"]["step"] == "cluster:vllm_serve_sweep"
+    assert payload["current"]["step_detail"] == "completed 2/10 suite steps"
+    assert payload["current"]["percent_complete"] == 20.0
+    assert payload["current"]["metrics"]["current_stage_run_id"] == "e2e_cluster_progress__cluster"
+
+
+def test_run_benchmark_e2e_sweep_mirrors_fabric_stage_progress(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    fabric_run_dir = tmp_path / "cluster" / "runs" / "e2e_fabric_progress__fabric"
+    manifest_path = fabric_run_dir / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_STAGE_PROGRESS_POLL_SECONDS", 0.01)
+
+    def _fake_fabric_eval(**kwargs):
+        child_progress_path = fabric_run_dir / "progress" / "run_progress.json"
+        recorder = e2e_sweep.ProgressRecorder(run_id=kwargs["run_id"], progress_path=child_progress_path)
+        recorder.emit(
+            e2e_sweep.ProgressEvent(
+                phase="cluster_eval_suite",
+                phase_index=5,
+                total_phases=12,
+                step="build_fabric_eval",
+                step_detail="completed 4/12 suite steps",
+                percent_complete=33.3333,
+            )
+        )
+        time.sleep(0.05)
+        observed["payload"] = json.loads(
+            (e2e_sweep.e2e_run_dir("e2e_fabric_progress", tmp_path) / "progress.json").read_text(encoding="utf-8")
+        )
+        return {
+            "success": True,
+            "run_id": kwargs["run_id"],
+            "run_dir": str(fabric_run_dir),
+            "manifest_path": str(manifest_path),
+            "returncode": 0,
+            "command": ["fake-fabric"],
+        }
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_run_cluster_fabric_eval", _fake_fabric_eval)
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_fabric_progress",
+        run_tier1=False,
+        run_full_sweep=False,
+        run_cluster=False,
+        run_fabric=True,
+    )
+
+    assert result["overall_status"] == "succeeded"
+    payload = observed["payload"]
+    assert payload["current"]["step"] == "fabric:build_fabric_eval"
+    assert payload["current"]["step_detail"] == "completed 4/12 suite steps"
+    assert payload["current"]["percent_complete"] == 33.3333
+    assert payload["current"]["metrics"]["current_stage_run_id"] == "e2e_fabric_progress__fabric"
 
 
 def test_emit_live_progress_includes_child_stage_progress(tmp_path: Path) -> None:
