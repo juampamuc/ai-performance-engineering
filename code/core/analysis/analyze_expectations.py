@@ -179,7 +179,7 @@ def classify_entry(
             return None
         if not any(_file_exists(repo_root, chapter_name, opt_file) for opt_file in opt_files):
             return None
-    if status in {"failed", "failed_error", "failed_regression"}:
+    if status in {"failed", "failed_error", "failed_regression", "failed_no_speedup"}:
         severity = "fail"
     elif status == "skipped":
         severity = "skipped"

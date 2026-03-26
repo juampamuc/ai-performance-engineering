@@ -53,6 +53,13 @@ def _configure_with_sample_data(tmp_path):
                         "baseline_time_ms": 80.0,
                         "optimizations": [],
                         "status": "failed_error",
+                    },
+                    {
+                        "example": "flat_speed",
+                        "best_speedup": 1.02,
+                        "baseline_time_ms": 90.0,
+                        "optimizations": [],
+                        "status": "failed_no_speedup",
                     }
                 ],
             },
@@ -74,10 +81,10 @@ def test_benchmark_data_pagination_and_filters(tmp_path):
     assert response.status_code == 200
     payload = response.json()
     result = payload["result"]
-    assert result["pagination"]["total"] == 5
+    assert result["pagination"]["total"] == 6
     assert len(result["benchmarks"]) == 1
     assert result["benchmarks"][0]["name"] == "transfer"
-    assert result["summary"]["total"] == 5
+    assert result["summary"]["total"] == 6
 
     filtered = asgi_request(server.fastapi_app, "GET", "/api/benchmark/data?status=succeeded")
     filtered_payload = filtered.json()["result"]
@@ -92,9 +99,9 @@ def test_benchmark_overview_summary(tmp_path):
     response = asgi_request(server.fastapi_app, "GET", "/api/benchmark/overview")
     assert response.status_code == 200
     overview = response.json()["result"]
-    assert overview["summary"]["total"] == 5
+    assert overview["summary"]["total"] == 6
     assert overview["status_counts"]["succeeded"] == 1
-    assert overview["status_counts"]["failed"] == 3
+    assert overview["status_counts"]["failed"] == 4
     assert overview["status_counts"]["skipped"] == 1
     assert overview["top_speedups"][0]["name"] == "gemm"
 

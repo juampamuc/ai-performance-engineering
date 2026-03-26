@@ -396,6 +396,8 @@ def _classify_failure_message(message: Optional[str]) -> Optional[str]:
         return "profiler_missing_artifact"
     if "no optimizations passed verification" in normalized:
         return "verification_failed"
+    if "below required" in normalized and "threshold for speed-goal benchmark" in normalized:
+        return "no_speedup"
     return "runtime_error"
 
 
@@ -1062,6 +1064,28 @@ def _coerce_positive_float(value: Any) -> Optional[float]:
     if value_f is None or value_f <= 0:
         return None
     return value_f
+
+
+_MIN_SPEEDUP_FOR_SUCCESS = 1.05
+
+
+def _should_fail_no_speedup(result_entry: Dict[str, Any]) -> bool:
+    optimization_goal = str(result_entry.get("optimization_goal") or "speed").strip().lower()
+    if optimization_goal != "speed":
+        return False
+    best_speedup = _coerce_finite_float(result_entry.get("best_speedup"))
+    if best_speedup is None:
+        return False
+    return best_speedup < _MIN_SPEEDUP_FOR_SUCCESS
+
+
+def _format_failed_no_speedup(result_entry: Dict[str, Any]) -> str:
+    best_speedup = _coerce_finite_float(result_entry.get("best_speedup"))
+    rendered_speedup = f"{best_speedup:.2f}x" if best_speedup is not None else "n/a"
+    return (
+        f"Best speedup {rendered_speedup} below required "
+        f"{_MIN_SPEEDUP_FOR_SUCCESS:.2f}x threshold for speed-goal benchmark"
+    )
 
 
 def collect_expectation_metrics(result_entry: Dict[str, Any]) -> Tuple[Dict[str, float], Optional[Dict[str, Any]]]:
@@ -4967,6 +4991,7 @@ def _test_chapter_impl(
     successful = 0
     failed_error = 0
     failed_regression = 0
+    failed_no_speedup = 0
     skipped_hw = 0
     skipped_distributed = 0
     informational_skipped = 0
@@ -7354,6 +7379,10 @@ def _test_chapter_impl(
                     result_entry['status'] = 'failed_regression'
                     result_entry["error"] = update_result.message if update_result else "Expectation regression detected"
                     failed_regression += 1
+                elif _should_fail_no_speedup(result_entry):
+                    result_entry["status"] = "failed_no_speedup"
+                    result_entry["error"] = _format_failed_no_speedup(result_entry)
+                    failed_no_speedup += 1
                 else:
                     result_entry['status'] = 'succeeded'
                     successful += 1
@@ -7376,6 +7405,10 @@ def _test_chapter_impl(
                     )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
+                elif _should_fail_no_speedup(result_entry):
+                    result_entry["status"] = "failed_no_speedup"
+                    result_entry["error"] = _format_failed_no_speedup(result_entry)
+                    failed_no_speedup += 1
                 else:
                     result_entry['status'] = 'succeeded'
                     successful += 1
@@ -8834,6 +8867,10 @@ def _test_chapter_impl(
                         update_result.message if update_result else "Expectation regression detected"
                     )
                     failed_regression += 1
+                elif _should_fail_no_speedup(result_entry):
+                    result_entry["status"] = "failed_no_speedup"
+                    result_entry["error"] = _format_failed_no_speedup(result_entry)
+                    failed_no_speedup += 1
                 else:
                     result_entry["status"] = "succeeded"
                     successful += 1
@@ -8856,6 +8893,10 @@ def _test_chapter_impl(
                     )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
+                elif _should_fail_no_speedup(result_entry):
+                    result_entry["status"] = "failed_no_speedup"
+                    result_entry["error"] = _format_failed_no_speedup(result_entry)
+                    failed_no_speedup += 1
                 else:
                     result_entry['status'] = 'succeeded'
                     successful += 1
@@ -8914,7 +8955,7 @@ def _test_chapter_impl(
             # Default: <1.1x speedup, but --force-llm runs on ALL benchmarks
             best_speedup = bench_result.get('best_speedup', 1.0)
             needs_analysis = force_llm or best_speedup < 1.1
-            if bench_result.get('status') in ('succeeded', 'failed_regression') and needs_analysis:
+            if bench_result.get('status') in ('succeeded', 'failed_regression', 'failed_no_speedup') and needs_analysis:
                 emit_progress(
                     "llm_analysis",
                     step=f"{chapter_name}:{bench_result['example']}",
@@ -9238,6 +9279,7 @@ def _test_chapter_impl(
     failed_error_final = final_status_counts.get("failed_error", 0)
     failed_verification_final = final_status_counts.get("failed_verification", 0)
     failed_regression_final = final_status_counts.get("failed_regression", 0)
+    failed_no_speedup_final = final_status_counts.get("failed_no_speedup", 0)
     failed_profiler_final = final_status_counts.get("failed_profiler", 0)
     failed_plain_final = final_status_counts.get("failed", 0)
     total_failed = sum(
@@ -9249,6 +9291,7 @@ def _test_chapter_impl(
         - failed_error_final
         - failed_verification_final
         - failed_regression_final
+        - failed_no_speedup_final
         - failed_profiler_final
         - failed_plain_final,
     )
@@ -9259,7 +9302,8 @@ def _test_chapter_impl(
     logger.info(
         f"Benchmarks: {len(benchmark_results)} | Succeeded: {successful_final} | "
         f"Failed: {total_failed} (errors={failed_error_final}, verification={failed_verification_final}, "
-        f"regressions={failed_regression_final}, profiler={failed_profiler_final}, generic={failed_plain_final}, "
+        f"regressions={failed_regression_final}, no_speedup={failed_no_speedup_final}, "
+        f"profiler={failed_profiler_final}, generic={failed_plain_final}, "
         f"other={failed_other_final}) | "
         f"Skipped: {total_skipped} (HW: {skipped_hw}, Dist: {skipped_distributed}) | "
         f"Informational: {informational_skipped}"
@@ -9281,6 +9325,7 @@ def _test_chapter_impl(
         failed_error=failed_error_final,
         failed_verification=failed_verification_final,
         failed_regression=failed_regression_final,
+        failed_no_speedup=failed_no_speedup_final,
         failed_profiler=failed_profiler_final,
         failed_generic=failed_plain_final,
         failed_other=failed_other_final,
@@ -9304,6 +9349,7 @@ def _test_chapter_impl(
             'failed_error': failed_error_final,
             'failed_verification': failed_verification_final,
             'failed_regression': failed_regression_final,
+            'failed_no_speedup': failed_no_speedup_final,
             'failed_generic': failed_plain_final,
             'failed_other': failed_other_final,
             'skipped_hardware': skipped_hw,
@@ -10973,6 +11019,7 @@ def generate_markdown_report(
         total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in results)
         total_informational = sum(r['summary'].get('informational', 0) for r in results)
         total_regressions = sum(r['summary'].get('failed_regression', 0) for r in results)
+        total_failed_no_speedup = sum(r['summary'].get('failed_no_speedup', 0) for r in results)
         total_failed_errors = sum(r['summary'].get('failed_error', 0) for r in results)
         total_failed_verification = sum(r['summary'].get('failed_verification', 0) for r in results)
         total_failed_generic = sum(r['summary'].get('failed_generic', 0) for r in results)
@@ -10984,6 +11031,7 @@ def generate_markdown_report(
         f.write(f"  - Errors: {total_failed_errors}\n")
         f.write(f"  - Verification: {total_failed_verification}\n")
         f.write(f"  - Regressions: {total_regressions}\n")
+        f.write(f"  - No speedup (<{_MIN_SPEEDUP_FOR_SUCCESS:.2f}x, speed goal): {total_failed_no_speedup}\n")
         f.write(f"  - Generic: {total_failed_generic}\n")
         f.write(f"  - Other failed_*: {total_failed_other}\n")
         f.write(f"- **Informational (not benchmarked):** {total_informational}\n")
@@ -11093,6 +11141,8 @@ def generate_markdown_report(
                     f.write(f"- Verification failed: {bench.get('error', 'Correctness validation failed')}\n")
                 elif bench_status == 'failed_regression':
                     f.write(f"- Regression: {bench.get('error', 'Expectation regression detected')}\n")
+                elif bench_status == 'failed_no_speedup':
+                    f.write(f"- No speedup: {bench.get('error', _format_failed_no_speedup(bench))}\n")
                 elif bench_status == 'skipped':
                     f.write(f"- WARNING: **SKIPPED**: {bench.get('skip_reason', bench.get('error', 'Hardware/software limitation'))}\n")
                 else:
@@ -11919,6 +11969,7 @@ def main():
     total_failed_errors = sum(r['summary'].get('failed_error', 0) for r in all_results)
     total_failed_verification = sum(r['summary'].get('failed_verification', 0) for r in all_results)
     total_failed_regressions = sum(r['summary'].get('failed_regression', 0) for r in all_results)
+    total_failed_no_speedup = sum(r['summary'].get('failed_no_speedup', 0) for r in all_results)
     total_failed_generic = sum(r['summary'].get('failed_generic', 0) for r in all_results)
     total_failed_other = sum(r['summary'].get('failed_other', 0) for r in all_results)
     total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in all_results)
@@ -11928,7 +11979,8 @@ def main():
     logger.info(f"Succeeded: {total_successful}")
     logger.info(
         f"Failed: {total_failed} (errors={total_failed_errors}, verification={total_failed_verification}, "
-        f"regressions={total_failed_regressions}, generic={total_failed_generic}, other={total_failed_other})"
+        f"regressions={total_failed_regressions}, no_speedup={total_failed_no_speedup}, "
+        f"generic={total_failed_generic}, other={total_failed_other})"
     )
     logger.info(f"Informational (not benchmarked): {total_informational}")
     emit_event(
@@ -11941,6 +11993,7 @@ def main():
         total_failed_errors=total_failed_errors,
         total_failed_verification=total_failed_verification,
         total_failed_regressions=total_failed_regressions,
+        total_failed_no_speedup=total_failed_no_speedup,
         total_failed_generic=total_failed_generic,
         total_failed_other=total_failed_other,
         total_skipped_hardware=total_skipped_hw,

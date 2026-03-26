@@ -1032,6 +1032,7 @@ def _execute_benchmarks(
                 "failed_error",
                 "failed_verification",
                 "failed_regression",
+                "failed_no_speedup",
                 "failed_generic",
                 "failed_other",
             )

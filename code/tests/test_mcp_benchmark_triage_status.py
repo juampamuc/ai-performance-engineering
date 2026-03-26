@@ -35,6 +35,13 @@ def test_benchmark_triage_counts_failed_status_classes(tmp_path: Path) -> None:
                         "optimizations": [],
                     },
                     {
+                        "example": "flat_case",
+                        "best_speedup": 1.02,
+                        "baseline_time_ms": 12.5,
+                        "status": "failed_no_speedup",
+                        "optimizations": [],
+                    },
+                    {
                         "example": "skipped_case",
                         "best_speedup": 1.00,
                         "baseline_time_ms": 13.0,
@@ -51,9 +58,10 @@ def test_benchmark_triage_counts_failed_status_classes(tmp_path: Path) -> None:
     result = mcp_server.tool_benchmark_triage({"data_file": str(data_path)})
     summary = result["summary"]
 
-    assert summary["total_benchmarks"] == 4
+    assert summary["total_benchmarks"] == 5
     assert summary["passed"] == 1
-    assert summary["failed"] == 2
+    assert summary["failed"] == 3
     assert summary["skipped"] == 1
     assert summary["failure_classes"]["failed_error"] == 1
     assert summary["failure_classes"]["failed_verification"] == 1
+    assert summary["failure_classes"]["failed_no_speedup"] == 1
