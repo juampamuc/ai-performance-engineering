@@ -139,7 +139,8 @@ def _run_profile() -> None:
                 benchmark.teardown()
             except Exception as exc:
                 print(f"[profile_warning] Benchmark teardown failed after nsys capture: {{exc}}", file=sys.stderr)
-            raise SystemExit(0)
+            import os as _os
+            _os._exit(0)
         import os as _os
         _os._exit(0)
 
@@ -249,7 +250,8 @@ def _run_profile() -> None:
                 benchmark.teardown()
             except Exception as exc:
                 print(f"[profile_warning] Benchmark teardown failed after ncu capture: {{exc}}", file=sys.stderr)
-            raise SystemExit(0)
+            import os as _os
+            _os._exit(0)
         import os as _os
         _os._exit(0)
 

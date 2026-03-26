@@ -733,7 +733,7 @@ def run_pytorch_profiler(
     timeout: int,
 ) -> List[RunResult]:
     results: List[RunResult] = []
-    runner = Path(__file__).resolve().with_name("pytorch_profiler_runner.py")
+    runner = REPO_ROOT / "core" / "scripts" / "profiling" / "pytorch_profiler_runner.py"
 
     for mode in modes:
         out_dir = profiler_output_dir(session_dir, f"pytorch_{mode}", example)

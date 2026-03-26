@@ -138,6 +138,36 @@ try:
     LOGGER_AVAILABLE = True
 except ImportError:
     LOGGER_AVAILABLE = False
+
+
+def _cleanup_process_group(pgid: Optional[int], *, grace_seconds: float = 2.0) -> None:
+    """Terminate any descendants left behind by a subprocess benchmark worker.
+
+    Some runtimes (notably TRT-LLM/OpenMPI helpers) react badly when they are reaped
+    from inside the worker process itself. The isolated worker is started in its own
+    process group, so the parent harness can clean up that group after stdout/stderr
+    have been collected without risking loss of the serialized result payload.
+    """
+    if pgid is None:
+        return
+
+    try:
+        os.killpg(int(pgid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+
+    deadline = time.time() + max(float(grace_seconds), 0.0)
+    while time.time() < deadline:
+        try:
+            os.killpg(int(pgid), 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            return
+        time.sleep(0.05)
+
+    try:
+        os.killpg(int(pgid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
     import logging
     logger = logging.getLogger(__name__)
 
@@ -3343,6 +3373,7 @@ class BenchmarkHarness:
                 env=env,
                 preexec_fn=os.setsid  # Create new process group for reliable killing
             )
+            child_pgid = os.getpgid(process.pid)
             if LOGGER_AVAILABLE:
                 logger.info(
                     "SUBPROCESS DISPATCH: coordinator_pid=%s worker_pid=%s owner_run_id=%s owner_pid=%s",
@@ -3373,6 +3404,9 @@ class BenchmarkHarness:
                     stderr = stderr or ""
                 if stderr:
                     _maybe_write_subprocess_stderr(stderr, benchmark_name, config)
+                _cleanup_process_group(child_pgid)
+            else:
+                _cleanup_process_group(child_pgid)
 
             if subprocess_failed or process.returncode != 0:
                 error_msg = f"Subprocess exited with code {process.returncode}"

@@ -3,6 +3,12 @@
 ## BE EFFICIENT AND ASK QUESTIONS AT KEY DECISION POINTS
 - Instead of forging ahead and performing a lot of changes, ask me questions if you are unsure or just want re-assurance that your approach is valid.
 
+## Follow Existing Conventions (CRITICAL)
+- Before introducing a new pattern, helper, launcher path, environment setup, harness flow, or sample-specific workaround, examine the existing repo conventions and the relevant benchmark/profiling/runtime harnesses first.
+- Prefer matching the established conventions used by nearby chapters, shared helpers, harness entrypoints, and existing long-running benchmark flows when a suitable pattern already exists.
+- Treat convention changes as rare and deliberate. Only change a convention when the task explicitly requires it or the current convention is clearly wrong and the fix should apply broadly.
+- When you intentionally diverge from an existing convention, call out the prior convention, explain why it is insufficient, and make the convention change explicit in the task summary.
+
 ## Safety (CRITICAL)
 - DO NOT run destructive git commands in this repo (including `git restore`, `git checkout`, `git reset --hard`, `git revert`, or mass file deletions) unless I explicitly ask.
 - NEVER restore/revert/checkout any file to `HEAD` or any commit. Always keep files as-is and include changes (even if unexpected).

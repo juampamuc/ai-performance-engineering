@@ -691,6 +691,56 @@ def test_run_benchmark_e2e_sweep_resume_marks_superseded_running_attempt_aborted
     assert tier1_stage["attempts"][1]["status"] == "succeeded"
 
 
+def test_normalize_stale_running_resume_state_marks_dead_orchestrator_aborted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda _pid: False)
+
+    resume_state = {
+        "run_state": "running",
+        "overall_status": "running",
+        "success": False,
+        "resume_available": False,
+        "orchestrator_pid": 999999,
+        "stages": [
+            {
+                "name": "tier1",
+                "enabled": True,
+                "status": "running",
+                "run_id": "stale_e2e__tier1",
+                "attempts": [
+                    {
+                        "run_id": "stale_e2e__tier1",
+                        "status": "running",
+                    }
+                ],
+            },
+            {
+                "name": "full_sweep",
+                "enabled": False,
+                "status": "skipped",
+                "run_id": "stale_e2e__full_sweep",
+                "attempts": [],
+            },
+        ],
+    }
+
+    reason = e2e_sweep._normalize_stale_running_resume_state(
+        resume_state,
+        repo_root=tmp_path,
+        artifacts_dir=str(tmp_path / "artifacts"),
+    )
+
+    assert reason == "orchestrator process 999999 exited without finalizing run state"
+    assert resume_state["run_state"] == "aborted"
+    assert resume_state["overall_status"] == "aborted"
+    assert resume_state["resume_available"] is True
+    assert resume_state["stages"][0]["status"] == "aborted"
+    assert resume_state["stages"][0]["attempts"][0]["status"] == "aborted"
+    assert reason in resume_state["stages"][0]["attempts"][0]["issues"]
+
+
 def test_run_benchmark_e2e_sweep_resume_resolves_current_targets_for_remaining_units(
     tmp_path: Path,
     monkeypatch,
@@ -1032,6 +1082,208 @@ def test_run_benchmark_e2e_sweep_resume_reruns_partial_unit_with_resume_attempt_
     assert full_stage["attempts"][1]["run_id"] == "e2e_resume__full_sweep__single__resume1"
     assert full_stage["attempts"][1]["completed_units"] == ["ch13", "ch14"]
     assert full_stage["result"]["buckets"]["single_gpu"]["latest_attempt_run_id"] == "e2e_resume__full_sweep__single__resume1"
+    assert result["overall_status"] == "succeeded"
+
+
+def test_run_benchmark_e2e_sweep_resume_canonicalizes_lab_unit_names(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    execute_calls: list[dict[str, object]] = []
+    runs_root = tmp_path / "bench_runs"
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {
+            "counts": {"total": 2, "single_gpu": 2, "multi_gpu": 0},
+            "single_gpu": [
+                "labs/async_input_pipeline:async_input_pipeline",
+                "labs/trtllm_phi_3_5_moe:trtllm_phi_3_5_moe",
+            ],
+            "multi_gpu": [],
+            "targets": [],
+        },
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(e2e_sweep, "_visible_gpu_count", lambda **kwargs: 1)
+
+    def _fake_execute(**kwargs):
+        execute_calls.append(kwargs)
+        paths = e2e_sweep._benchmark_run_event_paths(
+            kwargs["run_id"],
+            repo_root=tmp_path,
+            artifacts_dir=str(runs_root),
+        )
+        paths["events"].parent.mkdir(parents=True, exist_ok=True)
+        paths["output_json"].parent.mkdir(parents=True, exist_ok=True)
+        paths["progress"].parent.mkdir(parents=True, exist_ok=True)
+        paths["events"].write_text(
+            "\n".join(
+                [
+                    json.dumps({"event_type": "run_start", "targets": kwargs["targets"]}),
+                    json.dumps({"event_type": "chapter_start", "chapter": "labs_trtllm_phi_3_5_moe"}),
+                    json.dumps({"event_type": "chapter_end", "chapter": "labs_trtllm_phi_3_5_moe"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        paths["output_json"].write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "chapter": "labs_trtllm_phi_3_5_moe",
+                            "benchmarks": [
+                                {"example": "trtllm_phi_3_5_moe", "status": "succeeded"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        paths["progress"].write_text("{}", encoding="utf-8")
+        return {
+            "run_id": kwargs["run_id"],
+            "output_json": str(paths["output_json"]),
+            "total_failed": 0,
+            "total_skipped": 0,
+        }
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_execute_benchmarks", _fake_execute)
+
+    prior_paths = e2e_sweep._benchmark_run_event_paths(
+        "e2e_resume_labs__full_sweep__single",
+        repo_root=tmp_path,
+        artifacts_dir=str(runs_root),
+    )
+    prior_paths["events"].parent.mkdir(parents=True, exist_ok=True)
+    prior_paths["output_json"].parent.mkdir(parents=True, exist_ok=True)
+    prior_paths["progress"].parent.mkdir(parents=True, exist_ok=True)
+    prior_paths["events"].write_text(
+        "\n".join(
+            [
+                json.dumps({"event_type": "run_start", "targets": [
+                    "labs/async_input_pipeline:async_input_pipeline",
+                    "labs/trtllm_phi_3_5_moe:trtllm_phi_3_5_moe",
+                ]}),
+                json.dumps({"event_type": "chapter_start", "chapter": "labs_async_input_pipeline"}),
+                json.dumps({"event_type": "chapter_end", "chapter": "labs_async_input_pipeline"}),
+                json.dumps({"event_type": "chapter_start", "chapter": "labs_trtllm_phi_3_5_moe"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    prior_paths["output_json"].write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "chapter": "labs_async_input_pipeline",
+                        "benchmarks": [
+                            {"example": "async_input_pipeline", "status": "succeeded"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    prior_paths["progress"].write_text("{}", encoding="utf-8")
+
+    run_dir = e2e_sweep.e2e_run_dir("e2e_resume_labs", tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoint.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-03-25T00:00:00Z",
+                "run_state": "running",
+                "orchestrator_pid": 999999,
+                "contract": {
+                    "profile_type": "minimal",
+                    "run_tier1": False,
+                    "run_full_sweep": True,
+                    "run_cluster": False,
+                    "run_fabric": False,
+                    "cluster_preset": "common-answer-fast",
+                    "hosts": ["localhost"],
+                    "labels": ["localhost"],
+                    "ssh_user": getpass.getuser(),
+                    "ssh_key": None,
+                    "bench_root": str(tmp_path),
+                    "validity_profile": "strict",
+                    "single_gpu": False,
+                },
+                "stages": [
+                    {"name": "tier1", "enabled": False, "status": "skipped", "run_id": "e2e_resume_labs__tier1", "attempts": []},
+                    {
+                        "name": "full_sweep",
+                        "enabled": True,
+                        "status": "running",
+                        "run_id": "e2e_resume_labs__full_sweep",
+                        "attempts": [
+                            {
+                                "run_id": "e2e_resume_labs__full_sweep__single",
+                                "bucket": "single_gpu",
+                                "status": "running",
+                                "targets": [
+                                    "labs/async_input_pipeline:async_input_pipeline",
+                                    "labs/trtllm_phi_3_5_moe:trtllm_phi_3_5_moe",
+                                ],
+                                "units": ["labs/async_input_pipeline", "labs/trtllm_phi_3_5_moe"],
+                                "completed_units": [],
+                                "active_unit": "labs/async_input_pipeline",
+                            }
+                        ],
+                    },
+                    {"name": "cluster", "enabled": False, "status": "skipped", "run_id": "e2e_resume_labs__cluster", "attempts": []},
+                    {"name": "fabric", "enabled": False, "status": "skipped", "run_id": "e2e_resume_labs__fabric", "attempts": []},
+                ],
+                "frozen_plan": {
+                    "full_sweep": {
+                        "single_gpu_targets": [
+                            "labs/async_input_pipeline:async_input_pipeline",
+                            "labs/trtllm_phi_3_5_moe:trtllm_phi_3_5_moe",
+                        ],
+                        "single_gpu_units": ["labs/async_input_pipeline", "labs/trtllm_phi_3_5_moe"],
+                        "multi_gpu_targets": [],
+                        "multi_gpu_units": [],
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_resume_labs",
+        resume=True,
+        run_tier1=False,
+        run_full_sweep=True,
+        run_cluster=False,
+        run_fabric=False,
+        artifacts_dir=str(runs_root),
+    )
+
+    assert len(execute_calls) == 1
+    assert execute_calls[0]["run_id"] == "e2e_resume_labs__full_sweep__single__resume1"
+    assert execute_calls[0]["targets"] == ["labs/trtllm_phi_3_5_moe:trtllm_phi_3_5_moe"]
+    full_stage = next(stage for stage in result["stages"] if stage["name"] == "full_sweep")
+    assert full_stage["attempts"][0]["status"] == "aborted"
+    assert full_stage["attempts"][0]["completed_units"] == ["labs/async_input_pipeline"]
+    assert full_stage["attempts"][0]["active_unit"] == "labs/trtllm_phi_3_5_moe"
+    assert full_stage["attempts"][1]["completed_units"] == ["labs/trtllm_phi_3_5_moe"]
     assert result["overall_status"] == "succeeded"
 
 

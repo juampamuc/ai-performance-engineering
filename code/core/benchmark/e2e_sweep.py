@@ -105,6 +105,26 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
+def _pid_is_live(pid: Optional[int]) -> bool:
+    if pid is None:
+        return False
+    try:
+        pid_int = int(pid)
+    except Exception:
+        return False
+    if pid_int <= 0:
+        return False
+    try:
+        os.kill(pid_int, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def _append_event(events_path: Path, event: str, **fields: Any) -> None:
     events_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"ts": _utc_now(), "event": event, **fields}
@@ -357,7 +377,7 @@ def _group_targets_by_unit(targets: List[str]) -> List[Dict[str, Any]]:
     units: List[Dict[str, Any]] = []
     index_by_name: Dict[str, int] = {}
     for target in targets:
-        unit_name = str(target).split(":", 1)[0].strip() or str(target).strip()
+        unit_name = _canonical_unit_name(str(target).split(":", 1)[0].strip() or str(target).strip())
         if unit_name not in index_by_name:
             index_by_name[unit_name] = len(units)
             units.append({"name": unit_name, "targets": []})
@@ -365,12 +385,22 @@ def _group_targets_by_unit(targets: List[str]) -> List[Dict[str, Any]]:
     return units
 
 
+def _canonical_unit_name(unit_name: Optional[str]) -> str:
+    value = str(unit_name or "").strip()
+    if not value:
+        return ""
+    if value.startswith("labs_"):
+        return f"labs/{value[len('labs_'):]}"
+    return value
+
+
 def _completed_units_from_attempts(attempts: List[Dict[str, Any]], *, ordered_units: List[str]) -> List[str]:
+    ordered_units = [_canonical_unit_name(unit) for unit in ordered_units]
     completed_lookup = {
-        str(unit)
+        _canonical_unit_name(unit)
         for attempt in attempts
         for unit in (attempt.get("completed_units") or [])
-        if str(unit).strip()
+        if _canonical_unit_name(unit)
     }
     return [unit for unit in ordered_units if unit in completed_lookup]
 
@@ -381,7 +411,7 @@ def _remaining_targets_after_completed_units(
     completed_units: List[str],
 ) -> List[str]:
     grouped_units = _group_targets_by_unit(targets)
-    completed_lookup = {str(unit) for unit in completed_units if str(unit).strip()}
+    completed_lookup = {_canonical_unit_name(unit) for unit in completed_units if _canonical_unit_name(unit)}
     first_incomplete_index: Optional[int] = None
     for index, unit in enumerate(grouped_units):
         if unit["name"] not in completed_lookup:
@@ -400,7 +430,8 @@ def _remaining_units_after_completed_units(
     *,
     completed_units: List[str],
 ) -> List[str]:
-    completed_lookup = {str(unit) for unit in completed_units if str(unit).strip()}
+    ordered_units = [_canonical_unit_name(unit) for unit in ordered_units]
+    completed_lookup = {_canonical_unit_name(unit) for unit in completed_units if _canonical_unit_name(unit)}
     first_incomplete_index: Optional[int] = None
     for index, unit in enumerate(ordered_units):
         if unit not in completed_lookup:
@@ -418,15 +449,16 @@ def _resolve_targets_for_units(
 ) -> Tuple[List[str], List[str]]:
     grouped_targets: Dict[str, List[str]] = {}
     for target in available_targets:
-        unit_name = str(target).split(":", 1)[0].strip() or str(target).strip()
+        unit_name = _canonical_unit_name(str(target).split(":", 1)[0].strip() or str(target).strip())
         grouped_targets.setdefault(unit_name, []).append(str(target))
 
     resolved_targets: List[str] = []
     missing_units: List[str] = []
     for unit_name in ordered_units:
-        matches = grouped_targets.get(str(unit_name), [])
+        canonical_unit_name = _canonical_unit_name(unit_name)
+        matches = grouped_targets.get(canonical_unit_name, [])
         if not matches:
-            missing_units.append(str(unit_name))
+            missing_units.append(canonical_unit_name)
             continue
         resolved_targets.extend(matches)
     return resolved_targets, missing_units
@@ -795,6 +827,7 @@ def _emit_live_progress(
     child_stage_name: Optional[str] = None,
     child_run_id: Optional[str] = None,
     child_bucket: Optional[str] = None,
+    orchestrator_pid: Optional[int] = None,
 ) -> None:
     if progress_recorder is None:
         return
@@ -843,6 +876,7 @@ def _emit_live_progress(
             "current_stage": current_stage,
             "current_stage_run_id": child_run_id,
             "current_bucket": child_bucket,
+            "orchestrator_pid": orchestrator_pid,
             "completed_stages": _completed_enabled_stage_count(stages),
             "total_stages": len(enabled),
             "stages": _json_safe(stages),
@@ -1048,7 +1082,7 @@ def _load_benchmark_unit_progress(
     started_units: List[str] = []
     for payload in _read_jsonl(events_path):
         event_type = str(payload.get("event_type") or "")
-        unit_name = str(payload.get("chapter") or "").strip()
+        unit_name = _canonical_unit_name(payload.get("chapter"))
         if not unit_name:
             continue
         if event_type == "chapter_start" and unit_name not in started_units:
@@ -1325,6 +1359,53 @@ def _load_resume_state(
     )
 
 
+def _normalize_stale_running_resume_state(
+    resume_state: Dict[str, Any],
+    *,
+    repo_root: Path,
+    artifacts_dir: Optional[str],
+) -> Optional[str]:
+    if str(resume_state.get("run_state") or "").strip() != "running":
+        return None
+    orchestrator_pid = resume_state.get("orchestrator_pid")
+    if _pid_is_live(orchestrator_pid):
+        return None
+
+    stale_reason = (
+        "orchestrator process exited without finalizing run state"
+        if orchestrator_pid is None
+        else f"orchestrator process {orchestrator_pid} exited without finalizing run state"
+    )
+    stages = _json_safe(resume_state.get("stages") or [])
+    for stage in stages:
+        if isinstance(stage, dict):
+            stage.setdefault("attempts", [])
+    _normalize_incomplete_attempts_for_resume(
+        stages,
+        repo_root=repo_root,
+        artifacts_dir=artifacts_dir,
+        reason=stale_reason,
+    )
+    for stage in stages:
+        if str(stage.get("status") or "") == "running":
+            stage["status"] = _compute_stage_status_from_attempts(stage)
+            stage_issues = list(stage.get("issues") or [])
+            if stale_reason not in stage_issues:
+                stage_issues.append(stale_reason)
+            stage["issues"] = stage_issues
+    crash = dict(resume_state.get("crash") or {})
+    crash.setdefault("type", "orchestrator_exit")
+    crash.setdefault("message", stale_reason)
+    resume_state["crash"] = crash
+    resume_state["run_state"] = "aborted"
+    resume_state["overall_status"] = "aborted"
+    resume_state["success"] = False
+    resume_state["resume_available"] = True
+    resume_state["error"] = stale_reason
+    resume_state["stages"] = stages
+    return stale_reason
+
+
 def _validate_resume_contract(
     *,
     requested: Dict[str, Any],
@@ -1407,6 +1488,7 @@ def _build_checkpoint_payload(
     stages: List[Dict[str, Any]],
     artifact_paths: Dict[str, Path],
     crash: Optional[Dict[str, Any]],
+    orchestrator_pid: Optional[int],
 ) -> Dict[str, Any]:
     return {
         "schema_version": "1.0",
@@ -1427,6 +1509,7 @@ def _build_checkpoint_payload(
         "stages": stages,
         "artifact_paths": {key: str(value) for key, value in artifact_paths.items()},
         "crash": crash,
+        "orchestrator_pid": orchestrator_pid,
     }
 
 
@@ -1448,6 +1531,7 @@ def _build_summary_payload(
     stages: List[Dict[str, Any]],
     artifact_paths: Dict[str, Path],
     crash: Optional[Dict[str, Any]],
+    orchestrator_pid: Optional[int],
 ) -> Dict[str, Any]:
     return {
         "success": success,
@@ -1472,6 +1556,7 @@ def _build_summary_payload(
         "contract": contract,
         "stages": stages,
         "crash": crash,
+        "orchestrator_pid": orchestrator_pid,
     }
 
 
@@ -1781,6 +1866,18 @@ def run_benchmark_e2e_sweep(
             repo_root=repo_root,
             artifacts_dir=artifacts_dir,
         )
+        stale_reason = _normalize_stale_running_resume_state(
+            resume_state,
+            repo_root=repo_root,
+            artifacts_dir=artifacts_dir,
+        )
+        if stale_reason:
+            _append_event(
+                events_path,
+                "run_recovered_aborted",
+                run_id=resolved_run_id,
+                error=stale_reason,
+            )
         mismatch_error = _validate_resume_contract(
             requested=requested_contract,
             stored=resume_state.get("contract") or {},
@@ -1868,6 +1965,7 @@ def run_benchmark_e2e_sweep(
             stages=stages,
             artifact_paths=artifact_paths,
             crash=crash,
+            orchestrator_pid=os.getpid(),
         )
         checkpoint_payload = _build_checkpoint_payload(
             run_id=resolved_run_id,
@@ -1887,6 +1985,7 @@ def run_benchmark_e2e_sweep(
             stages=stages,
             artifact_paths=artifact_paths,
             crash=crash,
+            orchestrator_pid=os.getpid(),
         )
         if not dry_run:
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -1910,6 +2009,7 @@ def run_benchmark_e2e_sweep(
                 overall_status=overall_status,
                 artifact_paths=artifact_paths,
                 emit_lock=progress_emit_lock,
+                orchestrator_pid=os.getpid(),
             )
         return _json_safe(summary_payload)
 
@@ -1934,6 +2034,7 @@ def run_benchmark_e2e_sweep(
             child_stage_name=stage_name,
             child_run_id=child_run_id,
             child_bucket=bucket,
+            orchestrator_pid=os.getpid(),
         )
 
     def _run_with_stage_progress_mirror(

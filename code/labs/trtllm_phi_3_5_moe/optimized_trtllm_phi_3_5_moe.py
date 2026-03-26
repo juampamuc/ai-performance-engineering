@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import gc
 import torch
 
 from core.benchmark.verification import PrecisionFlags, simple_signature
@@ -20,7 +21,6 @@ from labs.trtllm_phi_3_5_moe.trtllm_common import (
     slice_generated_token_ids,
     verification_token_prefix_length,
 )
-
 
 class OptimizedTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """TensorRT-LLM optimized generation for Phi-3.5-MoE."""
@@ -170,6 +170,16 @@ class OptimizedTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def teardown(self) -> None:
+        runner = self.runner
+        if runner is not None:
+            for method_name in ("shutdown", "close", "stop", "finalize", "destroy", "release"):
+                method = getattr(runner, method_name, None)
+                if not callable(method):
+                    continue
+                try:
+                    method()
+                except Exception:
+                    continue
         self.runner = None
         self.tokenizer = None
         self.sampling_config = None
@@ -178,19 +188,21 @@ class OptimizedTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.prompt_lengths = None
         self._generated_output_ids = None
         self.output = None
+        del runner
+        gc.collect()
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        # TensorRT-LLM's Python runtime spawns an `orted` helper even for world_size=1.
-        # ModelRunner does not expose a public shutdown/finalize hook for that daemon,
-        # so the isolated-runner descendant reaper will eventually SIGKILL it and the
-        # subprocess exits 195 during teardown. Run this benchmark in-process instead.
+        # TensorRT-LLM's Python runtime spawns helper processes even for world_size=1.
+        # Normal timing runs still use the isolated subprocess path so the parent harness
+        # can serialize results and reap any detached helpers after exit. Profiler wrappers
+        # intentionally hard-exit without calling teardown because explicit TRT-LLM shutdown
+        # under Nsight can segfault in cuMemFreeAsync / IExecutionContext deallocation.
         return BenchmarkConfig(
             iterations=5,
             warmup=5,
             timing_method="wall_clock",
             full_device_sync=True,
-            use_subprocess=False,
         )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

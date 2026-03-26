@@ -3168,6 +3168,91 @@ def _terminate_process_group(process: subprocess.Popen, reason: str, timeout_sec
             logger.warning("  Profiler cleanup detail (%s): %s", reason, detail)
 
 
+def _collect_process_group_members(
+    process_group_id: int,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> List[int]:
+    members: List[int] = []
+    try:
+        proc_entries = list(proc_root.iterdir())
+    except Exception:
+        return members
+
+    for proc_dir in proc_entries:
+        if not proc_dir.name.isdigit():
+            continue
+        try:
+            stat_text = (proc_dir / "stat").read_text(encoding="utf-8")
+        except Exception:
+            continue
+        close_paren = stat_text.rfind(")")
+        if close_paren < 0:
+            continue
+        tail = stat_text[close_paren + 1 :].strip().split()
+        if len(tail) < 3:
+            continue
+        try:
+            pid = int(proc_dir.name)
+            group_id = int(tail[2])
+        except ValueError:
+            continue
+        if group_id == int(process_group_id):
+            members.append(pid)
+    members.sort()
+    return members
+
+
+def _reap_process_group_members(
+    process_group_id: Optional[int],
+    *,
+    reason: str,
+    preserve_pids: Optional[Set[int]] = None,
+    grace_seconds: float = 2.0,
+    proc_root: Path = Path("/proc"),
+) -> int:
+    if process_group_id is None or int(process_group_id) <= 0:
+        return 0
+    preserved = {int(pid) for pid in (preserve_pids or set()) if int(pid) > 0}
+    members = [
+        pid
+        for pid in _collect_process_group_members(int(process_group_id), proc_root=proc_root)
+        if pid not in preserved and pid != os.getpid()
+    ]
+    if not members:
+        return 0
+
+    for pid in members:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    remaining = members
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.05)
+        remaining = [pid for pid in remaining if (proc_root / str(pid)).exists()]
+
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+
+    if LOGGER_AVAILABLE:
+        logger.warning(
+            "  Reaped %d lingering profiler process-group member(s) after %s",
+            len(members),
+            reason,
+        )
+    return len(members)
+
+
 @dataclass
 class _ProfileSubprocessResult:
     process: subprocess.Popen[str]
@@ -3191,6 +3276,7 @@ def _run_profile_subprocess(
 ) -> _ProfileSubprocessResult:
     stdout_log = log_base.with_suffix(".stdout.log")
     stderr_log = log_base.with_suffix(".stderr.log")
+    process_group_id: Optional[int] = None
     popen_kwargs = dict(
         cwd=str(cwd),
         text=True,
@@ -3204,6 +3290,7 @@ def _run_profile_subprocess(
             stderr=subprocess.PIPE,
             **popen_kwargs,
         )
+        process_group_id = process.pid
     else:
         with stdout_log.open("w") as stdout_handle, stderr_log.open("w") as stderr_handle:
             process = subprocess.Popen(
@@ -3212,6 +3299,7 @@ def _run_profile_subprocess(
                 stderr=stderr_handle,
                 **popen_kwargs,
             )
+            process_group_id = process.pid
 
     stdout_text = ""
     stderr_text = ""
@@ -3241,6 +3329,12 @@ def _run_profile_subprocess(
             stdout_log.write_text(stdout_text)
         if stderr_text:
             stderr_log.write_text(stderr_text)
+    if not timed_out and failure_warning is None:
+        _reap_process_group_members(
+            process_group_id,
+            reason=terminate_reason,
+            preserve_pids={process.pid},
+        )
     log_base.with_suffix(".command.json").write_text(json.dumps({"command": command}, indent=2))
     return _ProfileSubprocessResult(
         process=process,
@@ -3323,6 +3417,47 @@ def _read_proc_cmdline(pid: int, *, proc_root: Path = Path("/proc")) -> str:
     return " ".join(part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part)
 
 
+def _read_proc_cmdline_arg_value(
+    pid: int,
+    flag: str,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> Optional[str]:
+    cmdline = _read_proc_cmdline(pid, proc_root=proc_root)
+    if not cmdline:
+        return None
+    tokens = [token for token in shlex.split(cmdline) if token]
+    prefix = f"{flag}="
+    for index, token in enumerate(tokens):
+        if token == flag and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith(prefix):
+            return token[len(prefix) :]
+    return None
+
+
+def _read_proc_owner_marker(
+    pid: int,
+    *,
+    env_key: str,
+    cmdline_flag: str,
+    proc_root: Path = Path("/proc"),
+) -> Optional[str]:
+    env = _read_proc_environ(pid, proc_root=proc_root)
+    value = str(env.get(env_key, "")).strip()
+    if value:
+        return value
+    cmdline_value = _read_proc_cmdline_arg_value(
+        pid,
+        cmdline_flag,
+        proc_root=proc_root,
+    )
+    if cmdline_value is None:
+        return None
+    stripped = str(cmdline_value).strip()
+    return stripped or None
+
+
 def _read_proc_parent_pid(pid: int, *, proc_root: Path = Path("/proc")) -> Optional[int]:
     try:
         stat_text = (proc_root / str(int(pid)) / "stat").read_text(encoding="utf-8")
@@ -3379,9 +3514,21 @@ def _collect_current_run_benchmark_orphan_pids(
             continue
 
         env = _read_proc_environ(pid, proc_root=proc_root)
-        if str(env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip() != run_id:
+        owner_run_id = _read_proc_owner_marker(
+            pid,
+            env_key="AISP_BENCHMARK_OWNER_RUN_ID",
+            cmdline_flag="--aisp-owner-run-id",
+            proc_root=proc_root,
+        )
+        if owner_run_id != run_id:
             continue
-        if str(env.get("AISP_BENCHMARK_OWNER_PID", "")).strip() != owner_pid_marker:
+        owner_pid_value = _read_proc_owner_marker(
+            pid,
+            env_key="AISP_BENCHMARK_OWNER_PID",
+            cmdline_flag="--aisp-owner-pid",
+            proc_root=proc_root,
+        )
+        if owner_pid_value and owner_pid_value != owner_pid_marker:
             continue
 
         cmdline = _read_proc_cmdline(pid, proc_root=proc_root)
@@ -3420,7 +3567,12 @@ def _collect_stale_benchmark_orphan_pids(
             continue
         pid = int(proc_dir.name)
         env = _read_proc_environ(pid, proc_root=proc_root)
-        owner_run_id = str(env.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+        owner_run_id = _read_proc_owner_marker(
+            pid,
+            env_key="AISP_BENCHMARK_OWNER_RUN_ID",
+            cmdline_flag="--aisp-owner-run-id",
+            proc_root=proc_root,
+        ) or ""
         if not owner_run_id or owner_run_id == str(current_run_id).strip():
             continue
 

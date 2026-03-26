@@ -30,6 +30,8 @@ from core.harness.benchmark_harness import (
 )
 from core.optimization.moe_inference import resolve_dtype
 
+MOE_HYBRID_EP_ENTRYPOINT_MODULE = "labs.fullstack_cluster.moe_hybrid_ep_entrypoint"
+
 
 def _parse_bool_env(name: str, default: bool) -> bool:
     value = os.environ.get(name)
@@ -906,9 +908,9 @@ def build_parser(*, optimized: bool) -> argparse.ArgumentParser:
     return parser
 
 
-def run_cli(*, optimized: bool) -> Dict[str, float]:
+def run_cli(*, optimized: bool, argv: Optional[Sequence[str]] = None) -> Dict[str, float]:
     parser = build_parser(optimized=optimized)
-    args = parser.parse_args()
+    args = parser.parse_args(list(argv) if argv is not None else None)
     topology = init_topology()
     try:
         if not args.skip_preflight:
@@ -974,7 +976,7 @@ class MoEHybridEPBenchmark(VerificationPayloadMixin, BaseBenchmark):
             nnodes=None if self.multigpu else "1",
             iterations=1,
             warmup=2,
-            multi_gpu_required=False,
+            multi_gpu_required=self.multigpu,
             measurement_timeout_seconds=1800,
             timing_method="wall_clock",
         )
@@ -1001,14 +1003,17 @@ class MoEHybridEPBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_torchrun_spec(self, config: BenchmarkConfig | None = None) -> TorchrunLaunchSpec:
         self._prepare_verification_payload()
         self._metrics_sidecar_path.unlink(missing_ok=True)
+        script_args = ["--skip-preflight"]
+        if self.optimized:
+            script_args = ["--optimized", *script_args]
         return TorchrunLaunchSpec(
-            script_path=Path(self.script_path),
-            script_args=["--skip-preflight"],
+            module_name=MOE_HYBRID_EP_ENTRYPOINT_MODULE,
+            script_args=script_args,
             env={
                 "AISP_MOE_HYBRID_EP_METRICS_PATH": str(self._metrics_sidecar_path),
             },
             parse_rank0_only=True,
-            multi_gpu_required=False,
+            multi_gpu_required=self.multigpu,
             name=self.name,
             config_arg_map={
                 "iterations": "--iters",

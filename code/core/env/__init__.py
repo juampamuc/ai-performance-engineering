@@ -104,6 +104,10 @@ REPORTED_ENV_KEYS: Tuple[str, ...] = (
     "CUDA_DEVICE_MAX_CONNECTIONS",
     "HF_HUB_DOWNLOAD_TIMEOUT",
     "HF_HUB_ETAG_TIMEOUT",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "HUGGINGFACE_HUB_CACHE",
+    "TRANSFORMERS_CACHE",
     "PYTORCH_ALLOC_CONF",
     "TORCH_COMPILE_DEBUG",
     "TORCH_LOGS",
@@ -294,6 +298,28 @@ def _prioritize_runtime_libraries() -> None:
     os.environ["LD_LIBRARY_PATH"] = ":".join(ordered)
 
 
+def _ensure_huggingface_cache_dirs() -> None:
+    """Ensure writable Hugging Face cache directories for benchmarked entrypoints."""
+    root = Path.cwd() / ".cache" / "huggingface"
+    cache_map = {
+        "HF_HOME": root,
+        "HF_HUB_CACHE": root / "hub",
+        "HUGGINGFACE_HUB_CACHE": root / "hub",
+    }
+
+    for key, default_path in cache_map.items():
+        current = os.environ.get(key)
+        resolved = Path(current).expanduser() if current else default_path
+        resolved.mkdir(parents=True, exist_ok=True)
+        os.environ[key] = str(resolved)
+
+    transformers_cache = os.environ.get("TRANSFORMERS_CACHE")
+    if transformers_cache:
+        resolved = Path(transformers_cache).expanduser()
+        resolved.mkdir(parents=True, exist_ok=True)
+        os.environ["TRANSFORMERS_CACHE"] = str(resolved)
+
+
 def apply_env_defaults() -> Dict[str, str]:
     """Apply default environment configuration and return the resulting values.
     
@@ -358,6 +384,8 @@ def apply_env_defaults() -> Dict[str, str]:
             ensure_clean_build_directory(torch_extensions_path)
     except (OSError, PermissionError):
         pass
+
+    _ensure_huggingface_cache_dirs()
 
     # Only ensure CUDA paths if CUDA_HOME was not already set by user
     # This prevents overwriting user-configured CUDA installations

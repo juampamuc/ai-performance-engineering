@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from unittest import mock
 
 import pytest
 import torch
@@ -15,6 +16,8 @@ import torch
 from core.harness.validity_checks import _list_foreign_cuda_compute_processes
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.utils.chapter_compare_template import load_benchmark
+
+ENTRYPOINT_MODULE = "labs.fullstack_cluster.moe_hybrid_ep_entrypoint"
 
 
 def _load_module(module_path: Path):
@@ -47,9 +50,14 @@ def test_fullstack_cluster_wrappers_attach_metadata_and_torchrun_script(relative
     assert getattr(bench, "_module_file_override", None) == str(module_path)
     assert getattr(bench, "_factory_name_override", None) == "get_benchmark"
     assert Path(bench.script_path) == module_path
-    assert spec.script_path == module_path
-    assert spec.script_args == ["--skip-preflight"]
+    assert spec.script_path is None
+    assert spec.module_name == ENTRYPOINT_MODULE
+    expected_args = ["--skip-preflight"]
+    if "optimized_" in module_path.name:
+        expected_args = ["--optimized", *expected_args]
+    assert spec.script_args == expected_args
     assert "AISP_MOE_HYBRID_EP_METRICS_PATH" in spec.env
+    assert spec.multi_gpu_required is ("multigpu" in module_path.name)
     assert bench._verify_output.device.type == "cpu"
 
 
@@ -76,11 +84,29 @@ def test_fullstack_cluster_wrappers_expose_real_profile_torchrun_specs(relative_
     )
 
     assert nsys_spec is not None
-    assert Path(nsys_spec.script_path) == module_path
-    assert nsys_spec.script_args == ["--skip-preflight"]
+    assert nsys_spec.script_path is None
+    assert nsys_spec.module_name == ENTRYPOINT_MODULE
+    expected_args = ["--skip-preflight"]
+    if "optimized_" in module_path.name:
+        expected_args = ["--optimized", *expected_args]
+    assert nsys_spec.script_args == expected_args
     assert torch_spec is not None
-    assert Path(torch_spec.script_path) == module_path
-    assert torch_spec.script_args == ["--skip-preflight", "--torch-profile-output", str(tmp_path / "trace.json")]
+    assert torch_spec.script_path is None
+    assert torch_spec.module_name == ENTRYPOINT_MODULE
+    expected_torch_args = [*expected_args, "--torch-profile-output", str(tmp_path / "trace.json")]
+    assert torch_spec.script_args == expected_torch_args
+
+
+def test_moe_hybrid_ep_entrypoint_routes_optimized_flag_and_remainder() -> None:
+    from labs.fullstack_cluster import moe_hybrid_ep_entrypoint as entrypoint
+
+    with mock.patch.object(entrypoint, "run_cli") as run_cli:
+        entrypoint.main(["--optimized", "--skip-preflight", "--iters", "3"])
+
+    run_cli.assert_called_once_with(
+        optimized=True,
+        argv=["--skip-preflight", "--iters", "3"],
+    )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for benchmark wrappers")

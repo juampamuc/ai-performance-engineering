@@ -23,6 +23,7 @@ third_party/te_sm100a_env.sh
 .plan-and-implement/
 .cursor/plans/
 .env
+.cache/
 .env.local
 .env.bak
 .venv/

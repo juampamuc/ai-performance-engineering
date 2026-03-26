@@ -428,15 +428,7 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
     
     stdout_buffer = io.StringIO()
     with redirect_stdout(stdout_buffer):
-        try:
-            result = _execute()
-        finally:
-            # Strict isolation contract: never leak child processes (e.g., vLLM workers)
-            # into subsequent benchmark subprocesses.
-            try:
-                _reap_descendant_processes()
-            except Exception as exc:
-                _emit_runner_warning("Failed to reap descendant processes", error=str(exc))
+        result = _execute()
     captured = stdout_buffer.getvalue().strip()
     if captured:
         try:

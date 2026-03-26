@@ -551,9 +551,13 @@ class NsightAutomation:
             self.last_error = e.stderr or e.stdout or str(e)
             logger.error(f"Nsight Systems failed: {self.last_error}")
             if self._wait_for_output_artifact(output_path, settle_seconds=10.0):
-                logger.warning(
-                    "Nsight Systems returned non-zero status but produced a usable report artifact."
+                failure_detail = self.last_error or f"returncode={e.returncode}"
+                self.last_error = (
+                    "Nsight Systems returned non-zero status but produced a report artifact "
+                    f"at {output_path}; treating profiler capture as failed. Detail: "
+                    f"{failure_detail}"
                 )
+                logger.warning(self.last_error)
                 self.last_run.update(
                     {
                         "stdout": e.output,
@@ -561,11 +565,11 @@ class NsightAutomation:
                         "returncode": e.returncode,
                         "timeout_hit": False,
                         "output": str(output_path),
+                        "artifact_on_failure": str(output_path),
                         "graceful_finalize_attempted": False,
                     }
                 )
-                self.last_error = None
-                return output_path
+                return None
             if sanitize_python_startup and self._is_startup_sanitizer_issue(self.last_error):
                 logger.warning(
                     "Retrying NSYS capture with sanitize_python_startup=False due to "

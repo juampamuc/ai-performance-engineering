@@ -495,7 +495,7 @@ def test_profile_nsys_timeout_accepts_late_finalized_report(tmp_path: Path, monk
     assert automation.last_run["output"] == str(result)
 
 
-def test_profile_nsys_nonzero_exit_accepts_usable_report(tmp_path: Path, monkeypatch):
+def test_profile_nsys_nonzero_exit_with_usable_report_is_failure(tmp_path: Path, monkeypatch):
     import subprocess
     from core.profiling.nsight_automation import NsightAutomation
 
@@ -526,10 +526,12 @@ def test_profile_nsys_nonzero_exit_accepts_usable_report(tmp_path: Path, monkeyp
         timeout_seconds=30,
     )
 
-    assert result == tmp_path / "nonzero_finalize_demo.nsys-rep"
-    assert result.exists()
-    assert automation.last_error is None
-    assert automation.last_run["output"] == str(result)
+    expected_report = tmp_path / "nonzero_finalize_demo.nsys-rep"
+    assert result is None
+    assert expected_report.exists()
+    assert "returned non-zero status but produced a report artifact" in automation.last_error
+    assert automation.last_run["output"] == str(expected_report)
+    assert automation.last_run["artifact_on_failure"] == str(expected_report)
     assert automation.last_run["returncode"] == 7
 
 

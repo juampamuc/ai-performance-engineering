@@ -1,10 +1,14 @@
 import sys
 import os
 import json
+import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import os.path
+
+import pytest
 
 from core.harness.benchmark_harness import BenchmarkConfig, LaunchVia, TorchrunLaunchSpec
 from core.harness import run_benchmarks
@@ -538,6 +542,54 @@ def test_run_profile_subprocess_streams_output_to_logs(tmp_path: Path) -> None:
     assert result.stdout_log.read_text() == "stream-stdout\n"
     assert result.stderr_log.read_text() == "stream-stderr\n"
     assert json.loads(log_base.with_suffix(".command.json").read_text())["command"][0] == sys.executable
+
+
+def test_run_profile_subprocess_reaps_lingering_process_group_members(tmp_path: Path) -> None:
+    log_base = tmp_path / "lingering"
+    child_pid_path = tmp_path / "lingering_child.pid"
+    launcher = (
+        "import pathlib, subprocess, sys, time; "
+        f"pid_path = pathlib.Path({str(child_pid_path)!r}); "
+        "child = subprocess.Popen("
+        "[sys.executable, '-c', 'import time; time.sleep(60)'], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL"
+        "); "
+        "pid_path.write_text(str(child.pid), encoding='utf-8'); "
+        "time.sleep(0.2)"
+    )
+
+    result = _run_profile_subprocess(
+        command=[sys.executable, "-c", launcher],
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=5.0,
+        log_base=log_base,
+        terminate_reason="lingering",
+        capture_output=True,
+        timeout_collect_error_message="timeout follow-up failed",
+        wait_error_message="communicate failed",
+    )
+
+    child_pid = int(child_pid_path.read_text(encoding="utf-8").strip())
+    try:
+        deadline = time.time() + 5.0
+        while deadline > time.time():
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+
+        assert result.process.returncode == 0
+        assert result.timed_out is False
+        assert result.failure_warning is None
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        try:
+            os.kill(child_pid, 9)
+        except ProcessLookupError:
+            pass
 
 
 def test_profile_cuda_executable_ncu_uses_shared_subprocess_runner(tmp_path: Path) -> None:

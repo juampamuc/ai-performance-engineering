@@ -60,6 +60,9 @@ def test_render_nsys_wrapper_contains_expected_config() -> None:
     assert "_apply_overrides(list(_target_override_argv))" in wrapper
     assert "target_extra_args={_target_label: list(_target_override_argv)}" in wrapper
     assert 'with nvtx_range("compute_kernel:profile", enable=True):' in wrapper
+    assert 'if getattr(benchmark, "profile_require_teardown", False):' in wrapper
+    assert "_os._exit(0)" in wrapper
+    assert "raise SystemExit(0)" not in wrapper
 
 
 def test_render_ncu_wrapper_contains_expected_config() -> None:
@@ -87,6 +90,9 @@ def test_render_ncu_wrapper_contains_expected_config() -> None:
     assert "_target_override_argv = ['--mode', 'fwd_bwd']" in wrapper
     assert "_apply_overrides(list(_target_override_argv))" in wrapper
     assert "with nvtx_range('capture', enable=True):" in wrapper
+    assert 'if getattr(benchmark, "profile_require_teardown", False):' in wrapper
+    assert "_os._exit(0)" in wrapper
+    assert "raise SystemExit(0)" not in wrapper
 
 
 def test_render_torch_wrapper_contains_expected_output_path() -> None:

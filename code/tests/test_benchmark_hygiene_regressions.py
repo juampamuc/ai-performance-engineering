@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import signal
 import subprocess
 from types import SimpleNamespace
 import tempfile
@@ -29,6 +30,7 @@ from labs.real_world_models.deepseek_r1_moe_optimization import (
 from labs.real_world_models.gpt4_architecture_optimization import (
     get_benchmark as get_gpt4_benchmark,
 )
+from core.harness.benchmark_harness import _cleanup_process_group
 from core.harness.run_benchmarks import (
     INFORMATIONAL_BENCHMARKS,
     _collect_current_run_benchmark_orphan_pids,
@@ -137,6 +139,30 @@ def test_occupancy_tuning_variants_match_their_filenames() -> None:
 def test_real_world_model_entrypoints_return_harness_benchmarks() -> None:
     assert isinstance(get_deepseek_benchmark(), BaseBenchmark)
     assert isinstance(get_gpt4_benchmark(), BaseBenchmark)
+
+
+def test_cleanup_process_group_escalates_when_group_survives(monkeypatch: pytest.MonkeyPatch) -> None:
+    signals: list[int] = []
+
+    def _fake_killpg(_pgid: int, sig: int) -> None:
+        if sig == 0:
+            return
+        signals.append(sig)
+
+    monkeypatch.setattr("core.harness.benchmark_harness.os.killpg", _fake_killpg)
+
+    _cleanup_process_group(4242, grace_seconds=0.0)
+
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
+
+
+def test_cleanup_process_group_ignores_missing_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _missing_killpg(_pgid: int, _sig: int) -> None:
+        raise ProcessLookupError
+
+    monkeypatch.setattr("core.harness.benchmark_harness.os.killpg", _missing_killpg)
+
+    _cleanup_process_group(4242)
 
 
 def test_flexattention_metrics_use_attention_formula_and_hot_paths_skip_clone() -> None:
@@ -546,6 +572,56 @@ def test_run_benchmarks_identifies_detached_current_run_processes_by_owner_pid()
         )
 
         assert current_orphans == [1234]
+
+
+def test_run_benchmarks_identifies_detached_current_run_processes_by_cmdline_owner_markers() -> None:
+    with tempfile.TemporaryDirectory() as proc_dir:
+        proc_root = Path(proc_dir)
+
+        owner_dir = proc_root / "555"
+        owner_dir.mkdir()
+        (owner_dir / "stat").write_text("555 (python3) S 1 0 0 0 0\n", encoding="utf-8")
+
+        orphan_dir = proc_root / "1234"
+        orphan_dir.mkdir()
+        (orphan_dir / "stat").write_text("1234 (python3) S 1 0 0 0 0\n", encoding="utf-8")
+        (orphan_dir / "environ").write_bytes(b"PWD=" + str(REPO_ROOT).encode("utf-8") + b"\0")
+        (orphan_dir / "cmdline").write_bytes(
+            b"/usr/bin/python3\0-m\0core.profiling.nsys_capture_helper\0"
+            b"--aisp-owner-run-id\0current-run\0--aisp-owner-pid\0"
+            b"555\0"
+        )
+
+        current_orphans = _collect_current_run_benchmark_orphan_pids(
+            current_run_id="current-run",
+            current_owner_pid=555,
+            repo_root=REPO_ROOT,
+            proc_root=proc_root,
+        )
+
+        assert current_orphans == [1234]
+
+
+def test_run_benchmarks_reaps_orphaned_benchmark_processes_from_older_runs_via_cmdline_marker() -> None:
+    with tempfile.TemporaryDirectory() as proc_dir:
+        proc_root = Path(proc_dir)
+
+        orphan_dir = proc_root / "1234"
+        orphan_dir.mkdir()
+        (orphan_dir / "stat").write_text("1234 (python3) S 1 0 0 0 0\n", encoding="utf-8")
+        (orphan_dir / "environ").write_bytes(b"PWD=" + str(REPO_ROOT).encode("utf-8") + b"\0")
+        (orphan_dir / "cmdline").write_bytes(
+            b"/usr/bin/python3\0-m\0core.profiling.nsys_capture_helper\0"
+            b"--aisp-owner-run-id\0old-run\0"
+        )
+
+        stale = _collect_stale_benchmark_orphan_pids(
+            current_run_id="current-run",
+            repo_root=REPO_ROOT,
+            proc_root=proc_root,
+        )
+
+        assert stale == [1234]
 
 
 def test_run_benchmarks_reaps_current_run_descendants() -> None:

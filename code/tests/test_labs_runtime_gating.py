@@ -169,11 +169,35 @@ def test_trtllm_benchmarks_use_wall_clock_timing() -> None:
     assert optimized_config.full_device_sync is True
 
 
-def test_optimized_trtllm_uses_thread_execution_due_to_mpi_daemon_lifecycle() -> None:
+def test_optimized_trtllm_uses_subprocess_execution_after_local_descendant_cleanup() -> None:
     config = OptimizedTrtLlmPhi35MoeBenchmark().get_config()
 
-    assert config.use_subprocess is False
-    assert config.execution_mode == ExecutionMode.THREAD
+    assert config.use_subprocess is True
+    assert config.execution_mode == ExecutionMode.SUBPROCESS
+
+
+def test_optimized_trtllm_profiler_path_uses_hard_exit_cleanup() -> None:
+    bench = OptimizedTrtLlmPhi35MoeBenchmark()
+
+    assert getattr(bench, "profile_require_teardown", False) is False
+
+
+def test_optimized_trtllm_teardown_calls_runner_release_hooks_without_local_descendant_reap() -> None:
+    calls: list[str] = []
+
+    class _FakeRunner:
+        def shutdown(self) -> None:
+            calls.append("shutdown")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    bench = OptimizedTrtLlmPhi35MoeBenchmark()
+    bench.runner = _FakeRunner()
+    bench.teardown()
+
+    assert calls == ["shutdown", "close"]
+    assert bench.runner is None
 
 
 def test_trtllm_generated_token_slice_normalizes_beams_and_padding() -> None:

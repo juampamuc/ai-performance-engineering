@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -34,6 +35,22 @@ def test_base_env_includes_repo_root_on_pythonpath() -> None:
     env = profile_harness.base_env(example)
 
     assert str(REPO_ROOT) in env["PYTHONPATH"].split(os.pathsep)
+
+
+def test_run_pytorch_profiler_uses_shared_profiling_runner(tmp_path: Path) -> None:
+    example = EXAMPLE_BY_NAME["ch13_train_deepseek_coder"]
+    context = argparse.Namespace(dry_run=True)
+
+    results = profile_harness.run_pytorch_profiler(
+        example,
+        session_dir=tmp_path,
+        context=context,
+        modes=["full"],
+        timeout=60,
+    )
+
+    assert len(results) == 1
+    assert "core/scripts/profiling/pytorch_profiler_runner.py" in results[0].command[1]
 
 
 def test_ch20_example_registry_uses_module_launch_for_ai_kernel_generator() -> None:

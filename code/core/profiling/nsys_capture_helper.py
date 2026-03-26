@@ -5,9 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from core.profiling.nsight_automation import NsightAutomation
+
+
+def _apply_owner_markers_from_args(args: argparse.Namespace) -> None:
+    if getattr(args, "aisp_owner_run_id", None):
+        os.environ["AISP_BENCHMARK_OWNER_RUN_ID"] = str(args.aisp_owner_run_id)
+    if getattr(args, "aisp_owner_pid", None):
+        os.environ["AISP_BENCHMARK_OWNER_PID"] = str(args.aisp_owner_pid)
 
 
 def main() -> int:
@@ -17,6 +25,7 @@ def main() -> int:
     parser.add_argument("--payload", required=True, help="Path to JSON payload.")
     parser.add_argument("--result", required=True, help="Path to JSON result file.")
     args = parser.parse_args()
+    _apply_owner_markers_from_args(args)
 
     payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
     automation = NsightAutomation(Path(payload["output_dir"]))

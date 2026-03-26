@@ -11,10 +11,11 @@ from core.harness import isolated_runner
 
 
 def test_run_benchmark_emits_warning_when_reap_fails(monkeypatch, tmp_path) -> None:
+    reaped: list[bool] = []
     monkeypatch.setattr(
         isolated_runner,
         "_reap_descendant_processes",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("reap failed")),
+        lambda *args, **kwargs: reaped.append(True),
     )
 
     stderr = io.StringIO()
@@ -30,8 +31,8 @@ def test_run_benchmark_emits_warning_when_reap_fails(monkeypatch, tmp_path) -> N
         )
 
     assert result["success"] is False
-    assert "isolated_runner_warning" in stderr.getvalue()
-    assert "reap failed" in stderr.getvalue()
+    assert reaped == []
+    assert "isolated_runner_warning" not in stderr.getvalue()
 
 
 def test_reset_cuda_state_emits_warnings_for_cleanup_failures(monkeypatch) -> None:
