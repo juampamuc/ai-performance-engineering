@@ -620,6 +620,7 @@ def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
         "allow_mixed_provenance": bool(params.get("allow_mixed_provenance", False)),
         "allow_portable_expectations_update": bool(params.get("allow_portable_expectations_update", False)),
         "run_id": run_id,
+        "resume": bool(params.get("resume", False)),
         "dry_run": dry_run,
     }
 

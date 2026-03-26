@@ -2413,6 +2413,8 @@ def _retry_nsys_in_clean_helper(
     env: Dict[str, str],
 ) -> Optional[Path]:
     _set_profile_failure_detail("nsys", None)
+    owner_run_id = str(os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+    owner_pid = str(os.environ.get("AISP_BENCHMARK_OWNER_PID", "")).strip()
     payload = {
         "output_dir": str(output_dir),
         "output_name": output_name,
@@ -2437,6 +2439,16 @@ def _retry_nsys_in_clean_helper(
                 sys.executable,
                 "-m",
                 "core.profiling.nsys_capture_helper",
+                *(
+                    ["--aisp-owner-run-id", owner_run_id]
+                    if owner_run_id
+                    else []
+                ),
+                *(
+                    ["--aisp-owner-pid", owner_pid]
+                    if owner_pid
+                    else []
+                ),
                 "--payload",
                 str(payload_path),
                 "--result",
@@ -3031,30 +3043,66 @@ def profile_cuda_executable(
         from core.profiling.nsight_automation import NsightAutomation
 
         automation = NsightAutomation(output_dir)
-        nsys_report = automation.profile_nsys(
-            command=[str(executable)],
-            output_name=f"{exec_name}__{variant}",
-            trace_cuda=True,
-            trace_nvtx=True,
-            trace_osrt=True,
-            full_timeline=False,
-            trace_forks=False,
-            preset="light",
-            timeout_seconds=float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else 120.0,
-            wait_mode="primary",
-            finalize_grace_seconds=20.0,
-            force_lineinfo=True,
-            extra_env=_apply_profile_env_overrides(
-                _harden_profile_env(
-                    None,
-                    repo_root=Path(__file__).resolve().parents[2],
-                    chapter_dir=chapter_dir,
-                ),
-                config=config,
-                benchmark=benchmark,
+        target_env = _apply_profile_env_overrides(
+            _harden_profile_env(
+                None,
+                repo_root=Path(__file__).resolve().parents[2],
+                chapter_dir=chapter_dir,
             ),
-            sanitize_python_startup=True,
+            config=config,
+            benchmark=benchmark,
         )
+
+        def _run_nsys_capture() -> Optional[Path]:
+            report = automation.profile_nsys(
+                command=[str(executable)],
+                output_name=f"{exec_name}__{variant}",
+                trace_cuda=True,
+                trace_nvtx=True,
+                trace_osrt=True,
+                full_timeline=False,
+                trace_forks=False,
+                preset="light",
+                timeout_seconds=float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else 120.0,
+                wait_mode="primary",
+                finalize_grace_seconds=20.0,
+                force_lineinfo=True,
+                extra_env=target_env,
+                sanitize_python_startup=True,
+            )
+            if report and Path(report).exists():
+                return Path(report)
+            return None
+
+        nsys_report = _run_nsys_capture()
+        missing_artifact = _is_missing_nsys_artifact_error(getattr(automation, "last_error", None))
+        if nsys_report is None and missing_artifact:
+            if LOGGER_AVAILABLE:
+                logger.warning(
+                    "  Retrying Nsight Systems capture once for %s (%s) after Nsight exited successfully but did not materialize a report artifact on the direct CUDA executable capture path.",
+                    exec_name,
+                    variant,
+                )
+            time.sleep(1.0)
+            nsys_report = _run_nsys_capture()
+            if nsys_report is None:
+                if LOGGER_AVAILABLE:
+                    logger.warning(
+                        "  Retrying Nsight Systems capture from a clean helper process for %s (%s) after repeated missing artifacts on the direct CUDA executable capture path.",
+                        exec_name,
+                        variant,
+                    )
+                nsys_report = _retry_nsys_in_clean_helper(
+                    output_dir=output_dir,
+                    output_name=f"{exec_name}__{variant}",
+                    target_command=[str(executable)],
+                    trace_forks=False,
+                    profile_preset="light",
+                    full_timeline=False,
+                    timeout=float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else 120.0,
+                    wait_mode="primary",
+                    env=target_env,
+                )
         if nsys_report and Path(nsys_report).exists():
             _set_profile_failure_detail("nsys", None)
             return Path(nsys_report)

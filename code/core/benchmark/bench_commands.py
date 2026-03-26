@@ -1430,6 +1430,7 @@ if TYPER_AVAILABLE:
         update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware."),
         allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations)."),
         allow_portable_expectations_update: bool = Option(False, "--allow-portable-expectations-update", help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT),
+        resume: bool = Option(False, "--resume", help="Resume an aborted e2e run. Requires --run-id and preserves prior stage artifacts."),
         dry_run: bool = Option(False, "--dry-run", help="Describe planned execution without running stages."),
     ):
         """Run tier1, optional full sweep, cluster common eval, and optional fabric eval in one orchestrated flow."""
@@ -1461,6 +1462,7 @@ if TYPER_AVAILABLE:
             update_expectations=update_expectations,
             allow_mixed_provenance=allow_mixed_provenance,
             run_id=run_id,
+            resume=resume,
             dry_run=dry_run,
         )
         typer.echo(json.dumps(result, indent=2))

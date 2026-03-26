@@ -12,6 +12,8 @@ from core.profiling.nsight_automation import NsightAutomation
 
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--aisp-owner-run-id", help="Optional owner run id marker for strict foreign-process filtering.")
+    parser.add_argument("--aisp-owner-pid", help="Optional owner pid marker for strict foreign-process filtering.")
     parser.add_argument("--payload", required=True, help="Path to JSON payload.")
     parser.add_argument("--result", required=True, help="Path to JSON result file.")
     args = parser.parse_args()

@@ -1,6 +1,8 @@
 import importlib.util
+import sys
 from pathlib import Path
 
+from core.benchmark.cuda_binary_benchmark import _run_subprocess_capture
 from core.harness import run_benchmarks
 
 
@@ -211,3 +213,25 @@ def test_append_profile_warning_persists_message_to_stderr_log(tmp_path, monkeyp
 
     assert "profiler cleanup detail" in log_path.read_text(encoding="utf-8")
     assert any("profiler cleanup detail" in message for message in logger_messages)
+
+
+def test_cuda_binary_subprocess_capture_propagates_owner_markers(tmp_path, monkeypatch):
+    monkeypatch.setenv("AISP_BENCHMARK_OWNER_RUN_ID", "owner-run-123")
+    monkeypatch.setenv("AISP_BENCHMARK_OWNER_PID", "4242")
+
+    result = _run_subprocess_capture(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os\n"
+                "print(os.environ.get('AISP_BENCHMARK_OWNER_RUN_ID', ''))\n"
+                "print(os.environ.get('AISP_BENCHMARK_OWNER_PID', ''))\n"
+            ),
+        ],
+        cwd=tmp_path,
+        timeout=5,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["owner-run-123", "4242"]

@@ -581,3 +581,81 @@ def test_profile_cuda_executable_ncu_uses_shared_subprocess_runner(tmp_path: Pat
     run_mock.assert_called_once()
     assert run_mock.call_args.kwargs["command"] == ["ncu", "--force-overwrite", "--set", "basic", str(executable)]
     assert run_mock.call_args.kwargs["capture_output"] is True
+
+
+def test_retry_nsys_in_clean_helper_passes_owner_markers(tmp_path: Path, monkeypatch) -> None:
+    report_path = tmp_path / "helper_report.nsys-rep"
+    report_path.write_text("report\n", encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    monkeypatch.setenv("AISP_BENCHMARK_OWNER_RUN_ID", "owner-run-xyz")
+    monkeypatch.setenv("AISP_BENCHMARK_OWNER_PID", "31337")
+    monkeypatch.setattr(run_benchmarks, "build_repo_python_env", lambda repo_root, base_env=None: dict(base_env or {}))
+
+    def _fake_subprocess_run(command, **kwargs):
+        observed["command"] = list(command)
+        observed["env"] = dict(kwargs["env"])
+        result_arg = command[command.index("--result") + 1]
+        Path(result_arg).write_text(
+            json.dumps({"report": str(report_path), "last_error": None}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(run_benchmarks.subprocess, "run", _fake_subprocess_run)
+
+    result = run_benchmarks._retry_nsys_in_clean_helper(
+        output_dir=tmp_path / "profiles",
+        output_name="demo__baseline",
+        target_command=[sys.executable, "-c", "print('demo')"],
+        trace_forks=False,
+        profile_preset="light",
+        full_timeline=False,
+        timeout=5.0,
+        wait_mode="primary",
+        env={"PYTHONPATH": str(tmp_path)},
+    )
+
+    assert result == report_path
+    command = observed["command"]
+    assert "--aisp-owner-run-id" in command
+    assert "--aisp-owner-pid" in command
+    assert command[command.index("--aisp-owner-run-id") + 1] == "owner-run-xyz"
+    assert command[command.index("--aisp-owner-pid") + 1] == "31337"
+
+
+def test_profile_cuda_executable_retries_missing_artifact_with_clean_helper(tmp_path: Path) -> None:
+    executable = tmp_path / "demo_exec"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    report_path = tmp_path / "profiles" / "demo_exec__optimized.nsys-rep"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("report\n", encoding="utf-8")
+
+    class _FakeAutomation:
+        profile_calls = 0
+
+        def __init__(self, _output_dir: Path) -> None:
+            self.last_error = None
+
+        def profile_nsys(self, **_kwargs):
+            type(self).profile_calls += 1
+            self.last_error = "No report artifact was produced"
+            return None
+
+    with (
+        patch.object(run_benchmarks, "check_nsys_available", return_value=True),
+        patch("core.profiling.nsight_automation.NsightAutomation", _FakeAutomation),
+        patch.object(run_benchmarks, "_retry_nsys_in_clean_helper", return_value=report_path) as helper_mock,
+    ):
+        result = run_benchmarks.profile_cuda_executable(
+            executable,
+            chapter_dir=tmp_path,
+            output_dir=tmp_path / "profiles",
+            variant="optimized",
+            timeout_seconds=5,
+        )
+
+    assert result == report_path
+    assert _FakeAutomation.profile_calls == 2
+    helper_mock.assert_called_once()

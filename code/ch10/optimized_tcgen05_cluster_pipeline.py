@@ -28,6 +28,7 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         self._graph: Optional[torch.cuda.CUDAGraph] = None
         self._graph_stream: Optional[torch.cuda.Stream] = None
         self._output_buffer: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
 
     def setup(self) -> None:
         ensure_dsmem_supported(description="tcgen05 cluster pipeline")
@@ -50,7 +51,6 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
                 captured_output = self._matmul(self.matrix_a, self.matrix_b)
         self._synchronize()
         self._output_buffer = captured_output
-        self.output = None
 
     def benchmark_fn(self) -> None:
         if (

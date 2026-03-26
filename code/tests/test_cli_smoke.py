@@ -69,6 +69,26 @@ def test_bench_run_e2e_dry_run_returns_structured_payload():
     assert payload["stages"][0]["name"] == "tier1"
 
 
+def test_bench_run_e2e_resume_requires_run_id():
+    result = _run_cli(
+        [
+            "bench",
+            "run-e2e",
+            "--resume",
+            "--no-run-tier1",
+            "--no-run-full-sweep",
+            "--no-run-cluster",
+            "--no-run-fabric",
+        ],
+        timeout=60,
+    )
+    assert result.returncode == 1, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert payload["overall_status"] == "failed"
+    assert "requires an explicit run_id" in payload["error"]
+
+
 def test_bench_analyze_help():
     result = _run_cli(["bench", "analyze", "--help"])
     assert result.returncode == 0

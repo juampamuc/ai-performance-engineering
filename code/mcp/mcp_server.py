@@ -4891,6 +4891,7 @@ def tool_benchmark_targets(params: Dict[str, Any]) -> Dict[str, Any]:
         "update_expectations": {"type": "boolean", "default": False, "description": "Force-write observed metrics into expectation files"},
         "allow_mixed_provenance": {"type": "boolean", "default": False, "description": "Allow expectation writes when provenance differs without forcing updates"},
         "allow_portable_expectations_update": {"type": "boolean", "default": False, "description": "Allow expectation writes while validity_profile=portable"},
+        "resume": {"type": "boolean", "default": False, "description": "Resume an aborted e2e run. Requires run_id and preserves prior stage artifacts."},
         "dry_run": {"type": "boolean", "default": False, "description": "Describe planned execution without running stages"},
         "async": {"type": "boolean", "default": False, "description": "Run in background and return a job ticket"},
     })}

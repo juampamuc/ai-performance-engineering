@@ -57,6 +57,13 @@ def _run_subprocess_capture(
     Use temporary files instead of PIPE to avoid BrokenPipe when the parent
     stdout is detached (e.g., queue runner sessions).
     """
+    env = os.environ.copy()
+    owner_run_id = str(os.environ.get("AISP_BENCHMARK_OWNER_RUN_ID", "")).strip()
+    owner_pid = str(os.environ.get("AISP_BENCHMARK_OWNER_PID", "")).strip()
+    if owner_run_id:
+        env.setdefault("AISP_BENCHMARK_OWNER_RUN_ID", owner_run_id)
+    if owner_pid:
+        env.setdefault("AISP_BENCHMARK_OWNER_PID", owner_pid)
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         completed = subprocess.run(
             list(args),
@@ -65,6 +72,7 @@ def _run_subprocess_capture(
             stdout=stdout_file,
             stderr=stderr_file,
             timeout=timeout,
+            env=env,
         )
         stdout_file.seek(0)
         stderr_file.seek(0)
