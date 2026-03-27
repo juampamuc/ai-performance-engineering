@@ -934,6 +934,24 @@ def _render_summary_markdown(summary: Dict[str, Any]) -> str:
             f"- Events: `{summary['events_path']}`",
         ]
     )
+    historical_failure_ledger = summary.get("historical_failure_ledger")
+    if isinstance(historical_failure_ledger, dict):
+        ledger_summary = historical_failure_ledger.get("summary") or {}
+        lines.extend(
+            [
+                "",
+                "## Historical Failure Ledger",
+                "",
+                f"- Ledger JSON: `{historical_failure_ledger.get('json_path', '')}`",
+                f"- Ledger Markdown: `{historical_failure_ledger.get('markdown_path', '')}`",
+                f"- Total historical failures: `{ledger_summary.get('total_historical_failures', 0)}`",
+                f"- Rechecked: `{ledger_summary.get('rechecked_count', 0)}`",
+                f"- Resolved success: `{ledger_summary.get('resolved_success_count', 0)}`",
+                f"- Resolved skip: `{ledger_summary.get('resolved_skip_count', 0)}`",
+                f"- Still failing: `{ledger_summary.get('still_failing_count', 0)}`",
+                f"- Not rerun: `{ledger_summary.get('not_rerun_count', 0)}`",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
