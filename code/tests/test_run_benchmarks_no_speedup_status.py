@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from core.harness.run_benchmarks import (
+    _collect_all_skipped_optimization_reason,
     _format_failed_no_speedup,
     _should_fail_no_speedup,
     generate_markdown_report,
@@ -71,3 +72,29 @@ def test_generate_markdown_report_surfaces_failed_no_speedup(tmp_path: Path) -> 
     report_text = output_md.read_text(encoding="utf-8")
     assert "No speedup (<1.05x, speed goal): 1" in report_text
     assert "No speedup: Best speedup 1.02x below required 1.05x threshold for speed-goal benchmark" in report_text
+
+
+def test_collect_all_skipped_optimization_reason_normalizes_skip_prefixes() -> None:
+    reason = _collect_all_skipped_optimization_reason(
+        [
+            {
+                "status": "skipped",
+                "skip_reason": "experimental sliding-window kernels are unstable",
+            },
+            {
+                "status": "skipped",
+                "error": "HARDWARE/SOFTWARE LIMITATION: experimental sliding-window kernels are unstable",
+            },
+        ]
+    )
+    assert reason == "experimental sliding-window kernels are unstable"
+
+
+def test_collect_all_skipped_optimization_reason_rejects_mixed_statuses() -> None:
+    reason = _collect_all_skipped_optimization_reason(
+        [
+            {"status": "skipped", "skip_reason": "unsupported stack"},
+            {"status": "succeeded", "speedup": 1.01},
+        ]
+    )
+    assert reason is None

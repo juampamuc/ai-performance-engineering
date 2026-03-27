@@ -1088,6 +1088,36 @@ def _format_failed_no_speedup(result_entry: Dict[str, Any]) -> str:
     )
 
 
+def _collect_all_skipped_optimization_reason(optimizations: Sequence[Dict[str, Any]]) -> Optional[str]:
+    if not optimizations:
+        return None
+    reasons: List[str] = []
+    for optimization in optimizations:
+        if str(optimization.get("status") or "").strip().lower() != "skipped":
+            return None
+        raw_reason = str(
+            optimization.get("skip_reason")
+            or optimization.get("error")
+            or ""
+        ).strip()
+        if not raw_reason:
+            return None
+        normalized_reason = raw_reason
+        if normalized_reason.startswith("HARDWARE/SOFTWARE LIMITATION:"):
+            normalized_reason = normalized_reason.split(":", 1)[1].strip()
+        elif normalized_reason.upper().startswith("SKIPPED:"):
+            normalized_reason = normalized_reason.split(":", 1)[1].strip()
+        if not normalized_reason:
+            return None
+        if normalized_reason not in reasons:
+            reasons.append(normalized_reason)
+    if not reasons:
+        return None
+    if len(reasons) == 1:
+        return reasons[0]
+    return "; ".join(reasons)
+
+
 def collect_expectation_metrics(result_entry: Dict[str, Any]) -> Tuple[Dict[str, float], Optional[Dict[str, Any]]]:
     """Collect metrics for expectation tracking.
 
@@ -7557,6 +7587,19 @@ def _test_chapter_impl(
                     )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
+                elif all_skipped_opt:
+                    skip_reason = _collect_all_skipped_optimization_reason(optimizations)
+                    if skip_reason:
+                        result_entry["status"] = "skipped"
+                        result_entry["error"] = f"SKIPPED: {skip_reason}"
+                        result_entry["skip_reason"] = skip_reason
+                    elif _should_fail_no_speedup(result_entry):
+                        result_entry["status"] = "failed_no_speedup"
+                        result_entry["error"] = _format_failed_no_speedup(result_entry)
+                        failed_no_speedup += 1
+                    else:
+                        result_entry['status'] = 'succeeded'
+                        successful += 1
                 elif _should_fail_no_speedup(result_entry):
                     result_entry["status"] = "failed_no_speedup"
                     result_entry["error"] = _format_failed_no_speedup(result_entry)
@@ -9045,6 +9088,19 @@ def _test_chapter_impl(
                     )
                     logger.warning("    WARNING: %s", result_entry["error"])
                     failed_error += 1
+                elif all_skipped_opt:
+                    skip_reason = _collect_all_skipped_optimization_reason(optimizations)
+                    if skip_reason:
+                        result_entry["status"] = "skipped"
+                        result_entry["error"] = f"SKIPPED: {skip_reason}"
+                        result_entry["skip_reason"] = skip_reason
+                    elif _should_fail_no_speedup(result_entry):
+                        result_entry["status"] = "failed_no_speedup"
+                        result_entry["error"] = _format_failed_no_speedup(result_entry)
+                        failed_no_speedup += 1
+                    else:
+                        result_entry['status'] = 'succeeded'
+                        successful += 1
                 elif _should_fail_no_speedup(result_entry):
                     result_entry["status"] = "failed_no_speedup"
                     result_entry["error"] = _format_failed_no_speedup(result_entry)
