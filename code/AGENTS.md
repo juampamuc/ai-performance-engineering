@@ -28,6 +28,10 @@
 - Treat silent fallback removal as incomplete unless the failure or degraded state is visible in structured outputs, logs, reports, or tests.
 - Record the exact verification commands and outcomes in the task summary so the next reviewer can reproduce the evidence trail quickly.
 
+## Full Sweep Playbook
+- For a fresh all-stages `run-e2e` plus fix-along-the-way workflow, use the repo-root guide in `FULL_SWEEP.md`.
+- Keep that guide aligned with the current `bench run-e2e` contract, resume behavior, and `book-after/chXX*` alignment expectations whenever the full-sweep workflow changes.
+
 ## Required Capability Gating (CRITICAL)
 - If a benchmark, profiler path, or runtime flow requires specific hardware, software, driver, toolkit, or service support, fail fast when that support is unavailable.
 - Use explicit `SKIPPED:` or equivalent hard diagnostics for unsupported capability checks; do not continue with a degraded fallback under the same benchmark name.
