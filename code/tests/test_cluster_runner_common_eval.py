@@ -224,6 +224,23 @@ def test_cluster_suite_progress_current_uses_suite_steps_and_inflight_log(tmp_pa
     assert payload["metrics"]["current_step"] == "vllm_serve_sweep"
 
 
+def test_cluster_suite_progress_state_disables_request_rate_for_localhost_fabric_canary() -> None:
+    state = cluster_runner._cluster_suite_progress_state(
+        hosts=["localhost"],
+        labels=["localhost"],
+        primary_label="localhost",
+        extra_args=["--run-fabric-eval", "--modern-llm-profile"],
+        coverage_baseline_run_id=None,
+        oob_if=None,
+        socket_ifname=None,
+    )
+
+    assert state["run_fabric_eval"] is True
+    assert state["modern_llm_profile"] is True
+    assert state["is_localhost_package"] is True
+    assert state["run_vllm_request_rate_sweep"] is False
+
+
 def test_build_cluster_nmx_partition_lab_wraps_payload(monkeypatch) -> None:
     def fake_build_nmx_partition_lab_payload(**kwargs: Any) -> Dict[str, Any]:
         assert kwargs["nmx_url"] == "https://nmx.example"

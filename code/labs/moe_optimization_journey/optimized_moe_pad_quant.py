@@ -91,8 +91,31 @@ class OptimizedMoEPadQuantBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
+    def teardown(self) -> None:
+        if self.compiled is not None:
+            del self.compiled
+            self.compiled = None
+        if self.model is not None:
+            del self.model
+            self.model = None
+        self.inputs = None
+        self.output = None
+        try:
+            torch._dynamo.reset()
+        except Exception:
+            pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        super().teardown()
+
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=6, warmup=6)
+        return BenchmarkConfig(
+            iterations=6,
+            warmup=6,
+            # Match the existing MoE journey convention: compile-heavy MoE
+            # surfaces can crash during subprocess teardown on some hosts.
+            use_subprocess=False,
+        )
 
 
 def get_benchmark() -> BaseBenchmark:

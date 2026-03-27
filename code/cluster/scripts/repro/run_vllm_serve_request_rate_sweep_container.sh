@@ -49,6 +49,8 @@ NUM_PROMPTS="${NUM_PROMPTS:-}"
 PORT="${PORT:-8888}"
 DETACH=0
 ALLOW_EXISTING_VLLM_PROCS=0
+VLLM_PROFILE_CLASS="${VLLM_PROFILE_CLASS:-suite_default}"
+VLLM_PROFILE_SELECTION_REASON="${VLLM_PROFILE_SELECTION_REASON:-default suite vLLM contract}"
 
 ORIG_ARGS=("$@")
 while [[ $# -gt 0 ]]; do
@@ -304,6 +306,7 @@ AGG_JSONL="${OUT_DIR}/rate_sweep_summary.jsonl"
 AGG_SUMMARY_TXT="${OUT_DIR}/rate_summary.txt"
 AGG_STABILITY_JSON="${OUT_DIR}/rate_sweep_stability.json"
 PROGRESS_JSON="${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep_progress.json"
+STARTUP_ARTIFACT="${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep_startup.json"
 REPEAT_CSVS=()
 
 if [[ "$DETACH" -eq 1 && "$REPEATS" -gt 1 ]]; then
@@ -393,6 +396,69 @@ start_progress_poller() {
 
 write_progress_json "starting" 0 ""
 
+write_startup_artifact() {
+  local source_path="${1:-}"
+  local fallback_status="${2:-starting}"
+  local fallback_ready="${3:-0}"
+  local fallback_detail="${4:-}"
+  local current_repeat="${5:-0}"
+  python3 - "$STARTUP_ARTIFACT" "$source_path" "$RUN_ID" "$LABEL" "$MODEL" "$TP" "$ISL" "$OSL" "$VLLM_PROFILE_CLASS" "$VLLM_PROFILE_SELECTION_REASON" "$fallback_status" "$fallback_ready" "$fallback_detail" "$current_repeat" <<'PY'
+import json
+import sys
+from pathlib import Path
+from datetime import datetime, timezone
+
+out_path = Path(sys.argv[1])
+source_raw = sys.argv[2]
+run_id = sys.argv[3]
+label = sys.argv[4]
+model = sys.argv[5]
+tp = sys.argv[6]
+isl = int(sys.argv[7])
+osl = int(sys.argv[8])
+profile_class = sys.argv[9]
+selection_reason = sys.argv[10]
+fallback_status = sys.argv[11]
+fallback_ready = bool(int(sys.argv[12]))
+fallback_detail = sys.argv[13]
+current_repeat = int(sys.argv[14])
+
+payload = {}
+if source_raw:
+    source_path = Path(source_raw)
+    if source_path.exists():
+        payload = json.loads(source_path.read_text(encoding="utf-8"))
+if not isinstance(payload, dict):
+    payload = {}
+
+payload.update(
+    {
+        "run_id": run_id,
+        "label": label,
+        "step": "vllm_request_rate_sweep",
+        "model": model,
+        "tp": int(tp),
+        "isl": isl,
+        "osl": osl,
+        "profile_class": profile_class,
+        "selection_reason": selection_reason,
+        "current_repeat": current_repeat,
+        "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+)
+payload["status"] = str(payload.get("status") or fallback_status)
+payload["ready"] = bool(payload.get("ready")) if "ready" in payload else fallback_ready
+payload["detail"] = str(payload.get("detail") or fallback_detail)
+server_log_path = str(payload.get("server_log_path") or "").strip()
+if not server_log_path and current_repeat > 0:
+    server_log_path = str(Path(out_path.parent.parent) / "raw" / f"{run_id}_{label}_vllm_serve_request_rate_sweep" / f"repeat_{current_repeat}" / "rate_server.log")
+payload["server_log_path"] = server_log_path or None
+out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+write_startup_artifact "" "starting" 0 "waiting for vLLM request-rate sweep to start" 0
+
 DOCKER_ARGS=(
   --gpus all
   --ipc=host
@@ -400,6 +466,8 @@ DOCKER_ARGS=(
   --ulimit stack=67108864
   --network host
   -e TIKTOKEN_RS_CACHE_DIR=/root/.cache/tiktoken_rs
+  -e "VLLM_PROFILE_CLASS=${VLLM_PROFILE_CLASS}"
+  -e "VLLM_PROFILE_SELECTION_REASON=${VLLM_PROFILE_SELECTION_REASON}"
   "${HF_MOUNT[@]}"
   "${VLLM_ENV[@]}"
   -v "$INNER":/sweep.sh:ro
@@ -443,6 +511,7 @@ for rep in $(seq 1 "$REPEATS"); do
     if [[ "$rc" -ne 0 ]]; then
       cleanup_progress_poller
       write_progress_json "failed" "$rep" "${REP_DIR}/rate_sweep_summary.csv"
+      write_startup_artifact "${REP_DIR}/startup_status.json" "startup_error" 0 "vLLM request-rate sweep container exited with code ${rc}" "$rep"
       echo "ERROR: vLLM request-rate sweep container exited with code ${rc} on repeat ${rep}" >&2
       exit "$rc"
     fi
@@ -461,6 +530,7 @@ for rep in $(seq 1 "$REPEATS"); do
     if [[ "$rc" -ne 0 ]]; then
       cleanup_progress_poller
       write_progress_json "failed" "$rep" "${REP_DIR}/rate_sweep_summary.csv"
+      write_startup_artifact "${REP_DIR}/startup_status.json" "startup_error" 0 "vLLM request-rate sweep container failed on repeat ${rep} (rc=${rc})" "$rep"
       echo "ERROR: vLLM request-rate sweep container failed on repeat ${rep} (rc=${rc})." >&2
       if [[ -f "${REP_DIR}/rate_server.log" ]]; then
         echo "---- ${REP_DIR}/rate_server.log (last 120 lines) ----" >&2
@@ -473,10 +543,12 @@ for rep in $(seq 1 "$REPEATS"); do
   cleanup_progress_poller
   if [[ ! -f "${REP_DIR}/rate_sweep_summary.csv" ]]; then
     write_progress_json "failed" "$rep" "${REP_DIR}/rate_sweep_summary.csv"
+    write_startup_artifact "${REP_DIR}/startup_status.json" "benchmark_failed_after_ready" 1 "missing repeat CSV output" "$rep"
     echo "ERROR: missing repeat CSV output: ${REP_DIR}/rate_sweep_summary.csv" >&2
     exit 1
   fi
   REPEAT_CSVS+=("${REP_DIR}/rate_sweep_summary.csv")
+  write_startup_artifact "${REP_DIR}/startup_status.json" "ok" 1 "repeat completed successfully" "$rep"
   write_progress_json "running" "$rep" "${REP_DIR}/rate_sweep_summary.csv"
   {
     echo "========================================"
@@ -513,6 +585,7 @@ if [[ -f "$AGG_STABILITY_JSON" ]]; then
   echo "Wrote ${STRUCT_DIR}/${RUN_ID}_${LABEL}_vllm_serve_request_rate_sweep_stability.json"
 fi
 
+write_startup_artifact "${OUT_DIR}/repeat_${REPEATS}/startup_status.json" "ok" 1 "request-rate sweep completed successfully" "$REPEATS"
 write_progress_json "complete" "$REPEATS" "$AGG_CSV"
 
 echo "Wrote ${LOG_PATH}"

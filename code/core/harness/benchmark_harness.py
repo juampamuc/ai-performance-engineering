@@ -171,6 +171,29 @@ def _cleanup_process_group(pgid: Optional[int], *, grace_seconds: float = 2.0) -
     import logging
     logger = logging.getLogger(__name__)
 
+
+def _benchmark_child_preexec() -> None:
+    """Start benchmark workers in a fresh session without inherited suite alarms.
+
+    The top-level bench CLI installs a suite-wide SIGALRM timeout. Benchmark
+    workers launched via subprocess/torchrun must clear that inherited timer or
+    a long-running parent suite can kill a later child immediately with the
+    parent's timeout message.
+    """
+    os.setsid()
+    sigalrm = getattr(signal, "SIGALRM", None)
+    if sigalrm is None:
+        return
+    try:
+        signal.alarm(0)
+    except Exception:
+        pass
+    try:
+        signal.signal(sigalrm, signal.SIG_DFL)
+    except Exception:
+        pass
+
+
 _QUICK_WINS_CONFIGURED = False
 _SDPA_KERNEL_CONTEXT = None
 
@@ -2552,7 +2575,7 @@ class BenchmarkHarness:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                preexec_fn=os.setsid,
+                preexec_fn=_benchmark_child_preexec,
                 env=env,
             )
             start = time.time()
@@ -2575,11 +2598,16 @@ class BenchmarkHarness:
                 )
             elapsed = time.time() - start
             if process.returncode != 0:
+                stdout_lines = stdout.splitlines() if stdout else []
                 stderr_lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
-                errors.append(f"torchrun exited with code {process.returncode}")
+                skip_reason = _extract_skip_reason_from_messages([*stdout_lines, *stderr_lines])
+                if skip_reason:
+                    errors.append(f"SKIPPED: {skip_reason}")
+                else:
+                    errors.append(f"torchrun exited with code {process.returncode}")
                 if stderr:
                     _maybe_write_subprocess_stderr(stderr, f"torchrun_{spec.name or benchmark.__class__.__name__}", config)
-                if stderr_lines:
+                if stderr_lines and not skip_reason:
                     # Prefer showing the root-cause message (e.g., seed mutation) instead of only the
                     # torchrun elastic summary tail.
                     interesting = [
@@ -3371,7 +3399,7 @@ class BenchmarkHarness:
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
-                preexec_fn=os.setsid  # Create new process group for reliable killing
+                preexec_fn=_benchmark_child_preexec,
             )
             child_pgid = os.getpgid(process.pid)
             if LOGGER_AVAILABLE:

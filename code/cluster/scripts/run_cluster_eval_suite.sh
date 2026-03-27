@@ -300,6 +300,7 @@ EOF
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CODE_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+export PYTHONPATH="${ROOT_DIR}:${CODE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 if [[ ! -f "${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" ]]; then
   echo "ERROR: missing stack profile helper: ${ROOT_DIR}/scripts/cluster_perf_stack_profiles.sh" >&2
   exit 1
@@ -552,6 +553,7 @@ FABRIC_CUMULUS_HOSTS=""
 FABRIC_CUMULUS_USER=""
 FABRIC_CUMULUS_SSH_KEY=""
 MODERN_LLM_PROFILE=0
+MODERN_LLM_PROFILE_EXPLICIT=0
 GPU_HOURLY_COST_USD=""
 COVERAGE_BASELINE_RUN_ID=""
 STRICT_MULTINODE_READINESS=1
@@ -571,6 +573,17 @@ RUN_TRAIN_STEP_EXPLICIT=0
 VLLM_REPEATS_EXPLICIT=0
 VLLM_REQUEST_RATE_REPEATS_EXPLICIT=0
 FIO_REPEATS_EXPLICIT=0
+MODEL_EXPLICIT=0
+TP_EXPLICIT=0
+ISL_EXPLICIT=0
+OSL_EXPLICIT=0
+CONCURRENCY_RANGE_EXPLICIT=0
+RUN_VLLM_REQUEST_RATE_SWEEP_EXPLICIT=0
+VLLM_REQUEST_RATE_RANGE_EXPLICIT=0
+VLLM_REQUEST_RATE_MAX_CONCURRENCY_EXPLICIT=0
+VLLM_REQUEST_RATE_NUM_PROMPTS_EXPLICIT=0
+VLLM_PROFILE_CLASS="suite_default"
+VLLM_PROFILE_SELECTION_REASON="default suite vLLM contract"
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -620,19 +633,19 @@ while [[ $# -gt 0 ]]; do
     --monitoring-dmesg-lines) MONITORING_DMESG_LINES="$2"; shift 2 ;;
     --monitoring-timeout-sec) MONITORING_TIMEOUT_SEC="$2"; shift 2 ;;
 
-    --model) MODEL="$2"; shift 2 ;;
-    --tp) TP="$2"; shift 2 ;;
-    --isl) ISL="$2"; shift 2 ;;
-    --osl) OSL="$2"; shift 2 ;;
-    --concurrency-range) CONCURRENCY_RANGE="$2"; shift 2 ;;
+    --model) MODEL="$2"; MODEL_EXPLICIT=1; shift 2 ;;
+    --tp) TP="$2"; TP_EXPLICIT=1; shift 2 ;;
+    --isl) ISL="$2"; ISL_EXPLICIT=1; shift 2 ;;
+    --osl) OSL="$2"; OSL_EXPLICIT=1; shift 2 ;;
+    --concurrency-range) CONCURRENCY_RANGE="$2"; CONCURRENCY_RANGE_EXPLICIT=1; shift 2 ;;
     --vllm-repeats) VLLM_REPEATS="$2"; VLLM_REPEATS_EXPLICIT=1; shift 2 ;;
     --vllm-max-points-per-run) VLLM_MAX_POINTS_PER_RUN="$2"; shift 2 ;;
-    --run-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=1; FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=0; shift ;;
-    --skip-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=0; FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=1; shift ;;
-    --vllm-request-rate-range) VLLM_REQUEST_RATE_RANGE="$2"; shift 2 ;;
+    --run-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=1; RUN_VLLM_REQUEST_RATE_SWEEP_EXPLICIT=1; FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=0; shift ;;
+    --skip-vllm-request-rate-sweep) RUN_VLLM_REQUEST_RATE_SWEEP=0; RUN_VLLM_REQUEST_RATE_SWEEP_EXPLICIT=1; FORCE_DISABLE_VLLM_REQUEST_RATE_SWEEP=1; shift ;;
+    --vllm-request-rate-range) VLLM_REQUEST_RATE_RANGE="$2"; VLLM_REQUEST_RATE_RANGE_EXPLICIT=1; shift 2 ;;
     --vllm-request-rate-repeats) VLLM_REQUEST_RATE_REPEATS="$2"; VLLM_REQUEST_RATE_REPEATS_EXPLICIT=1; shift 2 ;;
-    --vllm-request-rate-max-concurrency) VLLM_REQUEST_RATE_MAX_CONCURRENCY="$2"; shift 2 ;;
-    --vllm-request-rate-num-prompts) VLLM_REQUEST_RATE_NUM_PROMPTS="$2"; shift 2 ;;
+    --vllm-request-rate-max-concurrency) VLLM_REQUEST_RATE_MAX_CONCURRENCY="$2"; VLLM_REQUEST_RATE_MAX_CONCURRENCY_EXPLICIT=1; shift 2 ;;
+    --vllm-request-rate-num-prompts) VLLM_REQUEST_RATE_NUM_PROMPTS="$2"; VLLM_REQUEST_RATE_NUM_PROMPTS_EXPLICIT=1; shift 2 ;;
     --vllm-max-conc-cv-p95-pct) VLLM_MAX_CONC_CV_P95_PCT="$2"; shift 2 ;;
     --vllm-max-rate-cv-p95-pct) VLLM_MAX_RATE_CV_P95_PCT="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
@@ -737,7 +750,7 @@ while [[ $# -gt 0 ]]; do
     --cumulus-user) FABRIC_CUMULUS_USER="$2"; shift 2 ;;
     --cumulus-ssh-key) FABRIC_CUMULUS_SSH_KEY="$2"; shift 2 ;;
     --require-management-plane) REQUIRE_MANAGEMENT_PLANE=1; shift ;;
-    --modern-llm-profile) MODERN_LLM_PROFILE=1; shift ;;
+    --modern-llm-profile) MODERN_LLM_PROFILE=1; MODERN_LLM_PROFILE_EXPLICIT=1; shift ;;
     --gpu-hourly-cost-usd) GPU_HOURLY_COST_USD="$2"; shift 2 ;;
     --coverage-baseline-run-id) COVERAGE_BASELINE_RUN_ID="$2"; shift 2 ;;
     --strict-multinode-readiness) STRICT_MULTINODE_READINESS=1; shift ;;
@@ -1312,12 +1325,70 @@ if [[ -z "$SOCKET_IFNAME" ]]; then
   SOCKET_IFNAME="$OOB_IF"
 fi
 
+has_explicit_vllm_profile_override() {
+  if (( MODEL_EXPLICIT == 1 || TP_EXPLICIT == 1 || ISL_EXPLICIT == 1 || OSL_EXPLICIT == 1 || CONCURRENCY_RANGE_EXPLICIT == 1 )); then
+    return 0
+  fi
+  if (( VLLM_REPEATS_EXPLICIT == 1 || RUN_VLLM_REQUEST_RATE_SWEEP_EXPLICIT == 1 || VLLM_REQUEST_RATE_RANGE_EXPLICIT == 1 )); then
+    return 0
+  fi
+  if (( VLLM_REQUEST_RATE_REPEATS_EXPLICIT == 1 || VLLM_REQUEST_RATE_MAX_CONCURRENCY_EXPLICIT == 1 || VLLM_REQUEST_RATE_NUM_PROMPTS_EXPLICIT == 1 )); then
+    return 0
+  fi
+  return 1
+}
+
+resolve_vllm_profile() {
+  local localhost_canary_model="openai-community/gpt2"
+  local localhost_canary_tp="1"
+  local localhost_canary_isl="64"
+  local localhost_canary_osl="32"
+  local localhost_canary_concurrency="1"
+  local localhost_canary_repeats="1"
+
+  VLLM_PROFILE_CLASS="suite_default"
+  if [[ "$MODERN_LLM_PROFILE" -eq 1 ]]; then
+    VLLM_PROFILE_SELECTION_REASON="modern LLM profile defaults are active"
+  else
+    VLLM_PROFILE_SELECTION_REASON="base suite defaults are active"
+  fi
+
+  if has_explicit_vllm_profile_override; then
+    VLLM_PROFILE_CLASS="explicit_override"
+    VLLM_PROFILE_SELECTION_REASON="explicit vLLM model/profile overrides were supplied"
+    return 0
+  fi
+
+  if [[ "$RUN_FABRIC_EVAL" -eq 1 && "$IS_LOCALHOST_PACKAGE" -eq 1 && "${#HOST_ARR[@]}" -eq 1 ]]; then
+    MODEL="$localhost_canary_model"
+    TP="$localhost_canary_tp"
+    ISL="$localhost_canary_isl"
+    OSL="$localhost_canary_osl"
+    CONCURRENCY_RANGE="$localhost_canary_concurrency"
+    VLLM_REPEATS="$localhost_canary_repeats"
+    RUN_VLLM_REQUEST_RATE_SWEEP=0
+    VLLM_PROFILE_CLASS="localhost_canary"
+    VLLM_PROFILE_SELECTION_REASON="single-host localhost fabric evaluation defaults to the canary vLLM profile when no explicit vLLM overrides are present"
+    return 0
+  fi
+
+  if [[ "$MODEL" == "openai/gpt-oss-20b" && "$ISL" == "512" && "$OSL" == "128" && "$CONCURRENCY_RANGE" == "8 16 32" && "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 && "$VLLM_REQUEST_RATE_RANGE" == "1 2 4" && "$VLLM_REQUEST_RATE_MAX_CONCURRENCY" == "32" && "${VLLM_REQUEST_RATE_NUM_PROMPTS:-}" == "128" ]]; then
+    VLLM_PROFILE_CLASS="mid_tier_default"
+    VLLM_PROFILE_SELECTION_REASON="resolved to the compact mid-tier vLLM profile"
+  fi
+}
+
+resolve_vllm_profile
+
+VLLM_CONCURRENCY_VALUES="$(echo "${CONCURRENCY_RANGE}" | xargs)"
+VLLM_REQUEST_RATE_VALUES="$(echo "${VLLM_REQUEST_RATE_RANGE}" | xargs)"
+
 emit_multinode_readiness_artifact() {
   local status="$1"
   shift || true
   local out_path="${STRUCTURED_DIR}/${RUN_ID}_multinode_readiness.json"
   mkdir -p "${STRUCTURED_DIR}"
-  python3 - "$out_path" "$RUN_ID" "$HOSTS" "$LABELS" "$STRICT_MULTINODE_READINESS" "$MODERN_LLM_PROFILE" "$RUN_VLLM_REQUEST_RATE_SWEEP" "$RUN_VLLM_MULTINODE" "$RUN_TRAIN_STEP" "$TRAIN_STEP_MULTI_NODE" "$STRICT_CANONICAL_COMPLETENESS" "$FIO_FILE_SIZE" "${OOB_IF:-}" "${SOCKET_IFNAME:-}" "${NCCL_IB_HCA:-}" "$status" "$@" <<'PY'
+  python3 - "$out_path" "$RUN_ID" "$HOSTS" "$LABELS" "$STRICT_MULTINODE_READINESS" "$MODERN_LLM_PROFILE" "$RUN_VLLM_REQUEST_RATE_SWEEP" "$RUN_VLLM_MULTINODE" "$RUN_TRAIN_STEP" "$TRAIN_STEP_MULTI_NODE" "$STRICT_CANONICAL_COMPLETENESS" "$FIO_FILE_SIZE" "${OOB_IF:-}" "${SOCKET_IFNAME:-}" "${NCCL_IB_HCA:-}" "$VLLM_PROFILE_CLASS" "$VLLM_PROFILE_SELECTION_REASON" "$MODEL" "${TP:-}" "$ISL" "$OSL" "$VLLM_CONCURRENCY_VALUES" "$VLLM_REPEATS" "$VLLM_REQUEST_RATE_VALUES" "$VLLM_REQUEST_RATE_REPEATS" "$VLLM_REQUEST_RATE_MAX_CONCURRENCY" "${VLLM_REQUEST_RATE_NUM_PROMPTS:-}" "$status" "$@" <<'PY'
 import datetime as dt
 import json
 import sys
@@ -1338,11 +1409,26 @@ fio_file_size = sys.argv[12]
 oob_if = sys.argv[13]
 socket_ifname = sys.argv[14]
 nccl_ib_hca = sys.argv[15]
-status = sys.argv[16]
-messages = [m for m in sys.argv[17:] if m]
+vllm_profile_class = sys.argv[16]
+vllm_profile_reason = sys.argv[17]
+vllm_model = sys.argv[18]
+vllm_tp = sys.argv[19]
+vllm_isl = sys.argv[20]
+vllm_osl = sys.argv[21]
+vllm_concurrency_range = sys.argv[22]
+vllm_repeats = sys.argv[23]
+vllm_request_rate_range = sys.argv[24]
+vllm_request_rate_repeats = sys.argv[25]
+vllm_request_rate_max_concurrency = sys.argv[26]
+vllm_request_rate_num_prompts = sys.argv[27]
+status = sys.argv[28]
+messages = [m for m in sys.argv[29:] if m]
 
 hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
 labels = [l.strip() for l in labels_raw.split(",") if l.strip()]
+
+def _split(raw: str) -> list[str]:
+    return [part for part in raw.replace(",", " ").split() if part]
 
 payload = {
     "run_id": run_id,
@@ -1365,6 +1451,21 @@ payload = {
         "oob_if": oob_if or None,
         "socket_ifname": socket_ifname or None,
         "nccl_ib_hca": nccl_ib_hca or None,
+        "vllm_profile": {
+            "class": vllm_profile_class,
+            "selection_reason": vllm_profile_reason,
+            "model": vllm_model,
+            "tp": int(vllm_tp) if vllm_tp else None,
+            "isl": int(vllm_isl),
+            "osl": int(vllm_osl),
+            "concurrency_range": _split(vllm_concurrency_range),
+            "repeats": int(vllm_repeats),
+            "request_rate_enabled": run_vllm_request_rate_sweep,
+            "request_rate_range": _split(vllm_request_rate_range),
+            "request_rate_repeats": int(vllm_request_rate_repeats),
+            "request_rate_max_concurrency": int(vllm_request_rate_max_concurrency),
+            "request_rate_num_prompts": int(vllm_request_rate_num_prompts) if vllm_request_rate_num_prompts else None,
+        },
     },
     "messages": messages,
     "checks": {
@@ -1702,10 +1803,33 @@ label_for_index() {
   echo "$(sanitize_label "$host")"
 }
 
+vllm_step_failure_message() {
+  local step_name="$1"
+  local startup_path="$2"
+  python3 - "$SUITE_STEPS_JSON" "$step_name" "$startup_path" <<'PY'
+import sys
+from pathlib import Path
+
+from analysis.vllm_step_contract import summarize_upstream_failure
+
+suite_steps_path = Path(sys.argv[1])
+step_name = sys.argv[2]
+startup_raw = sys.argv[3]
+startup_path = Path(startup_raw) if startup_raw else None
+summary = summarize_upstream_failure(suite_steps_path, step_name, startup_path)
+if summary.get("has_failure"):
+    print(summary.get("message") or step_name)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 validate_required_artifacts() {
   local missing=0
   local path=""
   local label=""
+  local serve_startup_path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep_startup.json"
+  local request_rate_startup_path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep_startup.json"
 
   for idx in "${!HOST_ARR[@]}"; do
     label="$(label_for_index "$idx")"
@@ -2023,174 +2147,130 @@ PY
     done
   fi
 
-  for suffix in "_vllm_serve_sweep.csv" "_vllm_serve_sweep.jsonl" "_vllm_serve_sweep_clock_lock.json" "_vllm_serve_sweep_stability.json"; do
-    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
-    if [[ ! -f "$path" ]]; then
-      echo "ERROR: missing required vLLM serve sweep artifact: ${path}" >&2
-      missing=1
-    fi
-  done
-  path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep.csv"
-  if [[ -f "$path" ]]; then
-    if ! python3 - "$path" <<'PY'
-import csv
-import sys
-from pathlib import Path
-
-rows = list(csv.DictReader(Path(sys.argv[1]).open("r", encoding="utf-8", newline="")))
-if not rows:
-    raise SystemExit("vLLM serve sweep csv has no rows")
-for idx, row in enumerate(rows, start=1):
-    completed = int(float((row.get("completed") or 0.0)))
-    failed = int(float((row.get("failed") or 0.0)))
-    total_tok = float((row.get("total_token_throughput") or 0.0))
-    if completed <= 0:
-        raise SystemExit(f"vLLM serve sweep row {idx} has completed={completed} (must be > 0)")
-    if failed > 0:
-        raise SystemExit(f"vLLM serve sweep row {idx} has failed={failed} (must be 0)")
-    if total_tok <= 0.0:
-        raise SystemExit(f"vLLM serve sweep row {idx} has total_token_throughput={total_tok} (must be > 0)")
-PY
-    then
-      echo "ERROR: invalid vLLM serve sweep csv: ${path}" >&2
-      missing=1
-    fi
-  fi
-  path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep_stability.json"
-  if [[ -f "$path" ]]; then
-    if ! python3 - "$path" "$VLLM_MAX_CONC_CV_P95_PCT" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-summary = payload.get("summary") or {}
-points = int(summary.get("points") or 0)
-if points <= 0:
-    raise SystemExit("vLLM sweep stability has no points")
-value = summary.get("total_token_throughput_cv_pct_p95")
-if value is None:
-    raise SystemExit("vLLM sweep stability missing total_token_throughput_cv_pct_p95")
-v = float(value)
-if v < 0:
-    raise SystemExit("vLLM sweep stability CV is negative")
-max_cv_arg = (sys.argv[2] or "").strip()
-if max_cv_arg and v > float(max_cv_arg):
-    raise SystemExit(f"vLLM sweep CV p95={v} exceeds threshold {max_cv_arg}")
-PY
-    then
-      echo "ERROR: invalid vLLM serve sweep stability: ${path}" >&2
-      missing=1
-    fi
-  fi
-  for suffix in "_vllm_serve_slo_goodput.json" "_vllm_serve_slo_goodput.csv"; do
-    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
-    if [[ ! -f "$path" ]]; then
-      echo "ERROR: missing required vLLM SLO goodput artifact: ${path}" >&2
-      missing=1
-    fi
-  done
-  path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_slo_goodput.json"
-  if [[ -f "$path" ]]; then
-    if ! python3 - "$path" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if payload.get("status") != "ok":
-    raise SystemExit(f"vLLM SLO goodput status is not ok: {payload.get('status')}")
-summary = payload.get("summary") or {}
-if int(summary.get("concurrency_points", 0)) <= 0:
-    raise SystemExit("vLLM SLO goodput concurrency_points is not positive")
-if float(summary.get("peak_total_tok_s", 0.0)) <= 0:
-    raise SystemExit("vLLM SLO goodput peak_total_tok_s is not positive")
-if float(summary.get("max_goodput_tok_s", 0.0)) < 0:
-    raise SystemExit("vLLM SLO goodput max_goodput_tok_s is negative")
-PY
-    then
-      echo "ERROR: invalid vLLM SLO goodput summary: ${path}" >&2
-      missing=1
-    fi
-  fi
-  if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
-    for suffix in "_vllm_serve_request_rate_sweep.csv" "_vllm_serve_request_rate_sweep.jsonl" "_vllm_serve_request_rate_sweep_clock_lock.json" "_vllm_serve_request_rate_sweep_stability.json" "_vllm_request_rate_slo_goodput.json" "_vllm_request_rate_slo_goodput.csv"; do
+  if message="$(vllm_step_failure_message "vllm_serve_sweep" "$serve_startup_path")"; then
+    echo "ERROR: ${message}" >&2
+    missing=1
+  else
+    for suffix in "_vllm_serve_sweep.csv" "_vllm_serve_sweep.jsonl" "_vllm_serve_sweep_clock_lock.json" "_vllm_serve_sweep_stability.json" "_vllm_serve_sweep_startup.json"; do
       path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
       if [[ ! -f "$path" ]]; then
-        echo "ERROR: missing required vLLM request-rate artifact: ${path}" >&2
+        echo "ERROR: missing required vLLM serve sweep artifact: ${path}" >&2
         missing=1
       fi
     done
-    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep.csv"
+    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep.csv"
     if [[ -f "$path" ]]; then
       if ! python3 - "$path" <<'PY'
-import csv
 import sys
 from pathlib import Path
 
-rows = list(csv.DictReader(Path(sys.argv[1]).open("r", encoding="utf-8", newline="")))
-if not rows:
-    raise SystemExit("request-rate sweep csv has no rows")
-for idx, row in enumerate(rows, start=1):
-    completed = int(float((row.get("completed") or 0.0)))
-    failed = int(float((row.get("failed") or 0.0)))
-    total_tok = float((row.get("total_token_throughput") or 0.0))
-    if completed <= 0:
-        raise SystemExit(f"request-rate sweep row {idx} has completed={completed} (must be > 0)")
-    if failed > 0:
-        raise SystemExit(f"request-rate sweep row {idx} has failed={failed} (must be 0)")
-    if total_tok <= 0.0:
-        raise SystemExit(f"request-rate sweep row {idx} has total_token_throughput={total_tok} (must be > 0)")
+from analysis.vllm_step_contract import validate_vllm_serve_csv
+
+validate_vllm_serve_csv(Path(sys.argv[1]))
 PY
       then
-        echo "ERROR: invalid vLLM request-rate sweep csv: ${path}" >&2
+        echo "ERROR: invalid vLLM serve sweep csv: ${path}" >&2
         missing=1
       fi
     fi
-    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep_stability.json"
+    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep_stability.json"
     if [[ -f "$path" ]]; then
-      if ! python3 - "$path" "$VLLM_MAX_RATE_CV_P95_PCT" <<'PY'
-import json
+      if ! python3 - "$path" "$VLLM_MAX_CONC_CV_P95_PCT" <<'PY'
 import sys
 from pathlib import Path
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-summary = payload.get("summary") or {}
-points = int(summary.get("points") or 0)
-if points <= 0:
-    raise SystemExit("vLLM request-rate stability has no points")
-value = summary.get("total_token_throughput_cv_pct_p95")
-if value is None:
-    raise SystemExit("vLLM request-rate stability missing total_token_throughput_cv_pct_p95")
-v = float(value)
-if v < 0:
-    raise SystemExit("vLLM request-rate stability CV is negative")
-max_cv_arg = (sys.argv[2] or "").strip()
-if max_cv_arg and v > float(max_cv_arg):
-    raise SystemExit(f"vLLM request-rate CV p95={v} exceeds threshold {max_cv_arg}")
+from analysis.vllm_step_contract import validate_vllm_stability_summary
+
+threshold_raw = (sys.argv[2] or "").strip()
+threshold = float(threshold_raw) if threshold_raw else None
+validate_vllm_stability_summary(Path(sys.argv[1]), threshold=threshold, label="vLLM sweep stability")
 PY
       then
-        echo "ERROR: invalid vLLM request-rate sweep stability: ${path}" >&2
+        echo "ERROR: invalid vLLM serve sweep stability: ${path}" >&2
         missing=1
       fi
     fi
-    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_request_rate_slo_goodput.json"
+    for suffix in "_vllm_serve_slo_goodput.json" "_vllm_serve_slo_goodput.csv"; do
+      path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
+      if [[ ! -f "$path" ]]; then
+        echo "ERROR: missing required vLLM SLO goodput artifact: ${path}" >&2
+        missing=1
+      fi
+    done
+    path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_slo_goodput.json"
     if [[ -f "$path" ]]; then
       if ! python3 - "$path" <<'PY'
-import json
 import sys
 from pathlib import Path
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if payload.get("status") != "ok":
-    raise SystemExit(f"request-rate SLO goodput status is not ok: {payload.get('status')}")
-summary = payload.get("summary") or {}
-if int(summary.get("request_rate_points", 0)) <= 0:
-    raise SystemExit("request-rate SLO goodput request_rate_points is not positive")
+from analysis.vllm_step_contract import validate_vllm_slo_goodput_summary
+
+validate_vllm_slo_goodput_summary(Path(sys.argv[1]))
 PY
       then
-        echo "ERROR: invalid vLLM request-rate SLO goodput summary: ${path}" >&2
+        echo "ERROR: invalid vLLM SLO goodput summary: ${path}" >&2
         missing=1
+      fi
+    fi
+  fi
+  if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
+    if message="$(vllm_step_failure_message "vllm_request_rate_sweep" "$request_rate_startup_path")"; then
+      echo "ERROR: ${message}" >&2
+      missing=1
+    else
+      for suffix in "_vllm_serve_request_rate_sweep.csv" "_vllm_serve_request_rate_sweep.jsonl" "_vllm_serve_request_rate_sweep_clock_lock.json" "_vllm_serve_request_rate_sweep_stability.json" "_vllm_serve_request_rate_sweep_startup.json" "_vllm_request_rate_slo_goodput.json" "_vllm_request_rate_slo_goodput.csv"; do
+        path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}${suffix}"
+        if [[ ! -f "$path" ]]; then
+          echo "ERROR: missing required vLLM request-rate artifact: ${path}" >&2
+          missing=1
+        fi
+      done
+      path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep.csv"
+      if [[ -f "$path" ]]; then
+        if ! python3 - "$path" <<'PY'
+import sys
+from pathlib import Path
+
+from analysis.vllm_step_contract import validate_vllm_request_rate_csv
+
+validate_vllm_request_rate_csv(Path(sys.argv[1]))
+PY
+        then
+          echo "ERROR: invalid vLLM request-rate sweep csv: ${path}" >&2
+          missing=1
+        fi
+      fi
+      path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_request_rate_sweep_stability.json"
+      if [[ -f "$path" ]]; then
+        if ! python3 - "$path" "$VLLM_MAX_RATE_CV_P95_PCT" <<'PY'
+import sys
+from pathlib import Path
+
+from analysis.vllm_step_contract import validate_vllm_stability_summary
+
+threshold_raw = (sys.argv[2] or "").strip()
+threshold = float(threshold_raw) if threshold_raw else None
+validate_vllm_stability_summary(Path(sys.argv[1]), threshold=threshold, label="vLLM request-rate stability")
+PY
+        then
+          echo "ERROR: invalid vLLM request-rate sweep stability: ${path}" >&2
+          missing=1
+        fi
+      fi
+      path="${STRUCTURED_DIR}/${RUN_ID}_${PRIMARY_LABEL}_vllm_request_rate_slo_goodput.json"
+      if [[ -f "$path" ]]; then
+        if ! python3 - "$path" <<'PY'
+import sys
+from pathlib import Path
+
+from analysis.vllm_step_contract import validate_vllm_slo_goodput_summary
+
+validate_vllm_slo_goodput_summary(Path(sys.argv[1]), request_rate=True)
+PY
+        then
+          echo "ERROR: invalid vLLM request-rate SLO goodput summary: ${path}" >&2
+          missing=1
+        fi
       fi
     fi
   fi
@@ -2456,6 +2536,7 @@ if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
   echo "NCCL_IB_HCA: ${NCCL_IB_HCA:-<auto>}"
   echo "NCCL_NVLS_ENABLE: ${NCCL_NVLS_ENABLE:-<unset>}"
 fi
+echo "vLLM(profile): class=${VLLM_PROFILE_CLASS} reason=${VLLM_PROFILE_SELECTION_REASON}"
 echo "vLLM: model=${MODEL} tp=${TP:-<auto>} isl=${ISL} osl=${OSL} conc='${CONCURRENCY_RANGE}' repeats=${VLLM_REPEATS} port=${PORT}"
 echo "vLLM(env): gpu_mem_util=${VLLM_GPU_MEMORY_UTILIZATION:-<unset>} server_ready_timeout_s=${VLLM_SERVER_READY_TIMEOUT:-<unset>}"
 echo "vLLM(resume-segmentation): max_points_per_run=${VLLM_MAX_POINTS_PER_RUN}"
@@ -2795,7 +2876,7 @@ vllm_args=(
 if [[ -n "$TP" ]]; then
   vllm_args+=(--tp "$TP")
 fi
-run_step "vllm_serve_sweep" env "VLLM_SWEEP_MAX_POINTS_PER_RUN=${VLLM_MAX_POINTS_PER_RUN}" "${ROOT_DIR}/scripts/repro/run_vllm_serve_sweep_container.sh" "${vllm_args[@]}"
+run_step "vllm_serve_sweep" env "VLLM_SWEEP_MAX_POINTS_PER_RUN=${VLLM_MAX_POINTS_PER_RUN}" "VLLM_PROFILE_CLASS=${VLLM_PROFILE_CLASS}" "VLLM_PROFILE_SELECTION_REASON=${VLLM_PROFILE_SELECTION_REASON}" "${ROOT_DIR}/scripts/repro/run_vllm_serve_sweep_container.sh" "${vllm_args[@]}"
 
 if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
   vllm_rate_args=(
@@ -2815,7 +2896,7 @@ if [[ "$RUN_VLLM_REQUEST_RATE_SWEEP" -eq 1 ]]; then
   if [[ -n "$VLLM_REQUEST_RATE_NUM_PROMPTS" ]]; then
     vllm_rate_args+=(--num-prompts "$VLLM_REQUEST_RATE_NUM_PROMPTS")
   fi
-  run_step "vllm_request_rate_sweep" env "VLLM_SWEEP_MAX_POINTS_PER_RUN=${VLLM_MAX_POINTS_PER_RUN}" "${ROOT_DIR}/scripts/repro/run_vllm_serve_request_rate_sweep_container.sh" "${vllm_rate_args[@]}"
+  run_step "vllm_request_rate_sweep" env "VLLM_SWEEP_MAX_POINTS_PER_RUN=${VLLM_MAX_POINTS_PER_RUN}" "VLLM_PROFILE_CLASS=${VLLM_PROFILE_CLASS}" "VLLM_PROFILE_SELECTION_REASON=${VLLM_PROFILE_SELECTION_REASON}" "${ROOT_DIR}/scripts/repro/run_vllm_serve_request_rate_sweep_container.sh" "${vllm_rate_args[@]}"
 fi
 
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then

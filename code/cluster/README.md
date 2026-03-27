@@ -47,6 +47,11 @@ python -m cli.aisp cluster fabric-eval \
 
 The dedicated fabric path defaults to capability-aware partial completion. Use `--extra-arg --strict-canonical-completeness` only when you explicitly want the broader publish-grade completeness gates.
 
+Localhost fabric default:
+- single-node localhost `cluster fabric-eval` now auto-resolves to the canary vLLM profile when you do not provide explicit vLLM overrides
+- current canary contract is `openai-community/gpt2`, `TP=1`, `ISL=64`, `OSL=32`, concurrency `1`, repeats `1`, with request-rate sweep disabled by default
+- heavier localhost serving remains available through the existing explicit overrides (`--extra-arg --model ...`, `--extra-arg --isl ...`, `--extra-arg --osl ...`, `--extra-arg --concurrency-range ...`, and request-rate flags)
+
 Fabric handbook:
 - `cluster/fabric/README.md`
 - `cluster/fabric/fabric_command_catalog.json`

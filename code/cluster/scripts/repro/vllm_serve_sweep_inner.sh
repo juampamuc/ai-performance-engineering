@@ -72,6 +72,33 @@ SERVER_LOG="${SWEEP_DIR}/server.log"
 SUMMARY_FILE="${SWEEP_DIR}/summary.txt"
 SUMMARY_CSV="${SWEEP_DIR}/sweep_summary.csv"
 SUMMARY_JSONL="${SWEEP_DIR}/sweep_summary.jsonl"
+STEP_STATUS_JSON="${SWEEP_DIR}/startup_status.json"
+
+write_step_status() {
+  local status="$1"
+  local ready="$2"
+  local elapsed="$3"
+  local detail="${4:-}"
+  python3 - "$STEP_STATUS_JSON" "$status" "$ready" "$elapsed" "$SERVER_LOG" "$detail" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+out_path = Path(sys.argv[1])
+payload = {
+    "status": sys.argv[2],
+    "ready": bool(int(sys.argv[3])),
+    "elapsed_seconds": float(sys.argv[4]),
+    "server_log_path": sys.argv[5],
+    "detail": sys.argv[6],
+    "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+write_step_status "starting" 0 0 "starting vLLM server"
 
 CSV_HEADER="model,tp,isl,osl,concurrency,num_prompts,request_throughput,output_throughput,total_token_throughput,mean_ttft_ms,median_ttft_ms,p99_ttft_ms,mean_tpot_ms,median_tpot_ms,p99_tpot_ms,gpu_util_mean_pct,gpu_util_p95_pct,mem_used_mean_mb,mem_used_max_mb,gpu_power_mean_w,gpu_power_p95_w,completed,failed"
 if [[ ! -f "$SUMMARY_CSV" ]] || [[ ! -s "$SUMMARY_CSV" ]]; then
@@ -245,16 +272,19 @@ while ! curl -s "http://localhost:${PORT}/health" >/dev/null 2>&1; do
   if [[ -f "$SERVER_LOG" ]] && grep -qE "Engine core initialization failed|AssertionError: Error in memory profiling|RuntimeError: Engine core initialization failed" "$SERVER_LOG"; then
     echo "ERROR: Server reported a fatal initialization error before becoming healthy"
     tail -120 "$SERVER_LOG" || true
+    write_step_status "startup_error" 0 "$WAITED" "server reported a fatal initialization error before becoming healthy"
     exit 1
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "ERROR: Server died before becoming healthy"
     tail -100 "$SERVER_LOG" || true
+    write_step_status "startup_error" 0 "$WAITED" "server died before becoming healthy"
     exit 1
   fi
   if [[ "$WAITED" -ge "$MAX_WAIT" ]]; then
     echo "ERROR: Server failed to start within ${MAX_WAIT}s"
     tail -100 "$SERVER_LOG" || true
+    write_step_status "startup_timeout" 0 "$WAITED" "server failed to start before ready timeout"
     exit 1
   fi
   sleep 5
@@ -263,6 +293,7 @@ while ! curl -s "http://localhost:${PORT}/health" >/dev/null 2>&1; do
 done
 
 echo "Server is ready!"
+write_step_status "ready" 1 "$WAITED" "server became healthy"
 echo
 points_run=0
 partial_resume=0
@@ -315,6 +346,7 @@ for CONC in "${PENDING_CONCURRENCY[@]}"; do
   if [[ "$BENCH_RC" -ne 0 ]]; then
     echo "ERROR: vllm bench serve failed for concurrency ${CONC} (rc=${BENCH_RC})" >&2
     tail -120 "$SERVER_LOG" || true
+    write_step_status "benchmark_failed_after_ready" 1 "$WAITED" "vllm bench serve failed for concurrency ${CONC} (rc=${BENCH_RC})"
     exit "$BENCH_RC"
   fi
 
@@ -517,6 +549,7 @@ PY
   if [[ "$POINT_RC" -ne 0 ]]; then
     echo "ERROR: invalid vLLM concurrency sweep point at concurrency=${CONC}" >&2
     tail -120 "$SERVER_LOG" || true
+    write_step_status "benchmark_failed_after_ready" 1 "$WAITED" "invalid concurrency sweep point at concurrency=${CONC}"
     exit "$POINT_RC"
   fi
 
@@ -532,6 +565,7 @@ rewrite_summary_from_csv
 if [[ "$partial_resume" -eq 1 ]]; then
   echo
   echo "Reached VLLM_SWEEP_MAX_POINTS_PER_RUN=${VLLM_SWEEP_MAX_POINTS_PER_RUN}; exiting with resumable status."
+  write_step_status "partial_progress" 1 "$WAITED" "reached resumable max points per run"
   exit 75
 fi
 
@@ -540,3 +574,4 @@ echo "========================================"
 echo "=== Sweep Complete ==="
 echo "========================================"
 cat "$SUMMARY_FILE"
+write_step_status "ok" 1 "$WAITED" "concurrency sweep completed successfully"

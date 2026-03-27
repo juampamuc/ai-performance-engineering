@@ -610,10 +610,20 @@ def _cluster_stage_status(result: Dict[str, Any]) -> Tuple[str, List[str], Optio
 
     scorecard = _fabric_scorecard_details(result)
     if scorecard:
-        if scorecard.get("status") not in {None, "ok"}:
-            issues.append(str(scorecard.get("error") or "fabric scorecard did not report ok"))
+        scorecard_status = str(scorecard.get("status") or "").strip().lower()
+        if scorecard_status in {"error", "failed"}:
+            issues.append(str(scorecard.get("error") or "fabric scorecard reported a fatal status"))
             return "failed", issues, scorecard
         degraded = scorecard.get("degraded_families") or []
+        if scorecard_status == "partial":
+            if degraded:
+                issues.append("fabric completeness is partial for one or more families")
+            else:
+                issues.append("fabric scorecard reported partial runtime verification")
+            return "partial", issues, scorecard
+        if scorecard_status not in {"", "ok"}:
+            issues.append(str(scorecard.get("error") or f"unexpected fabric scorecard status: {scorecard_status}"))
+            return "failed", issues, scorecard
         if degraded:
             issues.append("fabric completeness is partial for one or more families")
             return "partial", issues, scorecard

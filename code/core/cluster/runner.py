@@ -127,6 +127,7 @@ def _cluster_suite_progress_state(
         "modern_llm_profile": False,
         "coverage_baseline": bool(str(coverage_baseline_run_id or "").strip()),
     }
+    explicit_vllm_override = False
     args = [str(arg) for arg in (extra_args or [])]
     index = 0
     while index < len(args):
@@ -148,8 +149,10 @@ def _cluster_suite_progress_state(
             state["health_suite_mode"] = args[index]
         elif arg == "--run-vllm-request-rate-sweep":
             state["run_vllm_request_rate_sweep"] = True
+            explicit_vllm_override = True
         elif arg == "--skip-vllm-request-rate-sweep":
             state["run_vllm_request_rate_sweep"] = False
+            explicit_vllm_override = True
         elif arg == "--run-vllm-multinode":
             state["run_vllm_multinode_mode"] = "on"
         elif arg == "--skip-vllm-multinode":
@@ -217,6 +220,20 @@ def _cluster_suite_progress_state(
             state["check_ib_sharp"] = True
         elif arg == "--modern-llm-profile":
             state["modern_llm_profile"] = True
+        elif arg in {
+            "--model",
+            "--tp",
+            "--isl",
+            "--osl",
+            "--concurrency-range",
+            "--vllm-repeats",
+            "--vllm-request-rate-range",
+            "--vllm-request-rate-repeats",
+            "--vllm-request-rate-max-concurrency",
+            "--vllm-request-rate-num-prompts",
+        } and index + 1 < len(args):
+            explicit_vllm_override = True
+            index += 1
         elif arg == "--coverage-baseline-run-id" and index + 1 < len(args):
             index += 1
             state["coverage_baseline"] = bool(str(args[index]).strip())
@@ -250,6 +267,8 @@ def _cluster_suite_progress_state(
     label_values = _cluster_host_labels(hosts, labels)
     resolved_primary_label = str(primary_label or "").strip() or (label_values[0] if label_values else _default_primary_label())
     is_localhost_package = host_count == 1 and bool(hosts) and _is_local_host_name(hosts[0])
+    if state["run_fabric_eval"] and is_localhost_package and not explicit_vllm_override:
+        state["run_vllm_request_rate_sweep"] = False
     state.update(
         {
             "host_count": host_count,

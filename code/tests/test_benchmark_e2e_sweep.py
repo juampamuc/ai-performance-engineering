@@ -224,6 +224,64 @@ def test_run_benchmark_e2e_sweep_marks_fabric_partial_for_not_configured_scoreca
     ]
 
 
+def test_run_benchmark_e2e_sweep_marks_fabric_partial_for_partial_scorecard_status(tmp_path: Path, monkeypatch) -> None:
+    run_dir = tmp_path / "fabric_partial"
+    structured_dir = run_dir / "structured"
+    structured_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    scorecard_path = structured_dir / "e2e_fabric_partial__fabric_fabric_scorecard.json"
+    scorecard_path.write_text(
+        json.dumps(
+            {
+                "status": "partial",
+                "families": {
+                    "nvlink": {"completeness": "runtime_verified"},
+                    "spectrum-x": {"completeness": "not_present"},
+                },
+                "summary": {"runtime_verified_families": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(
+        e2e_sweep,
+        "_invoke_run_cluster_fabric_eval",
+        lambda **kwargs: {
+            "success": True,
+            "run_id": kwargs["run_id"],
+            "run_dir": str(run_dir),
+            "manifest_path": str(manifest_path),
+            "returncode": 0,
+        },
+    )
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_fabric_partial",
+        run_tier1=False,
+        run_full_sweep=False,
+        run_cluster=False,
+        run_fabric=True,
+    )
+
+    fabric_stage = next(stage for stage in result["stages"] if stage["name"] == "fabric")
+    assert fabric_stage["status"] == "partial"
+    assert "fabric completeness is partial" in " ".join(fabric_stage.get("issues", []))
+    assert result["overall_status"] == "partial"
+
+
 def test_run_benchmark_e2e_sweep_mirrors_cluster_stage_progress(tmp_path: Path, monkeypatch) -> None:
     observed: dict[str, object] = {}
     cluster_run_dir = tmp_path / "cluster" / "runs" / "e2e_cluster_progress__cluster"
