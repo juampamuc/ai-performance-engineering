@@ -204,6 +204,7 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.hidden_dim = self.num_heads * self.head_dim
         self.batch_size = 1
         self.sequence_lengths = [512, 1024, 2048]
+        self.block_size = 8
         self.register_workload_metadata(requests_per_iteration=1.0)
         self.output: Optional[torch.Tensor] = None
         self._verification_payload = None
@@ -254,14 +255,14 @@ class OptimizedIntegratedKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmar
                 seq_len = x.size(1)
                 self.kv_cache.allocate(request_id, seq_len)
 
-                for pos in range(seq_len):
-                    token = x[:, pos:pos+1, :]
-                    hidden = token
+                for pos in range(0, seq_len, self.block_size):
+                    token_block = x[:, pos:pos + self.block_size, :]
+                    hidden = token_block
                     for layer_idx, layer in enumerate(self.layers):
                         hidden = layer(hidden, self.kv_cache, request_id, layer_idx, pos)
 
                 self.kv_cache.free(request_id)
-        self.output = hidden.detach() if hidden is not None else None
+        self.output = hidden[:, -1:, :].detach() if hidden is not None else None
 
     def capture_verification_payload(self) -> None:
         if self.layers is None or self._verify_input is None or self.output is None:

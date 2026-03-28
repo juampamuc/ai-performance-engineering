@@ -17,12 +17,14 @@ Chapter 20 is where AI-generated ideas and isolated wins have to survive contact
 - better for answering whether the optimizations compose cleanly instead of fighting each other
 
 ## Measured Delta
-Representative validated results from `artifacts/runs/20260303_163946__bench__profile_minimal_targets_20/`:
+Representative validated results:
 
 | Target | Baseline | Optimized | Measured delta | What changed |
 | --- | ---: | ---: | ---: | --- |
-| `integrated_kv_cache` | `456.705 ms` | `67.381 ms` | `6.78x` | integrated KV-cache and overlap path |
+| `integrated_kv_cache` | `986.812 ms` | `139.676 ms` | `7.07x` | block-wise paged KV-cache integration across the end-to-end loop |
 | `bf16_mlp` | `0.616 ms` | `0.234 ms` | `2.63x` | BF16 precision policy on the same eager MLP graph |
+
+The current `integrated_kv_cache` proof point comes from `artifacts/runs/20260328_162954__bench__profile_minimal_targets_ch20_integrated_kv_cache/`. The `bf16_mlp` row remains from `artifacts/runs/20260303_163946__bench__profile_minimal_targets_20/`.
 
 This chapter is the best place to check whether wins compose. `pipeline_sequential` now remains available as an informational overlap demo, while canonical chapter claims focus on the pairs that still hold up as end-to-end improvements. The AI-assisted kernel-generation thread is represented here by `ai_kernel_generator.py` plus the verifier helpers, even though the full manuscript chapter covers a broader RL/AlphaTensor narrative than the current harness surface.
 
@@ -56,7 +58,7 @@ python -m cli.aisp tools ch20-ai-kernel-workflow -- --device cpu --seqlen 512
 | --- | --- |
 | `baseline_bf16_mlp.py`, `optimized_bf16_mlp.py`, `ai_kernel_generator.py`, `core/optimization/inductor_guard.py` | Precision-policy workload plus the shared Inductor cudagraph guard used by the compiled end-to-end paths. |
 | `baseline_pipeline_sequential.py`, `optimized_pipeline_sequential.py`, `baseline_end_to_end_bandwidth.py`, `optimized_end_to_end_bandwidth.py` | Pipeline and bandwidth case studies showing how optimizations interact across stages. `pipeline_sequential` currently remains informational after the fairness refresh. |
-| `baseline_integrated_kv_cache.py`, `optimized_integrated_kv_cache.py` | Integrated KV-cache demos that merge allocator, overlap, and NVLink pooling tricks. |
+| `baseline_integrated_kv_cache.py`, `optimized_integrated_kv_cache.py` | Integrated KV-cache demos contrasting naive per-token cache handling with the restored block-wise paged-cache path used by the end-to-end benchmark. |
 | `baseline_memory_standard.py`, `optimized_memory_standard.py` | Memory-focused harness verifying allocator changes at system level. |
 | `baseline_training_single.py`, `optimized_training_single.py`, `test.cu`, `Makefile` | Single-device training case study plus CUDA kernels used in the final report. |
 | `compare.py`, `arch_config.py`, `expectations_{hardware_key}.json` | Harness driver, architecture settings, and expectation baselines. |
@@ -75,7 +77,7 @@ python -m cli.aisp bench run --targets ch20 --profile minimal
 ## Validation Checklist
 - `python -m ch20.compare` emits per-stage summaries that show each optimized variant meeting or exceeding stored expectations.
 - `python -m ch20.ai_kernel_generator --emit test.cu` produces CUDA kernels that compile via `nvcc` and integrate into the harness without manual edits.
-- `python -m cli.aisp bench run --targets ch20:integrated_kv_cache --profile deep_dive` is the stronger canonical end-to-end overlap proof after the fairness refresh.
+- `python -m cli.aisp bench run --targets ch20:integrated_kv_cache --profile deep_dive` is the stronger canonical end-to-end paged-cache proof after restoring block-wise processing in the optimized path.
 
 ## Notes
 - `core/optimization/inductor_guard.py` is the canonical helper for gating Inductor cudagraph features in the compiled chapter 20 paths.

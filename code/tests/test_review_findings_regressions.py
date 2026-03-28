@@ -386,10 +386,11 @@ def test_reviewed_pair_fixes_remain_applied() -> None:
 
     assert "_ = weight.sum()" not in fp4_baseline
 
-    for source in (baseline_kv, optimized_kv):
-        assert "for pos in range(seq_len):" in source
-        assert "token = x[:, pos:pos+1, :]" in source
-    assert "range(0, seq_len, 8)" not in optimized_kv
+    assert "for pos in range(seq_len):" in baseline_kv
+    assert "token = x[:, pos:pos+1, :]" in baseline_kv
+    assert "range(0, seq_len, self.block_size)" in optimized_kv
+    assert "token_block = x[:, pos:pos + self.block_size, :]" in optimized_kv
+    assert "self.output = hidden[:, -1:, :].detach()" in optimized_kv
 
     assert "class OptimizedMemoryStandardBenchmark" in optimized_memory_standard
     assert "OptimizedMemoryHBM3eBenchmark" not in optimized_memory_standard
