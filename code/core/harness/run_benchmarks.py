@@ -76,6 +76,7 @@ from core.harness.validity_checks import detect_execution_environment, _collect_
 from core.harness.progress import ProgressEvent, ProgressRecorder
 from core.harness.triton_cache_utils import reset_triton_runtime_cache
 from core.benchmark.defaults import BenchmarkDefaults, set_defaults, get_defaults
+from core.benchmark.informational_benchmarks import INFORMATIONAL_BENCHMARKS, is_informational_example
 from core.benchmark.run_manifest import get_gpu_state
 from core.benchmark.run_manifest import reset_gpu_state, get_git_info
 from core.profiling.gpu_telemetry import format_gpu_telemetry, query_gpu_telemetry
@@ -677,45 +678,6 @@ def extract_from_pytorch_trace(trace_path: Path) -> Dict[str, float]:
 
 # Examples that demonstrate techniques but may not show speedup (educational demos, analysis tools)
 # These are valuable for showing HOW to implement something, even if not faster for this workload
-INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
-    # Ch4: DataParallel demo shows basic parallelism pattern (requires multi-GPU)
-    "ch04": {"dataparallel_basic"},
-    # Ch5: overlap/control demo remains useful, but no longer carries a canonical speed claim.
-    "ch05": {"ai"},
-    # Ch6: launch-bounds examples are small-effect teaching cases, not canonical speed claims.
-    "ch06": {"launch_bounds", "launch_bounds_cuda"},
-    # Ch8: custom-vs-library tcgen05 control pair is a narrative/control surface, not a headline speed claim.
-    "ch08": {"tcgen05_custom_vs_cublas"},
-    # Ch12: Graph CUDA demos show graph capture patterns
-    "ch12": {"graph_cuda", "cuda_graphs_conditional"},
-    # Ch13: compound optimization, exploratory KV-cache, and torchao FP8 recipe demos stay noncanonical
-    "ch13": {
-        "torchao_quantization_compiled",
-        "kv_cache_naive_flash_blockwise",
-        "precisionfp8",
-        "precisionfp8_rowwise",
-        "precisionfp8_rowwise_gw_hp",
-    },
-    # Ch14: explicit cuBLAS-vs-CUTLASS remains a supplementary control pair, not a chapter-native speed claim.
-    "ch14": {"cublas_vs_cutlass"},
-    # Ch15: Inference placement demo shows architecture patterns (multi-GPU)
-    "ch15": {"inference_placement"},
-    # Ch16: Hardware-variant dense-attention path and piece-graphs example remain informational.
-    "ch16": {"dense_attention_flash_blackwell_variant", "piece_graphs"},
-    # Ch17: Pipeline parallelism, routing demos, and the inference control pair remain informational.
-    "ch17": {"pipeline_parallelism", "prefill_decode_disagg", "inference_full"},
-    # Ch18: Speculative decoding demos show technique patterns
-    "ch18": {"speculative_decoding_multi_draft", "flexdecoding_graphs"},
-    # Ch19: NVFP4 is new and may not be faster than BF16 yet
-    "ch19": {"nvfp4_training"},
-    # Ch20: overlap demo remains informational until it is re-established as a stable speedup target.
-    "ch20": {"pipeline_sequential"},
-    # Labs: Dynamic router demos show routing patterns
-    "dynamic_router": {"dynamic_router", "router_vectorized"},
-    # Labs: Persistent decode demos show technique patterns
-    "persistent_decode": {"kv_locality_microbench", "persistent_decode_cuda"},
-}
-
 # Note: The following legacy paths were previously under tools/ and are now in monitoring/ or core/ subpackages:
 # - ch02/uma_memory_reporting -> labs/uma_memory/ (UMA reporting diagnostics)
 # - speculative_decode/spec_config_sweep -> ch18/speculative_decode/ (shared helpers only)
@@ -5188,8 +5150,6 @@ def _test_chapter_impl(
     skipped_distributed = 0
     informational_skipped = 0
     speedups = []
-    informational_examples = INFORMATIONAL_BENCHMARKS.get(chapter_name, set())
-    
     # Check GPU count for distributed benchmark detection
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     
@@ -5308,7 +5268,7 @@ def _test_chapter_impl(
                 optimized_files=[p.name for p in optimized_paths],
             )
         
-            if example_name in informational_examples:
+            if is_informational_example(chapter_name, example_name):
                 informational_skipped += 1
                 logger.info("    ℹ️ Informational systems demo - documented for reference, not benchmarked.")
                 emit_event(
@@ -7660,7 +7620,7 @@ def _test_chapter_impl(
                 optimized_files=[p.name for p in optimized_cu_paths],
             )
 
-            if example_name in informational_examples:
+            if is_informational_example(chapter_name, example_name):
                 informational_skipped += 1
                 logger.info("    ℹ️ Informational systems demo - documented for reference, not benchmarked.")
                 emit_event(

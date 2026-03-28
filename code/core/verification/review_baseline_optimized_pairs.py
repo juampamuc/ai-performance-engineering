@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+from core.benchmark.informational_benchmarks import is_informational_example
 from core.discovery import discover_benchmark_pairs
 
 
@@ -710,16 +711,9 @@ def _benchmark_scope_key(path: Path) -> str:
 
 
 def _is_informational_benchmark(path: Path) -> bool:
-    try:
-        from core.harness.run_benchmarks import INFORMATIONAL_BENCHMARKS
-    except Exception:
-        return False
     scope = _benchmark_scope_key(path)
     example_name = _benchmark_example_name(path)
-    scope_candidates = [scope]
-    if scope:
-        scope_candidates.append(Path(scope).name)
-    return any(example_name in INFORMATIONAL_BENCHMARKS.get(candidate, set()) for candidate in scope_candidates)
+    return is_informational_example(scope, example_name)
 
 
 def dedupe_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

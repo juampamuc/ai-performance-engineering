@@ -5928,7 +5928,9 @@ ENTRIES["labs/fullstack_cluster"] = lab_entry(
                 | `cluster_gemm` | `29.213 ms` | `4.583 ms` | `6.37x` |
                 | `cluster_gemm_tcgen05` | `0.240 ms` | `0.230 ms` | `1.04x` |
 
-                The useful split here is that `cluster_gemm` demonstrates the big end-to-end kernel win, while `cluster_gemm_tcgen05` is the fine-grained tcgen05 follow-up where the remaining headroom is much smaller."""
+                The useful split here is that `cluster_gemm` demonstrates the big end-to-end kernel win, while `cluster_gemm_tcgen05` is the fine-grained tcgen05 follow-up where the remaining headroom is much smaller.
+
+                Treat `cluster_gemm_tcgen05` as a supplementary informational control surface. It is still useful for tcgen05 profiling and regression tracking, but the lab's canonical speed claim stays on `cluster_gemm`."""
             ),
         ),
         MarkdownSection(
@@ -5979,6 +5981,7 @@ ENTRIES["labs/fullstack_cluster"] = lab_entry(
         "`gpu_requirements.py` reports the minimum GPU count, memory, and features for each scenario; consult it before scheduling runs.",
         "`capstone_extension.py` caches builds under `~/.cache/torch_extensions`; run `python cleanup.py --include-extensions` when switching CUDA versions.",
         "Canonical hybrid-EP comparisons now keep the same default routing mode; use `--route-mode topology_aware` when you want that alternate behavior to be visible instead of relying on a silent default.",
+        "`cluster_gemm_tcgen05` is an informational control surface; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.",
     ],
 )
 
@@ -6413,7 +6416,9 @@ ENTRIES["labs/persistent_decode"] = lab_entry(
                 | `persistent_decode` | `1.411 ms` | `0.118 ms` | `11.94x` | `graphs` |
                 | `tma_prefill_decode` | `1.588 ms` | `0.931 ms` | `1.71x` | `optimized_tma_prefill_decode` |
 
-                The decode win is a launch-overhead story. The prefill win is a staging/data-movement story. This lab is more useful when you keep those two categories separate."""
+                The decode win is a launch-overhead story. The prefill win is a staging/data-movement story. This lab is more useful when you keep those two categories separate.
+
+                The direct transport swaps `nvlink_offload` and `paged_kv_offload` remain informational control surfaces. The canonical KV-offload overlap claim stays on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics."""
             ),
         ),
         MarkdownSection(
@@ -6463,6 +6468,7 @@ ENTRIES["labs/persistent_decode"] = lab_entry(
     notes=[
         "Set `TORCH_COMPILE_MODE` or `TMA_TILE_SIZE` via env vars before invoking the harness to sweep tile sizes.",
         "`tma_extension.py` caches builds under `~/.cache/torch_extensions`; clean the cache when switching CUDA versions.",
+        "`nvlink_offload` and `paged_kv_offload` are informational control surfaces; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.",
     ],
 )
 

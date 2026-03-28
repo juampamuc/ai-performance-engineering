@@ -176,6 +176,16 @@ def test_ch13_readme_marks_canonical_vs_informational_variants() -> None:
     assert "memory-goal benchmark" in readme_text
 
 
+def test_persistent_decode_readme_marks_direct_offload_controls_vs_prefetch_overlap() -> None:
+    readme_text = (REPO_ROOT / "labs" / "persistent_decode" / "README.md").read_text(encoding="utf-8")
+
+    assert "nvlink_offload" in readme_text
+    assert "paged_kv_offload" in readme_text
+    assert "informational control surfaces" in readme_text
+    assert "paged_kv_offload_prefetch" in readme_text
+    assert "canonical KV-offload overlap claim" in readme_text
+
+
 def test_ch18_flexdecoding_docs_call_out_intentional_work_reduction() -> None:
     readme_text = (REPO_ROOT / "ch18" / "README.md").read_text(encoding="utf-8")
 
@@ -193,6 +203,9 @@ def test_fullstack_cluster_docs_call_out_uniform_default_and_topology_override()
     assert "Canonical hybrid-EP comparisons now keep the same default routing mode" in readme_text
     assert "--route-mode topology_aware" in readme_text
     assert "silent default" in readme_text
+    assert "cluster_gemm_tcgen05" in readme_text
+    assert "supplementary informational control surface" in readme_text
+    assert "canonical cluster-GEMM speed claim" in readme_text
 
 
 def test_top_k_kernel_docs_and_defaults_align_to_large_forward_routing_case() -> None:

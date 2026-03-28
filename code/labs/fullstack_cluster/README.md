@@ -27,6 +27,8 @@ Representative strict result from `artifacts/runs/20260302_full_strict_chapter_l
 
 The useful split here is that `cluster_gemm` demonstrates the big end-to-end kernel win, while `cluster_gemm_tcgen05` is the fine-grained tcgen05 follow-up where the remaining headroom is much smaller.
 
+Treat `cluster_gemm_tcgen05` as a supplementary informational control surface. It is still useful for tcgen05 profiling and regression tracking, but the lab's canonical speed claim stays on `cluster_gemm`.
+
 ## Profiler Evidence
 ```bash
 python -m cli.aisp bench run --targets labs/fullstack_cluster:cluster_gemm --profile deep_dive --single-gpu
@@ -68,6 +70,7 @@ python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal
 - Use `--target-extra-arg labs/fullstack_cluster:<workload>="--flag value"` to sweep schedule knobs.
 - Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.
 - Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
+- `cluster_gemm_tcgen05` is an informational control surface; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/fullstack_cluster:moe_hybrid_ep --profile minimal` records a full optimizer step with routing/dispatch/combine/backward/grad-sync metrics.

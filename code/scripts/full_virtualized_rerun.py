@@ -27,6 +27,7 @@ from core.benchmark.expectations import (
     RunProvenance,
     detect_expectation_key,
 )
+from core.benchmark.informational_benchmarks import is_informational_example
 from core.discovery import chapter_slug, discover_all_chapters, discover_benchmarks, get_bench_roots
 from core.harness.validity_checks import detect_execution_environment
 
@@ -113,23 +114,6 @@ EXPECTED_UNSUPPORTED_RUNTIME_TOKENS = (
     "algorithm unavailable on this driver/toolchain",
     "requires a native cublaslt heuristic for this exact benchmark",
 )
-
-INFORMATIONAL_BENCHMARKS: Dict[str, set[str]] = {
-    "ch04": {"dataparallel_basic"},
-    "ch05": {"ai"},
-    "ch06": {"launch_bounds_cuda"},
-    "ch12": {"graph_cuda", "cuda_graphs_conditional"},
-    "ch13": {"torchao_quantization_compiled", "kv_cache_naive_flash_blockwise"},
-    "ch15": {"inference_placement"},
-    "ch16": {"dense_attention_flash_blackwell_variant", "piece_graphs"},
-    "ch17": {"pipeline_parallelism", "prefill_decode_disagg", "inference_full"},
-    "ch18": {"speculative_decoding_multi_draft", "flexdecoding_graphs"},
-    "ch19": {"nvfp4_training"},
-    "ch20": {"pipeline_sequential"},
-    "dynamic_router": {"dynamic_router", "router_vectorized"},
-    "persistent_decode": {"kv_locality_microbench", "persistent_decode_cuda"},
-}
-
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -868,7 +852,7 @@ def _is_informational_benchmark(chapter_name: str, bench: Dict[str, Any]) -> boo
     example = str(bench.get("example") or "").strip()
     if not example:
         return False
-    return example in INFORMATIONAL_BENCHMARKS.get(str(chapter_name).strip(), set())
+    return is_informational_example(str(chapter_name).strip(), example)
 
 
 def _iter_benchmarks(results_json: Path) -> Iterable[Tuple[str, Dict[str, Any], Dict[str, Any]]]:

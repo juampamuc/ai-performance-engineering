@@ -220,11 +220,15 @@ def test_ch06_launch_bounds_pair_is_informational_small_effect_case() -> None:
 
 def test_ch10_double_buffered_pipeline_baseline_is_single_buffered_tiled_not_naive() -> None:
     baseline_source = _read("ch10/baseline_double_buffered_pipeline.cu")
+    optimized_source = _read("ch10/optimized_double_buffered_pipeline.cu")
     baseline_wrapper = _read("ch10/baseline_double_buffered_pipeline.py")
 
     assert "gemm_single_buffered_kernel" in baseline_source
     assert "shared-memory tiles" in baseline_source
     assert "gemm_naive_kernel" not in baseline_source
+    assert "constexpr int CHUNK_K = 32;" in optimized_source
+    assert "zero_stage(stage);" in optimized_source
+    assert "if (chunk_base + kk >= K)" in optimized_source
     assert 'double_buffered=False' in baseline_wrapper
     assert 'num_stages=1' in baseline_wrapper
 
@@ -605,6 +609,9 @@ def test_portable_rerun_ignores_informational_targets_for_expectation_queueing()
     assert _is_informational_benchmark("ch05", {"example": "ai"}) is True
     assert _is_informational_benchmark("ch12", {"example": "cuda_graphs_conditional"}) is True
     assert _is_informational_benchmark("ch20", {"example": "pipeline_sequential"}) is True
+    assert _is_informational_benchmark("labs_fullstack_cluster", {"example": "cluster_gemm_tcgen05"}) is True
+    assert _is_informational_benchmark("labs_persistent_decode", {"example": "nvlink_offload"}) is True
+    assert _is_informational_benchmark("labs_persistent_decode", {"example": "paged_kv_offload"}) is True
     assert _is_informational_benchmark("ch13", {"example": "kv_cache_naive"}) is False
 
 
@@ -908,6 +915,7 @@ def test_ch18_and_fullstack_pairs_keep_semantics_fixed() -> None:
     baseline_flexdecode = _read("ch18/baseline_flexdecoding.py")
     optimized_flexdecode = _read("ch18/optimized_flexdecoding.py")
     moe_common = _read("labs/fullstack_cluster/moe_hybrid_ep_common.py")
+    fullstack_readme = _read("labs/fullstack_cluster/README.md")
 
     assert '"comparison_axis": "full_kv_mask_vs_windowed_kv_slice"' in baseline_flexdecode
     assert '"execution_pattern": "masked_full_cache_decode"' in baseline_flexdecode
@@ -918,6 +926,9 @@ def test_ch18_and_fullstack_pairs_keep_semantics_fixed() -> None:
     assert "k_slice = self.model.k_cache[:, start:end]" in optimized_flexdecode
     assert 'route_mode="uniform"' in moe_common
     assert 'route_mode="topology_aware" if optimized else "uniform"' not in moe_common
+    assert "cluster_gemm_tcgen05" in INFORMATIONAL_BENCHMARKS.get("fullstack_cluster", set())
+    assert "supplementary informational control surface" in fullstack_readme
+    assert "canonical speed claim stays on `cluster_gemm`" in fullstack_readme
 
 
 def test_ozaki_lab_documents_slide_narrative_and_pins_emulation_strategy() -> None:
@@ -969,6 +980,7 @@ def test_persistent_decode_keeps_canonical_iteration_parity_and_marks_cuda_varia
     baseline_source = _read("labs/persistent_decode/baseline_persistent_decode.py")
     triton_source = _read("labs/persistent_decode/optimized_persistent_decode_triton.py")
     cuda_source = _read("labs/persistent_decode/optimized_persistent_decode_cuda.py")
+    readme_text = _read("labs/persistent_decode/README.md")
 
     assert "iterations=12" in baseline_source
     assert "iterations=12" in triton_source
@@ -977,6 +989,11 @@ def test_persistent_decode_keeps_canonical_iteration_parity_and_marks_cuda_varia
     assert "iterations=5" in cuda_source
     assert "use_subprocess=True" in cuda_source
     assert "persistent_decode_cuda" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
+    assert "nvlink_offload" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
+    assert "paged_kv_offload" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
+    assert "informational control surfaces" in readme_text
+    assert "paged_kv_offload_prefetch" in readme_text
+    assert "canonical KV-offload overlap claim" in readme_text
 
     sample = torch.empty(4096, dtype=torch.float32)
     sample.random_(0, 256).floor_()

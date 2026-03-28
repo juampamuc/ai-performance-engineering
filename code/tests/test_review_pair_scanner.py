@@ -787,9 +787,15 @@ def get_benchmark():
 
 
 def test_is_informational_benchmark_supports_lab_scope_aliases() -> None:
-    path = Path("labs/persistent_decode/optimized_persistent_decode_cuda.py").resolve()
+    informative_paths = [
+        Path("labs/persistent_decode/optimized_persistent_decode_cuda.py").resolve(),
+        Path("labs/persistent_decode/optimized_nvlink_offload.py").resolve(),
+        Path("labs/persistent_decode/optimized_paged_kv_offload.py").resolve(),
+        Path("labs/fullstack_cluster/optimized_cluster_gemm_tcgen05.py").resolve(),
+    ]
 
-    assert pair_review._is_informational_benchmark(path) is True
+    for path in informative_paths:
+        assert pair_review._is_informational_benchmark(path) is True
 
 
 def test_review_main_scopes_to_requested_chapters(monkeypatch, capsys) -> None:

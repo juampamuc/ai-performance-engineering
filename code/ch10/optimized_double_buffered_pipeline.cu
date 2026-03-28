@@ -56,59 +56,77 @@ __global__ void gemm_double_buffered_kernel(
     block.sync();
     auto pipe = cuda::make_pipeline(block, pipe_state);
 
+    auto zero_stage = [&](int stage) {
+        const int threads = blockDim.x * blockDim.y;
+        const int linear_idx = threadIdx.y * blockDim.x + threadIdx.x;
+        for (int idx = linear_idx; idx < tileA_elems; idx += threads) {
+            A_tiles[stage][idx] = 0.0f;
+        }
+        for (int idx = linear_idx; idx < tileB_elems; idx += threads) {
+            B_tiles[stage][idx] = 0.0f;
+        }
+    };
+
     auto stage_async = [&](int stage, int chunk_index) {
         const int chunk_base = chunk_index * CHUNK_K;
+        const int valid_k = max(0, min(CHUNK_K, K - chunk_base));
         pipe.producer_acquire();
+        zero_stage(stage);
+        block.sync();
         auto warp = cg::tiled_partition<32>(block);
         const int warp_id = warp.meta_group_rank();
         const int warp_count = warp.meta_group_size();
-        const bool full_tile = (block_row + TILE_M <= M) && (block_col + TILE_N <= N) && (chunk_base + CHUNK_K <= K);
 
-        if (full_tile) {
+        if (valid_k > 0) {
             for (int row = warp_id; row < TILE_M; row += warp_count) {
-                float* dst = A_tiles[stage] + row * CHUNK_K;
-                const float* src = A + (block_row + row) * K + chunk_base;
-                cuda::memcpy_async(
-                    warp,
-                    dst,
-                    src,
-                    cuda::aligned_size_t<16>(static_cast<size_t>(CHUNK_K) * sizeof(float)),
-                    pipe);
-            }
-
-            for (int row = warp_id; row < CHUNK_K; row += warp_count) {
-                float* dst = B_tiles[stage] + row * TILE_N;
-                const float* src = B + (chunk_base + row) * N + block_col;
-                cuda::memcpy_async(
-                    warp,
-                    dst,
-                    src,
-                    cuda::aligned_size_t<16>(static_cast<size_t>(TILE_N) * sizeof(float)),
-                    pipe);
-            }
-        } else {
-            const int threads = blockDim.x * blockDim.y;
-            const int linear_tid = threadIdx.y * blockDim.x + threadIdx.x;
-            const int valid_k = max(0, min(CHUNK_K, K - chunk_base));
-            for (int idx = linear_tid; idx < tileA_elems; idx += threads) {
-                const int row = idx / CHUNK_K;
-                const int col = idx % CHUNK_K;
                 const int global_row = block_row + row;
-                const int global_col = chunk_base + col;
-                A_tiles[stage][idx] = (global_row < M && global_col < K)
-                    ? A[global_row * K + global_col]
-                    : 0.0f;
+                if (global_row >= M) {
+                    continue;
+                }
+                float* dst = A_tiles[stage] + row * CHUNK_K;
+                const float* src = A + global_row * K + chunk_base;
+                if (valid_k == CHUNK_K) {
+                    cuda::memcpy_async(
+                        warp,
+                        dst,
+                        src,
+                        cuda::aligned_size_t<16>(static_cast<size_t>(CHUNK_K) * sizeof(float)),
+                        pipe);
+                } else {
+                    cuda::memcpy_async(
+                        warp,
+                        dst,
+                        src,
+                        static_cast<size_t>(valid_k) * sizeof(float),
+                        pipe);
+                }
             }
-            for (int idx = linear_tid; idx < tileB_elems; idx += threads) {
-                const int row = idx / TILE_N;
-                const int col = idx % TILE_N;
+        }
+
+        if (valid_cols > 0) {
+            for (int row = warp_id; row < valid_k; row += warp_count) {
                 const int global_row = chunk_base + row;
-                const int global_col = block_col + col;
-                B_tiles[stage][idx] = (row < valid_k && global_col < N && global_row < K)
-                    ? B[global_row * N + global_col]
-                    : 0.0f;
+                if (global_row >= K) {
+                    continue;
+                }
+                float* dst = B_tiles[stage] + row * TILE_N;
+                const float* src = B + global_row * N + block_col;
+                if (valid_cols == TILE_N) {
+                    cuda::memcpy_async(
+                        warp,
+                        dst,
+                        src,
+                        cuda::aligned_size_t<16>(static_cast<size_t>(TILE_N) * sizeof(float)),
+                        pipe);
+                } else {
+                    cuda::memcpy_async(
+                        warp,
+                        dst,
+                        src,
+                        static_cast<size_t>(valid_cols) * sizeof(float),
+                        pipe);
+                }
             }
-            block.sync();
         }
 
         pipe.producer_commit();
@@ -125,7 +143,11 @@ __global__ void gemm_double_buffered_kernel(
         const int stage = chunk % 2;
         pipe.consumer_wait();
         block.sync();
+        const int chunk_base = chunk * CHUNK_K;
         for (int kk = 0; kk < CHUNK_K; ++kk) {
+            if (chunk_base + kk >= K) {
+                continue;
+            }
             float a_frag[THREAD_TILE_M];
             float b_frag[THREAD_TILE_N];
             for (int i = 0; i < THREAD_TILE_M; ++i) {
@@ -196,9 +218,10 @@ int main() {
     constexpr int THREAD_TILE_N = 4;
     constexpr int TILE_M = THREAD_TILE_M * 16;
     constexpr int TILE_N = THREAD_TILE_N * 16;
-    // Keep the double-buffered pipeline at baseline occupancy by halving the
-    // staged K-slice instead of doubling shared-memory footprint outright.
-    constexpr int CHUNK_K = 16;
+    // Keep the staged K-slice aligned with the Chapter 10 book example and
+    // prior validated evidence; halving it to 16 over-increased pipeline turns
+    // and made the "optimized" path slower than the single-buffer baseline.
+    constexpr int CHUNK_K = 32;
     dim3 block(16, 16);
     dim3 grid((N + TILE_N - 1) / TILE_N, (M + TILE_M - 1) / TILE_M);
     size_t shared_bytes = 2 * (TILE_M * CHUNK_K + CHUNK_K * TILE_N) * sizeof(float);
