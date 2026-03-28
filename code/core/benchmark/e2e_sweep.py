@@ -1399,11 +1399,7 @@ def _benchmark_failure_issue_row(
     stage_name = str(failure.get("stage") or "unknown").strip() or "unknown"
     bucket = str(failure.get("bucket") or "").strip() or None
     target = str(failure.get("target") or "<unknown>").strip() or "<unknown>"
-    issue_id_parts = ["reported", stage_name]
-    if bucket:
-        issue_id_parts.append(bucket)
-    issue_id_parts.append(target)
-    issue_id = "_".join(_slugify_issue_component(part) for part in issue_id_parts)
+    issue_id = _benchmark_failure_issue_id(stage_name=stage_name, bucket=bucket, target=target)
     symptom = f"{target} reported `{failure.get('status')}`"
     error = str(failure.get("error") or "").strip()
     if error:
@@ -1438,6 +1434,19 @@ def _benchmark_failure_issue_row(
         "reported_at": failure.get("timestamp"),
         "source": failure.get("source") or "stage_snapshot",
     }
+
+
+def _benchmark_failure_issue_id(
+    *,
+    stage_name: str,
+    bucket: Optional[str],
+    target: str,
+) -> str:
+    issue_id_parts = ["reported", stage_name]
+    if bucket:
+        issue_id_parts.append(bucket)
+    issue_id_parts.append(target)
+    return "_".join(_slugify_issue_component(part) for part in issue_id_parts)
 
 
 def _render_issue_evidence(row: Dict[str, Any]) -> str:
@@ -1566,6 +1575,7 @@ def _sync_active_issue_ledger(
         "historical_failure_ledger_json": str(historical_issue_json) if historical_issue_json.exists() else None,
         "historical_failure_ledger_md": str(historical_issue_md) if historical_issue_md.exists() else None,
         "summary": dict(ledger_payload["summary"]),
+        "rows": rows,
     }
 
 
@@ -1819,6 +1829,24 @@ def inspect_benchmark_e2e_sweep_run(
         aggregate_failures=aggregate_failures,
         reported_failures=child_reported_failures,
     )
+    resolved_reported_issue_ids = {
+        str(row.get("issue_id") or "").strip()
+        for row in list(ledgers.get("rows") or [])
+        if isinstance(row, dict)
+        and str(row.get("status") or "").strip() == "resolved"
+        and str(row.get("issue_id") or "").strip().startswith("reported_")
+    }
+    if resolved_reported_issue_ids:
+        surfaced_failures = [
+            entry
+            for entry in surfaced_failures
+            if _benchmark_failure_issue_id(
+                stage_name=str(entry.get("stage") or "unknown").strip() or "unknown",
+                bucket=str(entry.get("bucket") or "").strip() or None,
+                target=str(entry.get("target") or "<unknown>").strip() or "<unknown>",
+            )
+            not in resolved_reported_issue_ids
+        ]
 
     return _json_safe(
         {

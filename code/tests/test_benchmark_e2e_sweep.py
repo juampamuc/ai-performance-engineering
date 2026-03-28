@@ -2253,6 +2253,9 @@ def test_inspect_benchmark_e2e_sweep_run_preserves_resolved_reported_issue_rows(
     assert row["evidence_paths"]["rerun_output_json"].endswith("rerun.json")
     assert status["ledgers"]["summary"]["resolved_count"] == 1
     assert status["ledgers"]["summary"]["unresolved_count"] == 0
+    assert status["current"]["reported_failures"] == []
+    rendered = e2e_sweep.render_benchmark_e2e_status_text(status)
+    assert "reported_failures=" not in rendered
 
 
 def test_watch_benchmark_e2e_sweep_run_launches_detached_watcher(monkeypatch, tmp_path: Path) -> None:

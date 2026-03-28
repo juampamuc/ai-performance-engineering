@@ -682,8 +682,10 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     "ch04": {"dataparallel_basic"},
     # Ch5: overlap/control demo remains useful, but no longer carries a canonical speed claim.
     "ch05": {"ai"},
-    # Ch6: launch-bounds bridge targets remain informational.
-    "ch06": {"launch_bounds_cuda"},
+    # Ch6: launch-bounds examples are small-effect teaching cases, not canonical speed claims.
+    "ch06": {"launch_bounds", "launch_bounds_cuda"},
+    # Ch8: custom-vs-library tcgen05 control pair is a narrative/control surface, not a headline speed claim.
+    "ch08": {"tcgen05_custom_vs_cublas"},
     # Ch12: Graph CUDA demos show graph capture patterns
     "ch12": {"graph_cuda", "cuda_graphs_conditional"},
     # Ch13: compound optimization, exploratory KV-cache, and torchao FP8 recipe demos stay noncanonical

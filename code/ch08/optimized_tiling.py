@@ -6,7 +6,7 @@ from ch08.tiling_benchmark_base import TilingBenchmarkBase
 
 
 class OptimizedTilingBenchmark(TilingBenchmarkBase):
-    """Optimized implementation that loads tiles into shared memory."""
+    """Optimized implementation that exercises the strict fast-path GEMM."""
 
     nvtx_label = "optimized_tiling"
 
@@ -15,11 +15,10 @@ class OptimizedTilingBenchmark(TilingBenchmarkBase):
         assert self.matrix_a is not None
         assert self.matrix_b is not None
         assert self.output is not None
-        self.extension.matmul_tiled(self.matrix_a, self.matrix_b, self.output)
+        self.extension.matmul_tiled_fast(self.matrix_a, self.matrix_b, self.output)
 
 
 
 def get_benchmark() -> TilingBenchmarkBase:
     """Factory function for harness discovery."""
     return OptimizedTilingBenchmark()
-

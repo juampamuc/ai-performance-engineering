@@ -85,4 +85,5 @@ python -m cli.aisp bench run --targets ch06 --profile minimal
 - `arch_config.py` forces SM-specific compile flags (e.g., disabling pipelines on unsupported GPUs) so targets fail gracefully on older hardware.
 - The canonical public add targets are `add` and `add_cuda`; the older add-tensors wrapper names were removed instead of kept as legacy aliases.
 - `attention_ilp` is an attention-score preprocessing microbenchmark. It is intentionally not a fused SDPA or multi-stream overlap example.
+- `launch_bounds` and `launch_bounds_cuda` are small-effect teaching cases for the `__launch_bounds__` annotation. They remain useful for profiler study and code reading, but they are treated as informational surfaces rather than canonical Chapter 6 speed-claim benchmarks.
 - CUDA extensions in `cuda_extensions/` can be imported directly into notebooks for interactive prototyping.

@@ -97,6 +97,14 @@ def test_ch14_readme_uses_renamed_compile_and_library_targets() -> None:
     assert "baseline_cutlass.py" not in readme_text
 
 
+def test_ch08_readme_marks_tcgen05_custom_vs_cublas_informational_and_tiling_fast_path() -> None:
+    readme_text = (REPO_ROOT / "ch08" / "README.md").read_text(encoding="utf-8")
+
+    assert "tcgen05_custom_vs_cublas" in readme_text
+    assert "informational control surface" in readme_text
+    assert "matmul_tiled_fast" in readme_text
+
+
 def test_ch15_readme_calls_single_gpu_pair_a_control_handoff() -> None:
     readme_text = (REPO_ROOT / "ch15" / "README.md").read_text(encoding="utf-8")
 

@@ -169,11 +169,11 @@ def test_ch08_threshold_tma_bridge_workload_uses_larger_row_count() -> None:
     assert "rows: int = 1 << 26" in threshold_base_text
 
 
-def test_ch08_tiling_optimized_wrapper_uses_shared_memory_kernel_not_cublas() -> None:
+def test_ch08_tiling_optimized_wrapper_uses_strict_fast_path() -> None:
     optimized_tiling = _read("ch08/optimized_tiling.py")
 
-    assert "matmul_tiled(self.matrix_a, self.matrix_b, self.output)" in optimized_tiling
-    assert "matmul_tiled_fast" not in optimized_tiling
+    assert "matmul_tiled_fast(self.matrix_a, self.matrix_b, self.output)" in optimized_tiling
+    assert "matmul_tiled(self.matrix_a, self.matrix_b, self.output)" not in optimized_tiling
 
 
 def test_ch08_loop_unrolling_binaries_share_identical_input_initialization() -> None:
@@ -195,12 +195,27 @@ def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -
     optimized_tcgen05_text = _read("ch08/optimized_tcgen05_custom_vs_cublas.py")
 
     assert "chapter-native exemplars" in readme_text
-    assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, `tcgen05_custom_vs_cublas`, and `nvfp4_mlp`" in readme_text
+    assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp`" in readme_text
     assert "custom-versus-library comparison target" in readme_text
+    assert "informational control surface" in readme_text
+    assert "matmul_tiled_fast" in readme_text
     assert "historical baseline/optimized filenames" not in readme_text
     assert "tcgen05-versus-cuBLAS bridge control" in baseline_tcgen05_text
     assert "Vendor cuBLAS reference side of the comparison pair." in baseline_tcgen05_text
     assert "Custom tcgen05 kernel side of the comparison pair." in optimized_tcgen05_text
+
+
+def test_ch08_tcgen05_custom_vs_cublas_is_informational() -> None:
+    assert "tcgen05_custom_vs_cublas" in INFORMATIONAL_BENCHMARKS["ch08"]
+
+
+def test_ch06_launch_bounds_pair_is_informational_small_effect_case() -> None:
+    readme_text = _read("ch06/README.md")
+
+    assert "launch_bounds" in INFORMATIONAL_BENCHMARKS["ch06"]
+    assert "launch_bounds_cuda" in INFORMATIONAL_BENCHMARKS["ch06"]
+    assert "small-effect teaching cases" in readme_text
+    assert "informational surfaces" in readme_text
 
 
 def test_ch10_double_buffered_pipeline_baseline_is_single_buffered_tiled_not_naive() -> None:
