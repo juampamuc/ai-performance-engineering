@@ -29,6 +29,9 @@ Strict `minimal` expectation-backed runs on the current `b200` hardware key prod
 | `metric_reduction_cuda` | `2.760 ms` | `0.050 ms` | `55.06x` faster |
 | `padding_aware_transformer` | `2.919 ms` | `3.430 ms` | `0.85x` speed, `76.4%` lower peak memory |
 
+## Goal Semantics
+Treat `padding_aware_transformer` as a memory-goal benchmark. Its value is the large reduction in padded-row activation footprint; a slower timed path is acceptable when the measured memory drop is material and verification stays green.
+
 ## Profiler Evidence
 ```bash
 python -m cli.aisp bench run --targets labs/training_hotpath:metric_reduction_vectorized --profile deep_dive --single-gpu
@@ -76,9 +79,10 @@ python -m cli.aisp bench run --targets labs/training_hotpath --profile minimal
 ## Validation Checklist
 - `python -m cli.aisp bench list-targets --chapter labs/training_hotpath` should discover the three supporting benchmark pairs.
 - The optimized metric reduction targets should match their baselines numerically while flipping `metric_reduction.is_vectorized` or `metric_reduction.is_fused_cuda` in custom metrics.
-- The padding-aware target should preserve outputs while flipping `padding_aware.enabled` and reporting a non-trivial padded-token fraction.
+- The padding-aware target should preserve outputs while flipping `padding_aware.enabled`, reporting a non-trivial padded-token fraction, and reducing peak memory even if raw time is not faster.
 
 ## Notes
 - Keep `ch14:model_compile_reduced_precision` as the primary compile + reduced-precision training story.
 - Keep `ch12:cuda_graphs` as the primary CUDA Graph replay story.
 - Keep `labs/async_input_pipeline:async_input_pipeline` as the primary copy-stream overlap story.
+- `padding_aware_transformer` is a memory-goal benchmark; judge it by peak-memory reduction first, not by raw speedup.

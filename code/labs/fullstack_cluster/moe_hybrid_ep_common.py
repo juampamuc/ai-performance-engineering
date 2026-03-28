@@ -964,12 +964,62 @@ class MoEHybridEPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._metrics_sidecar_path = Path(tempfile.gettempdir()) / (
             f"aisp_{label}_metrics.json"
         )
+        self._single_gpu_args: Optional[argparse.Namespace] = None
+        self._single_gpu_topology: Optional[TopologyInfo] = None
+        self._single_gpu_trainer: Optional[HybridEPTrainer] = None
+        self._latest_metrics: Optional[Dict[str, float]] = None
 
     def benchmark_fn(self) -> None:
+        if self._single_gpu_trainer is None:
+            self._verify_output.zero_()
+            return
+        artifacts = self._single_gpu_trainer.run_step()
+        self._latest_metrics = dict(artifacts.metrics)
+        self._latest_metrics["moe_hybrid_ep.workload_size"] = float(self.workload_size)
+        maybe_write_sidecar(self._latest_metrics)
+        self._verify_output.fill_(artifacts.loss)
+
+    def setup(self) -> None:
+        self._latest_metrics = None
         self._verify_output.zero_()
+        self._metrics_sidecar_path.unlink(missing_ok=True)
+        if not self._use_local_single_gpu_runner():
+            return
+        parser = build_parser(optimized=self.optimized)
+        args = parser.parse_args(["--skip-preflight", "--iters", "1"])
+        topology = init_topology()
+        trainer = HybridEPTrainer(args, topology, optimized=self.optimized)
+        self._single_gpu_args = args
+        self._single_gpu_topology = topology
+        self._single_gpu_trainer = trainer
+        self.parameter_count = sum(p.numel() for p in trainer.model.parameters())
+
+    def teardown(self) -> None:
+        topology = self._single_gpu_topology
+        self._single_gpu_args = None
+        self._single_gpu_topology = None
+        self._single_gpu_trainer = None
+        self._latest_metrics = None
+        self._metrics_sidecar_path.unlink(missing_ok=True)
+        if topology is not None:
+            shutdown_topology(topology)
+        super().teardown()
+
+    def _use_local_single_gpu_runner(self) -> bool:
+        return (not self.multigpu) and torch.cuda.is_available() and torch.cuda.device_count() == 1
 
     def get_config(self) -> BenchmarkConfig:
         visible_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if not self.multigpu and visible_gpus == 1:
+            return BenchmarkConfig(
+                launch_via=LaunchVia.PYTHON,
+                iterations=1,
+                warmup=5,
+                use_subprocess=False,
+                single_gpu=True,
+                measurement_timeout_seconds=1800,
+                timing_method="wall_clock",
+            )
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
             nproc_per_node=max(1, visible_gpus),
@@ -982,6 +1032,8 @@ class MoEHybridEPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_custom_metrics(self) -> Optional[Dict[str, float]]:
+        if self._latest_metrics is not None:
+            return dict(self._latest_metrics)
         if not self._metrics_sidecar_path.exists():
             return {
                 "moe_hybrid_ep.workload_size": float(self.workload_size),

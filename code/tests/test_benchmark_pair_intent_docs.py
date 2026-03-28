@@ -113,6 +113,17 @@ def test_ch15_readme_calls_single_gpu_pair_a_control_handoff() -> None:
     assert "baseline_disaggregated_inference.py" not in readme_text
 
 
+def test_nvfp4_group_gemm_readme_marks_case012_informational_and_case3_canonical() -> None:
+    readme_text = (REPO_ROOT / "labs" / "nvfp4_group_gemm" / "README.md").read_text(encoding="utf-8")
+
+    assert "nvfp4_group_gemm_case0" in readme_text
+    assert "nvfp4_group_gemm_case1" in readme_text
+    assert "nvfp4_group_gemm_case2" in readme_text
+    assert "informational control surface" in readme_text
+    assert "case3 route verification-clean" in readme_text
+    assert "older strict all-case snapshots" in readme_text
+
+
 def test_ch17_inference_full_docs_mark_control_pair_not_disagg_exemplar() -> None:
     baseline_text = (REPO_ROOT / "ch17" / "baseline_inference_full.py").read_text(encoding="utf-8")
     optimized_text = (REPO_ROOT / "ch17" / "optimized_inference_full.py").read_text(encoding="utf-8")
@@ -186,6 +197,34 @@ def test_persistent_decode_readme_marks_direct_offload_controls_vs_prefetch_over
     assert "canonical KV-offload overlap claim" in readme_text
 
 
+def test_decode_optimization_readme_marks_decode_pinned_as_control_surface() -> None:
+    readme_text = (REPO_ROOT / "labs" / "decode_optimization" / "README.md").read_text(encoding="utf-8")
+
+    assert "decode_pinned" in readme_text
+    assert "informational control surface" in readme_text
+    assert "decode_streams" in readme_text
+    assert "large host payload" in readme_text
+
+
+def test_training_hotpath_readme_marks_padding_aware_transformer_memory_goal() -> None:
+    readme_text = (REPO_ROOT / "labs" / "training_hotpath" / "README.md").read_text(encoding="utf-8")
+
+    assert "padding_aware_transformer" in readme_text
+    assert "memory-goal benchmark" in readme_text
+    assert "peak-memory reduction" in readme_text
+    assert "not by raw speedup" in readme_text
+
+
+def test_occupancy_tuning_readme_marks_low_warp_schedule_informational() -> None:
+    readme_text = (REPO_ROOT / "labs" / "occupancy_tuning" / "README.md").read_text(encoding="utf-8")
+
+    assert "proton_matmul_bm64_bn64_bk32_nw2" in readme_text
+    assert "informational control surface" in readme_text
+    assert "proton_matmul_bm64_bn256_bk32" in readme_text
+    assert "proton_matmul_bm128_bn128_bk32_nw8" in readme_text
+    assert "proton_matmul_bm128_bn256_bk64" in readme_text
+
+
 def test_ch18_flexdecoding_docs_call_out_intentional_work_reduction() -> None:
     readme_text = (REPO_ROOT / "ch18" / "README.md").read_text(encoding="utf-8")
 
@@ -200,6 +239,7 @@ def test_fullstack_cluster_docs_call_out_uniform_default_and_topology_override()
     readme_text = (REPO_ROOT / "labs" / "fullstack_cluster" / "README.md").read_text(encoding="utf-8")
 
     assert 'route_mode="uniform"' in common_text
+    assert "Single-GPU `moe_hybrid_ep` benchmark runs measure `HybridEPTrainer.run_step()` in-process" in readme_text
     assert "Canonical hybrid-EP comparisons now keep the same default routing mode" in readme_text
     assert "--route-mode topology_aware" in readme_text
     assert "silent default" in readme_text

@@ -651,6 +651,7 @@ class PaddingAwareTransformerBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return BenchmarkConfig(
             iterations=15,
             warmup=5,
+            enable_memory_tracking=True,
             setup_timeout_seconds=240,
             measurement_timeout_seconds=120,
             ncu_replay_mode="application",
@@ -661,6 +662,10 @@ class PaddingAwareTransformerBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def get_custom_metrics(self) -> Optional[dict]:
         return dict(self._custom_metrics)
+
+    def get_optimization_goal(self) -> str:
+        """Packed-row padding avoidance is judged here as a memory-reduction tradeoff."""
+        return "memory"
 
     def validate_result(self) -> Optional[str]:
         if self.output is None:

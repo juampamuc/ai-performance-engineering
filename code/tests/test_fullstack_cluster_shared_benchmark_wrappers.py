@@ -14,7 +14,7 @@ import pytest
 import torch
 
 from core.harness.validity_checks import _list_foreign_cuda_compute_processes
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, LaunchVia
 from core.utils.chapter_compare_template import load_benchmark
 
 ENTRYPOINT_MODULE = "labs.fullstack_cluster.moe_hybrid_ep_entrypoint"
@@ -107,6 +107,22 @@ def test_moe_hybrid_ep_entrypoint_routes_optimized_flag_and_remainder() -> None:
         optimized=True,
         argv=["--skip-preflight", "--iters", "3"],
     )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for benchmark wrappers")
+def test_single_gpu_moe_hybrid_ep_uses_inprocess_step_runner() -> None:
+    from labs.fullstack_cluster.baseline_moe_hybrid_ep import get_benchmark
+
+    bench = get_benchmark()
+    with mock.patch("torch.cuda.device_count", return_value=1), mock.patch("torch.cuda.is_available", return_value=True):
+        config = bench.get_config()
+
+    assert config.launch_via == LaunchVia.PYTHON
+    assert config.use_subprocess is False
+    assert config.single_gpu is True
+    assert config.timing_method == "wall_clock"
+    assert config.iterations == 1
+    assert config.warmup == 5
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for benchmark wrappers")

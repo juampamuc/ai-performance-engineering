@@ -30,6 +30,9 @@ Representative strict result from `artifacts/runs/20260302_full_strict_chapter_l
 
 This is the useful shape of the lab: some decode optimizations are huge, some are modest, and the lab keeps them separated instead of averaging them into a fake single story.
 
+## Control Surfaces
+Treat `decode_pinned` as a supplementary informational control surface. More broadly, the standalone pinned-memory stepping stones remain informational control surfaces; the lab's canonical host-overhead benchmark stays on `decode_streams`, where the workload explicitly stages a large host payload and turns the transfer path into a measurable part of the story.
+
 ## Profiler Evidence
 ```bash
 python -m cli.aisp bench run --targets labs/decode_optimization:decode --profile deep_dive --single-gpu
@@ -81,6 +84,7 @@ python -m cli.aisp bench run --targets labs/decode_optimization --profile minima
 
 ## Notes
 - All targets emit TTFT, TPOT mean, decode time, total time, and tokens/sec in `custom_metrics` for easy diffing.
+- `decode_pinned` is an informational stepping-stone target; use `decode_streams` when you want the lab's canonical pinned-host/host-transfer speed claim.
 - FP4 requires NVFP4-capable Blackwell hardware; unsupported platforms fail fast.
 - The HF cache pair reproduces the main idea from Chaim Rand's token-generation optimization write-up while keeping the harness contract intact.
 - `decode_fp8` is intentionally a BF16/`nn.Linear` baseline versus FP8/Transformer Engine `TELinear`, because Transformer Engine is the supported FP8 linear path in this lab.

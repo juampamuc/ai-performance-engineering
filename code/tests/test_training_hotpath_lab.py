@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,30 @@ def test_training_hotpath_wrappers_expose_get_benchmark(relative_path: str) -> N
     assert isinstance(bench, BaseBenchmark)
     assert getattr(bench, "_module_file_override", None) == str(module_path)
     assert getattr(bench, "_factory_name_override", None) == "get_benchmark"
+
+
+def test_padding_aware_transformer_is_memory_goal_with_memory_tracking_enabled() -> None:
+    baseline = PaddingAwareTransformerBenchmark(
+        optimized=False,
+        label="baseline_padding_aware_transformer_test",
+    )
+    optimized = PaddingAwareTransformerBenchmark(
+        optimized=True,
+        label="optimized_padding_aware_transformer_test",
+    )
+
+    assert baseline.get_optimization_goal() == "memory"
+    assert optimized.get_optimization_goal() == "memory"
+    assert baseline.get_config().enable_memory_tracking is True
+    assert optimized.get_config().enable_memory_tracking is True
+
+
+def test_padding_aware_transformer_expectation_entry_is_memory_goal() -> None:
+    payload = json.loads((LAB_DIR / "expectations_b200.json").read_text(encoding="utf-8"))
+    entry = payload["examples"]["padding_aware_transformer"]
+
+    assert entry["metadata"]["optimization_goal"] == "memory"
+    assert entry["metrics"]["is_regression"] is False
 
 
 @pytest.mark.skipif(torch.cuda.is_available(), reason="CPU-only guard only matters without CUDA")

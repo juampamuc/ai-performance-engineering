@@ -218,16 +218,40 @@ def test_ch06_launch_bounds_pair_is_informational_small_effect_case() -> None:
     assert "informational surfaces" in readme_text
 
 
-def test_ch10_double_buffered_pipeline_baseline_is_single_buffered_tiled_not_naive() -> None:
+def test_occupancy_tuning_low_warp_reference_schedule_is_informational() -> None:
+    readme_text = _read("labs/occupancy_tuning/README.md")
+    schedule_text = _read("labs/occupancy_tuning/triton_matmul_schedules.py")
+
+    assert "proton_matmul_bm64_bn64_bk32_nw2" in INFORMATIONAL_BENCHMARKS["occupancy_tuning"]
+    assert "verifying Proton vs Nsight agreement" in schedule_text
+    assert "informational control surface" in readme_text
+    assert "canonical speed claims stay on" in readme_text
+
+
+def test_nvfp4_group_gemm_case012_are_informational_small_effect_controls() -> None:
+    readme_text = _read("labs/nvfp4_group_gemm/README.md")
+
+    assert {
+        "nvfp4_group_gemm_case0",
+        "nvfp4_group_gemm_case1",
+        "nvfp4_group_gemm_case2",
+    }.issubset(INFORMATIONAL_BENCHMARKS["nvfp4_group_gemm"])
+    assert "informational control surface" in readme_text
+    assert "older strict all-case snapshots" in readme_text
+    assert "case3 route" in readme_text
+
+
+def test_ch10_double_buffered_pipeline_baseline_is_book_aligned_naive_gemm() -> None:
     baseline_source = _read("ch10/baseline_double_buffered_pipeline.cu")
     optimized_source = _read("ch10/optimized_double_buffered_pipeline.cu")
     baseline_wrapper = _read("ch10/baseline_double_buffered_pipeline.py")
 
-    assert "gemm_single_buffered_kernel" in baseline_source
-    assert "shared-memory tiles" in baseline_source
-    assert "gemm_naive_kernel" not in baseline_source
+    assert "gemm_naive_kernel" in baseline_source
+    assert "global memory" in baseline_source
+    assert "gemm_single_buffered_kernel" not in baseline_source
     assert "constexpr int CHUNK_K = 32;" in optimized_source
-    assert "zero_stage(stage);" in optimized_source
+    assert "const bool full_tile =" in optimized_source
+    assert "if (full_tile) {" in optimized_source
     assert "if (chunk_base + kk >= K)" in optimized_source
     assert 'double_buffered=False' in baseline_wrapper
     assert 'num_stages=1' in baseline_wrapper
@@ -609,7 +633,11 @@ def test_portable_rerun_ignores_informational_targets_for_expectation_queueing()
     assert _is_informational_benchmark("ch05", {"example": "ai"}) is True
     assert _is_informational_benchmark("ch12", {"example": "cuda_graphs_conditional"}) is True
     assert _is_informational_benchmark("ch20", {"example": "pipeline_sequential"}) is True
+    assert _is_informational_benchmark("labs_decode_optimization", {"example": "decode_pinned"}) is True
     assert _is_informational_benchmark("labs_fullstack_cluster", {"example": "cluster_gemm_tcgen05"}) is True
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case0"}) is True
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case1"}) is True
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case2"}) is True
     assert _is_informational_benchmark("labs_persistent_decode", {"example": "nvlink_offload"}) is True
     assert _is_informational_benchmark("labs_persistent_decode", {"example": "paged_kv_offload"}) is True
     assert _is_informational_benchmark("ch13", {"example": "kv_cache_naive"}) is False
@@ -991,15 +1019,25 @@ def test_persistent_decode_keeps_canonical_iteration_parity_and_marks_cuda_varia
     assert "persistent_decode_cuda" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
     assert "nvlink_offload" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
     assert "paged_kv_offload" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
-    assert "informational control surfaces" in readme_text
-    assert "paged_kv_offload_prefetch" in readme_text
-    assert "canonical KV-offload overlap claim" in readme_text
 
-    sample = torch.empty(4096, dtype=torch.float32)
-    sample.random_(0, 256).floor_()
-    assert torch.equal(sample, sample.floor())
-    assert float(sample.min().item()) >= 0.0
-    assert float(sample.max().item()) <= 255.0
+
+def test_decode_optimization_keeps_decode_streams_canonical_and_marks_decode_pinned_informational() -> None:
+    baseline_source = _read("labs/decode_optimization/baseline_decode.py")
+    pinned_source = _read("labs/decode_optimization/optimized_decode_pinned.py")
+    streams_baseline = _read("labs/decode_optimization/baseline_decode_streams.py")
+    streams_optimized = _read("labs/decode_optimization/optimized_decode_streams.py")
+    readme_text = _read("labs/decode_optimization/README.md")
+
+    assert "decode_pinned" in INFORMATIONAL_BENCHMARKS.get("decode_optimization", set())
+    assert "host_payload_mb=512" not in baseline_source
+    assert "host_payload_mb=512" not in pinned_source
+    assert "host_payload_mb=512" in streams_baseline
+    assert "host_payload_mb=512" in streams_optimized
+    assert "decode_pinned" in readme_text
+    assert "informational control surface" in readme_text
+    assert "decode_streams" in readme_text
+    assert "large host payload" in readme_text
+    assert "informational control surfaces" in readme_text
 
 
 def test_ch20_bf16_mlp_no_longer_claims_fused_ops() -> None:

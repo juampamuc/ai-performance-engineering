@@ -17,16 +17,15 @@ Grouped GEMM tuning is noisy and easy to overclaim. This lab keeps the case rout
 - designed to keep promotions tied to repeated verify and ABAB checks
 
 ## Measured Delta
-Representative strict all-case results from `artifacts/runs/20260302_rerun_all_labschapters_strict/`:
+Fresh portable B200 reruns on this host kept cases 0-2 in the small-effect band:
 
-| Target | Baseline | Optimized | Measured delta |
-| --- | ---: | ---: | ---: |
-| `nvfp4_group_gemm_case0` | `8.361 ms` | `4.180 ms` | `2.00x` |
-| `nvfp4_group_gemm_case1` | `10.285 ms` | `1.422 ms` | `7.23x` |
-| `nvfp4_group_gemm_case2` | `3.708 ms` | `1.087 ms` | `3.41x` |
-| `nvfp4_group_gemm_case3` | `3.348 ms` | `1.117 ms` | `3.00x` |
+| Target | Baseline | Optimized | Measured delta | Contract |
+| --- | ---: | ---: | ---: | --- |
+| `nvfp4_group_gemm_case0` | `2.408 ms` | `2.377 ms` | `1.01x` | informational control surface |
+| `nvfp4_group_gemm_case1` | `2.079 ms` | `2.021 ms` | `1.03x` | informational control surface |
+| `nvfp4_group_gemm_case2` | `0.615 ms` | `0.594 ms` | `1.04x` | informational control surface |
 
-Case 1 is the biggest local winner, but the lab is most valuable because it keeps all four cases visible instead of letting one good case stand in for the whole grouped-GEMM story.
+The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for these three harness targets on this host. Treat `case0`, `case1`, and `case2` as supplementary informational control surfaces; keep canonical speed claims on the still-winning case routes and on the stricter ABAB/router tuning workflow.
 
 ## Profiler Evidence
 ```bash
@@ -43,7 +42,7 @@ python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile minimal
 
 ## Learning Goals
 - Keep grouped-GEMM tuning grounded in repeated verified case-by-case evidence.
-- Benchmark the promoted routes for all four grouped cases under one harness family.
+- Keep `case0`, `case1`, and `case2` visible as routing controls without forcing them to carry the lab's canonical speed claim on every host.
 - Separate exploration scripts from the regression-tracked benchmark defaults.
 
 ## Directory Layout
@@ -65,8 +64,10 @@ python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile minimal
 - Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
 
 ## Validation Checklist
-- `python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile minimal` should keep all promoted case routes verification-clean.
+- `python -m cli.aisp bench run --targets labs/nvfp4_group_gemm:nvfp4_group_gemm_case3 --profile minimal` should keep the promoted case3 route verification-clean.
+- `nvfp4_group_gemm_case0`, `nvfp4_group_gemm_case1`, and `nvfp4_group_gemm_case2` remain informational control surfaces; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.
 - Default changes should still be gated by the stricter ABAB/verify process documented in the codebase notes, not by a single benchmark run.
 
 ## Notes
 - This lab is intentionally stricter than a normal benchmark pair because grouped-GEMM route tuning is unusually noise-prone.
+- The benchmark harness now treats `case0`, `case1`, and `case2` as informational control surfaces on this host-aligned repo surface, because fresh portable B200 reruns only reproduced 1.01-1.04x gains while preserving clean verification and profiler coverage.

@@ -21,11 +21,12 @@ Representative strict result from `artifacts/runs/20260302_full_strict_chapter_l
 
 | Target | Baseline | Optimized | Measured delta |
 | --- | ---: | ---: | ---: |
-| `proton_matmul` baseline | `0.251 ms` | `0.196 ms` (`bm64_bn64_bk32_nw2`) | `1.28x` |
 | `proton_matmul` baseline | `0.251 ms` | `0.197 ms` (`bm64_bn256_bk32`) | `1.28x` |
 | `proton_matmul` baseline | `0.251 ms` | `0.206 ms` (`bm128_bn256_bk64`) | `1.22x` |
 
 The lab is valuable because it keeps the schedule sweep honest. The win is real, but it is a schedule-selection win, not magic.
+
+Keep `proton_matmul_bm64_bn64_bk32_nw2` as an informational control surface. It is still useful for low-warp occupancy and Proton-vs-Nsight agreement checks, but the canonical speed claims stay on `proton_matmul`, `proton_matmul_bm64_bn256_bk32`, `proton_matmul_bm128_bn128_bk32_nw8`, and `proton_matmul_bm128_bn256_bk64`.
 
 ## Profiler Evidence
 ```bash
@@ -73,4 +74,5 @@ python -m cli.aisp bench run --targets labs/occupancy_tuning --profile minimal
 
 ## Notes
 - Add new schedules to `triton_matmul_schedules.py` and regenerate the harness targets by rerunning the sweep script.
+- `proton_matmul_bm64_bn64_bk32_nw2` is an informational control surface; use the larger winning schedules when you want the lab's canonical speed claims.
 - `expectations_{hardware_key}.json` records FLOP/s per schedule so improvements show up in CI.

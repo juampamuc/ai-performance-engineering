@@ -70,7 +70,6 @@ python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal
 - Use `--target-extra-arg labs/fullstack_cluster:<workload>="--flag value"` to sweep schedule knobs.
 - Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.
 - Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
-- `cluster_gemm_tcgen05` is an informational control surface; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/fullstack_cluster:moe_hybrid_ep --profile minimal` records a full optimizer step with routing/dispatch/combine/backward/grad-sync metrics.
@@ -81,4 +80,6 @@ python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal
 ## Notes
 - `gpu_requirements.py` reports the minimum GPU count, memory, and features for each scenario; consult it before scheduling runs.
 - `capstone_extension.py` caches builds under `~/.cache/torch_extensions`; run `python cleanup.py --include-extensions` when switching CUDA versions.
+- Single-GPU `moe_hybrid_ep` benchmark runs measure `HybridEPTrainer.run_step()` in-process so the timing reflects the optimizer step instead of single-rank launcher overhead; multi-rank runs still use `torchrun`.
 - Canonical hybrid-EP comparisons now keep the same default routing mode; use `--route-mode topology_aware` when you want that alternate behavior to be visible instead of relying on a silent default.
+- `cluster_gemm_tcgen05` is an informational control surface; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.
