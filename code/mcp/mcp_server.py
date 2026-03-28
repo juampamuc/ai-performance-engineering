@@ -70,8 +70,9 @@ DOMAIN TOOLS (organized by 10-domain model):
         inference_vllm, inference_quantization,
         inference_deploy, inference_estimate
 
-    Benchmark (17 tools):
-        run_benchmarks, benchmark_e2e_sweep, list_chapters, benchmark_targets, benchmark_report,
+    Benchmark (19 tools):
+        run_benchmarks, benchmark_e2e_sweep, benchmark_e2e_status, benchmark_e2e_watch,
+        list_chapters, benchmark_targets, benchmark_report,
         benchmark_export, benchmark_compare_runs, benchmark_triage,
         benchmark_data, benchmark_overview, benchmark_history,
         benchmark_trends, benchmark_compare,
@@ -295,7 +296,9 @@ _OUTPUT_ENVELOPE_SUMMARY = (
 # Explicit overrides for tools that have notable runtime/side effects.
 _EXPECTATION_OVERRIDES: Dict[str, str] = {
     "run_benchmarks": "Runs the bench CLI; can take minutes and writes artifacts/logs under artifacts/runs/<run_id>/ by default. Run IDs are self-describing (timestamp + run kind + targets). Serialized via the MCP queue runner under artifacts/parallel_runs to prevent overlap. Also runs triage + HTML report generation unless auto_analyze/auto_report are disabled. Use artifacts_dir to control output location. For full baseline-vs-optimized profiling + diffs, use profile='deep_dive' or benchmark_deep_dive_compare.",
-    "benchmark_e2e_sweep": "Runs the tier1 release-confidence suite, optional discovered full sweep, cluster common-eval, and optional fabric eval in one orchestrated flow. Writes a top-level package under artifacts/e2e_runs/<run_id>/ and uses async job tickets when requested.",
+    "benchmark_e2e_sweep": "Runs the tier1 release-confidence suite, optional discovered full sweep, cluster common-eval, and optional fabric eval in one orchestrated flow. Writes a top-level package under artifacts/e2e_runs/<run_id>/, auto-arms a detached watcher by default, and uses async job tickets when requested.",
+    "benchmark_e2e_status": "Reads the e2e run package and returns one normalized status snapshot: liveness, current child progress, recent events, watcher metadata, ledgers, and resume/watch commands.",
+    "benchmark_e2e_watch": "Launches the detached e2e watcher that auto-resumes stale or aborted runs using the stored contract and writes watcher_status.json into the run package.",
     "benchmark_deep_dive_compare": "Runs bench with profile='deep_dive' (slow) and then compares baseline vs optimized profiles (nsys+ncu). Emits side-by-side JSON + narrative and writes a self-describing run directory under output_dir (default: artifacts/runs).",
     "benchmark_report": "Generates a report from existing benchmark JSON; writes PDF/HTML to the chosen output.",
     "benchmark_export": "Exports existing benchmark JSON to csv/markdown/json; writes to the chosen output file.",
@@ -4846,10 +4849,11 @@ def tool_benchmark_targets(params: Dict[str, Any]) -> Dict[str, Any]:
     "Tags: benchmark, e2e, tier1, cluster, fabric, orchestration, release-gate. "
     "Run the tier1 release-confidence suite, optional discovered full sweep, cluster common-eval, "
     "and optional fabric eval in one orchestrated flow. "
-    "Returns: {success, overall_status, run_id, stages, manifest_path, summary_path}. "
+    "Returns: {success, overall_status, run_id, stages, manifest_path, summary_path, actions, preferred_progress_source}. "
     "USE when: You want one top-level end-to-end benchmark package instead of composing tier1, sweep, and cluster runs manually. "
     "Writes top-level artifacts under artifacts/e2e_runs/<run_id>/. "
-    "Supports async job tickets via async=true.",
+    "Supports async job tickets via async=true. "
+    "For live progress, prefer benchmark_e2e_status over generic job_status because it joins child progress, watcher state, recent events, and PID liveness.",
     {"type": "object", "properties": with_context_params({
         "run_tier1": {"type": "boolean", "default": True, "description": "Run the canonical tier-1 suite stage"},
         "run_full_sweep": {"type": "boolean", "default": False, "description": "Run the heavier discovered full benchmark sweep"},
@@ -4873,6 +4877,7 @@ def tool_benchmark_targets(params: Dict[str, Any]) -> Dict[str, Any]:
             "description": "Profiling preset for benchmark stages",
         },
         "suite_timeout": {"type": "integer", "description": "Benchmark suite timeout in seconds", "default": 14400},
+        "full_sweep_suite_timeout": {"type": "integer", "description": "Aggregate suite timeout applied to each full-sweep bucket; default 0 disables the bucket-wide watchdog", "default": 0},
         "timeout_seconds": {"type": "integer", "description": "Optional cluster stage timeout in seconds"},
         "artifacts_dir": {"type": "string", "description": "Base directory for benchmark run artifacts"},
         "run_id": {"type": "string", "description": "Explicit top-level e2e sweep run id"},
@@ -4891,6 +4896,9 @@ def tool_benchmark_targets(params: Dict[str, Any]) -> Dict[str, Any]:
         "update_expectations": {"type": "boolean", "default": False, "description": "Force-write observed metrics into expectation files"},
         "allow_mixed_provenance": {"type": "boolean", "default": False, "description": "Allow expectation writes when provenance differs without forcing updates"},
         "allow_portable_expectations_update": {"type": "boolean", "default": False, "description": "Allow expectation writes while validity_profile=portable"},
+        "auto_resume": {"type": "boolean", "default": True, "description": "Launch a detached watcher that auto-resumes stale or aborted e2e runs using the stored contract"},
+        "max_auto_resumes": {"type": "integer", "default": 3, "description": "Maximum detached auto-resume attempts before the watcher gives up"},
+        "watch_poll_interval_seconds": {"type": "integer", "default": 15, "description": "Detached watcher poll interval in seconds"},
         "resume": {"type": "boolean", "default": False, "description": "Resume an aborted e2e run. Requires run_id and preserves prior stage artifacts."},
         "dry_run": {"type": "boolean", "default": False, "description": "Describe planned execution without running stages"},
         "async": {"type": "boolean", "default": False, "description": "Run in background and return a job ticket"},
@@ -4901,6 +4909,54 @@ def tool_benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
 
     include_context, context_level = extract_context_opts(params)
     result = handlers.benchmark_e2e_sweep(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_e2e_status",
+    "Tags: benchmark, e2e, status, watch, resume, progress, watchdog, liveness. "
+    "Inspect an end-to-end e2e run package and return one normalized status snapshot. "
+    "Returns: {run_state, overall_status, inferred_state, progress_source, current, liveness, watcher, ledgers, actions}. "
+    "⚡ FAST (~1s). USE when: You want the authoritative source of truth for a live or stalled run instead of manually joining summary/checkpoint/progress/events files. "
+    "Example: \"Status for run-e2e\" or \"Is my e2e run stale?\". "
+    "WORKFLOW: benchmark_e2e_sweep(async=true) → benchmark_e2e_status → benchmark_e2e_watch if needed. "
+    "Prefer this tool whenever an e2e run is active; raw summary/checkpoint files may lag during long child stages. "
+    "Selection: Read-only e2e run inspection; use benchmark_e2e_watch to arm detached auto-resume.",
+    {"type": "object", "properties": with_context_params({
+        "run_id": {"type": "string", "description": "Explicit e2e run id to inspect; defaults to the latest run."},
+        "repo_root": {"type": "string", "description": "Optional repository root override."},
+        "artifacts_dir": {"type": "string", "description": "Optional benchmark artifacts root override for child benchmark runs."},
+        "recent_events": {"type": "integer", "default": 10, "description": "How many recent top-level and child events to include."},
+    })}
+)
+def tool_benchmark_e2e_status(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.api import handlers
+
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_e2e_status(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_e2e_watch",
+    "Tags: benchmark, e2e, watch, watchdog, autoresume, detached, recovery. "
+    "Launch the detached e2e watcher that auto-resumes stale or aborted runs using the stored contract. "
+    "Returns: {success, watcher_pid, watch_status_path, launch_log_path}. "
+    "⚡ FAST to launch (~ms); the watcher continues running in the background. USE when: You want detached supervision for a long e2e run or need to re-arm auto-resume on an existing run. "
+    "WORKFLOW: benchmark_e2e_sweep → benchmark_e2e_watch → benchmark_e2e_status. "
+    "Selection: Detached supervision; use benchmark_e2e_status for read-only inspection.",
+    {"type": "object", "properties": with_context_params({
+        "run_id": {"type": "string", "description": "Explicit e2e run id to supervise; defaults to the latest run."},
+        "repo_root": {"type": "string", "description": "Optional repository root override."},
+        "poll_interval_seconds": {"type": "integer", "default": 15, "description": "Detached watcher poll interval in seconds."},
+        "max_auto_resumes": {"type": "integer", "default": 3, "description": "Maximum auto-resume attempts before the watcher gives up."},
+    })}
+)
+def tool_benchmark_e2e_watch(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.api import handlers
+
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_e2e_watch(params)
     return attach_context_if_requested(result, include_context, context_level)
 
 

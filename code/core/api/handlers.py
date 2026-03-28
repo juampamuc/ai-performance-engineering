@@ -588,7 +588,15 @@ def benchmark_targets(_: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
-    from core.benchmark.e2e_sweep import e2e_progress_path, e2e_run_dir, resolve_e2e_run_id, run_benchmark_e2e_sweep
+    from core.benchmark.e2e_sweep import (
+        attach_benchmark_e2e_status_hints,
+        build_benchmark_e2e_progress_surface_hint,
+        build_benchmark_e2e_status_actions,
+        e2e_progress_path,
+        e2e_run_dir,
+        resolve_e2e_run_id,
+        run_benchmark_e2e_sweep,
+    )
 
     run_async = bool(params.get("async", False))
     dry_run = bool(params.get("dry_run", False))
@@ -607,6 +615,7 @@ def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
         "bench_root": Path(bench_root_raw).resolve() if bench_root_raw else None,
         "profile_type": str(params.get("profile", "minimal")),
         "suite_timeout": _parse_optional_int_param(params, "suite_timeout", minimum=0),
+        "full_sweep_suite_timeout": _parse_optional_int_param(params, "full_sweep_suite_timeout", minimum=0),
         "timeout_seconds": _parse_optional_int_param(params, "timeout_seconds", minimum=1),
         "artifacts_dir": _parse_str_param(params, "artifacts_dir"),
         "validity_profile": str(params.get("validity_profile", "strict")),
@@ -619,6 +628,9 @@ def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
         "update_expectations": bool(params.get("update_expectations", False)),
         "allow_mixed_provenance": bool(params.get("allow_mixed_provenance", False)),
         "allow_portable_expectations_update": bool(params.get("allow_portable_expectations_update", False)),
+        "auto_resume": bool(params.get("auto_resume", True)),
+        "max_auto_resumes": _parse_int_param(params, "max_auto_resumes", 3, minimum=0, maximum=100),
+        "watch_poll_interval_seconds": _parse_int_param(params, "watch_poll_interval_seconds", 15, minimum=1, maximum=3600),
         "run_id": run_id,
         "resume": bool(params.get("resume", False)),
         "dry_run": dry_run,
@@ -628,6 +640,7 @@ def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
         resolved_run_id = resolve_e2e_run_id(run_id)
         kwargs["run_id"] = resolved_run_id
         run_dir = e2e_run_dir(resolved_run_id)
+        status_actions = build_benchmark_e2e_status_actions(resolved_run_id)
         ticket = JobStore.get().queue_job(
             "benchmark_e2e_sweep",
             lambda: run_benchmark_e2e_sweep(**kwargs),
@@ -641,9 +654,41 @@ def benchmark_e2e_sweep(params: Dict[str, Any]) -> Dict[str, Any]:
         ticket["run_id"] = resolved_run_id
         ticket["run_dir"] = str(run_dir)
         ticket["progress_path"] = str(e2e_progress_path(run_dir))
+        ticket["actions"] = status_actions
+        ticket["preferred_progress_source"] = build_benchmark_e2e_progress_surface_hint(resolved_run_id)
         return ticket
 
-    return run_benchmark_e2e_sweep(**kwargs)
+    result = run_benchmark_e2e_sweep(**kwargs)
+    return attach_benchmark_e2e_status_hints(result, _parse_str_param(result, "run_id"))
+
+
+def benchmark_e2e_status(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.benchmark.e2e_sweep import inspect_benchmark_e2e_sweep_run
+
+    recent_events_limit = _parse_int_param(params, "recent_events", 10, minimum=0, maximum=200)
+    bench_root_raw = _parse_str_param(params, "repo_root")
+    return inspect_benchmark_e2e_sweep_run(
+        run_id=_parse_str_param(params, "run_id"),
+        repo_root=Path(bench_root_raw).resolve() if bench_root_raw else None,
+        artifacts_dir=_parse_str_param(params, "artifacts_dir"),
+        recent_events_limit=recent_events_limit,
+    )
+
+
+def benchmark_e2e_watch(params: Dict[str, Any]) -> Dict[str, Any]:
+    from core.benchmark.e2e_sweep import resolve_latest_e2e_run_id, watch_benchmark_e2e_sweep_run
+
+    repo_root_raw = _parse_str_param(params, "repo_root")
+    repo_root = Path(repo_root_raw).resolve() if repo_root_raw else None
+    run_id = _parse_str_param(params, "run_id") or resolve_latest_e2e_run_id(repo_root=repo_root)
+    if not run_id:
+        return {"success": False, "error": "No e2e runs found to watch."}
+    return watch_benchmark_e2e_sweep_run(
+        run_id=run_id,
+        repo_root=repo_root,
+        poll_interval_seconds=_parse_int_param(params, "poll_interval_seconds", 15, minimum=1, maximum=3600),
+        max_auto_resumes=_parse_int_param(params, "max_auto_resumes", 3, minimum=0, maximum=100),
+    )
 
 
 def profile_flame(_: Dict[str, Any]) -> Dict[str, Any]:

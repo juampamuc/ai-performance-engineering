@@ -686,8 +686,16 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     "ch06": {"launch_bounds_cuda"},
     # Ch12: Graph CUDA demos show graph capture patterns
     "ch12": {"graph_cuda", "cuda_graphs_conditional"},
-    # Ch13: compound optimization and exploratory KV-cache variants stay noncanonical
-    "ch13": {"torchao_quantization_compiled", "kv_cache_naive_flash_blockwise"},
+    # Ch13: compound optimization, exploratory KV-cache, and torchao FP8 recipe demos stay noncanonical
+    "ch13": {
+        "torchao_quantization_compiled",
+        "kv_cache_naive_flash_blockwise",
+        "precisionfp8",
+        "precisionfp8_rowwise",
+        "precisionfp8_rowwise_gw_hp",
+    },
+    # Ch14: explicit cuBLAS-vs-CUTLASS remains a supplementary control pair, not a chapter-native speed claim.
+    "ch14": {"cublas_vs_cutlass"},
     # Ch15: Inference placement demo shows architecture patterns (multi-GPU)
     "ch15": {"inference_placement"},
     # Ch16: Hardware-variant dense-attention path and piece-graphs example remain informational.

@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
 import getpass
 import json
 import os
+import re
+import shlex
 import signal
+import subprocess
+import sys
 import socket
 import threading
 import time
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 
 try:
     import fcntl  # POSIX-only; optional for portability.
@@ -28,6 +34,10 @@ from core.harness.validity_checks import detect_execution_environment
 from core.harness.validity_profile import normalize_validity_profile
 
 _STAGE_PROGRESS_POLL_SECONDS = 2.0
+_STATE_HEARTBEAT_SECONDS = 60.0
+_E2E_WATCHER_POLL_SECONDS = 15
+_E2E_WATCHER_MAX_AUTO_RESUMES = 3
+_E2E_WATCHER_SUPERVISED_ENV = "AISP_E2E_WATCHER_SUPERVISED"
 
 
 def _repo_root() -> Path:
@@ -50,14 +60,55 @@ def e2e_checkpoint_path(run_dir: Path) -> Path:
     return Path(run_dir) / "checkpoint.json"
 
 
+def e2e_watcher_status_path(run_dir: Path) -> Path:
+    return Path(run_dir) / "watcher_status.json"
+
+
+def e2e_watcher_launch_log_path(run_dir: Path, run_id: str) -> Path:
+    return Path(run_dir) / f"{run_id}_watcher.launch.log"
+
+
+def _watch_e2e_sweep_script() -> Path:
+    return Path(__file__).resolve().parents[1] / "scripts" / "benchmarks" / "watch_e2e_sweep.py"
+
+
 def resolve_e2e_run_id(run_id: Optional[str] = None, *, repo_root: Optional[Path] = None) -> str:
     if run_id and str(run_id).strip():
         return str(run_id).strip()
     return build_run_id("benchmark_e2e_sweep", base_dir=e2e_runs_root(repo_root))
 
 
+def resolve_latest_e2e_run_id(*, repo_root: Optional[Path] = None) -> Optional[str]:
+    root = e2e_runs_root(repo_root)
+    candidates = [path for path in root.iterdir()] if root.exists() else []
+    candidates = [path for path in candidates if path.is_dir()]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
+    return latest.name
+
+
 def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _age_seconds(value: Optional[str]) -> Optional[float]:
+    parsed = _parse_utc_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
 
 
 def _json_default(value: Any) -> Any:
@@ -934,6 +985,19 @@ def _render_summary_markdown(summary: Dict[str, Any]) -> str:
             f"- Events: `{summary['events_path']}`",
         ]
     )
+    ledgers = dict(summary.get("ledgers") or {})
+    if ledgers.get("active_issue_ledger_json") or ledgers.get("historical_failure_ledger_json"):
+        lines.extend(
+            [
+                "",
+                "## Ledgers",
+                "",
+            ]
+        )
+        if ledgers.get("active_issue_ledger_json"):
+            lines.append(f"- Active issue ledger JSON: `{ledgers.get('active_issue_ledger_json')}`")
+        if ledgers.get("active_issue_ledger_md"):
+            lines.append(f"- Active issue ledger Markdown: `{ledgers.get('active_issue_ledger_md')}`")
     historical_failure_ledger = summary.get("historical_failure_ledger")
     if isinstance(historical_failure_ledger, dict):
         ledger_summary = historical_failure_ledger.get("summary") or {}
@@ -1016,6 +1080,1144 @@ def _stage_attempt_entry(
 
 def _build_e2e_contract(**kwargs: Any) -> Dict[str, Any]:
     return _json_safe(kwargs)
+
+
+def _cli_shell_join(cmd: List[str]) -> str:
+    return shlex.join([str(part) for part in cmd])
+
+
+def _append_cli_scalar_arg(cmd: List[str], flag: str, value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, str) and not value.strip():
+        return
+    cmd.extend([flag, str(value)])
+
+
+def _append_cli_repeatable_arg(cmd: List[str], flag: str, values: Optional[List[str]]) -> None:
+    for value in values or []:
+        if str(value).strip():
+            cmd.extend([flag, str(value).strip()])
+
+
+def build_benchmark_e2e_resume_command(
+    run_id: str,
+    *,
+    contract: Optional[Dict[str, Any]],
+    python_executable: Optional[str] = None,
+) -> List[str]:
+    stored = dict(contract or {})
+    cmd: List[str] = [
+        python_executable or sys.executable,
+        "-m",
+        "cli.aisp",
+        "bench",
+        "run-e2e",
+        "--run-id",
+        str(run_id),
+        "--resume",
+    ]
+
+    boolean_pairs = [
+        ("run_tier1", "--run-tier1", "--no-run-tier1", True),
+        ("run_full_sweep", "--run-full-sweep", "--no-run-full-sweep", False),
+        ("run_cluster", "--run-cluster", "--no-run-cluster", True),
+        ("run_fabric", "--run-fabric", "--no-run-fabric", True),
+        ("single_gpu", "--single-gpu", None, False),
+        ("accept_regressions", "--accept-regressions", None, False),
+        ("update_expectations", "--update-expectations", None, False),
+        ("allow_mixed_provenance", "--allow-mixed-provenance", None, False),
+        ("allow_portable_expectations_update", "--allow-portable-expectations-update", None, False),
+        ("auto_resume", "--auto-resume", "--no-auto-resume", True),
+    ]
+    for field_name, positive_flag, negative_flag, default_value in boolean_pairs:
+        value = stored.get(field_name)
+        if value is None or bool(value) == bool(default_value):
+            continue
+        if bool(value):
+            cmd.append(positive_flag)
+        elif negative_flag:
+            cmd.append(negative_flag)
+
+    scalar_flags = [
+        ("cluster_preset", "--cluster-preset"),
+        ("bench_root", "--bench-root"),
+        ("ssh_user", "--ssh-user"),
+        ("ssh_key", "--ssh-key"),
+        ("profile_type", "--profile"),
+        ("suite_timeout", "--suite-timeout"),
+        ("full_sweep_suite_timeout", "--full-sweep-suite-timeout"),
+        ("timeout_seconds", "--timeout-seconds"),
+        ("artifacts_dir", "--artifacts-dir"),
+        ("validity_profile", "--validity-profile"),
+        ("iterations", "--iterations"),
+        ("warmup", "--warmup"),
+        ("gpu_sm_clock_mhz", "--gpu-sm-clock-mhz"),
+        ("gpu_mem_clock_mhz", "--gpu-mem-clock-mhz"),
+        ("max_auto_resumes", "--max-auto-resumes"),
+        ("watch_poll_interval_seconds", "--watch-poll-interval-seconds"),
+    ]
+    for field_name, flag in scalar_flags:
+        _append_cli_scalar_arg(cmd, flag, stored.get(field_name))
+
+    _append_cli_repeatable_arg(cmd, "--hosts", stored.get("hosts"))
+    _append_cli_repeatable_arg(cmd, "--labels", stored.get("labels"))
+
+    return cmd
+
+
+def build_benchmark_e2e_status_actions(
+    run_id: str,
+    *,
+    python_executable: Optional[str] = None,
+) -> Dict[str, Any]:
+    query = urlencode({"run_id": str(run_id)})
+    status_command = [
+        python_executable or sys.executable,
+        "-m",
+        "cli.aisp",
+        "bench",
+        "run-e2e-status",
+        "--run-id",
+        str(run_id),
+    ]
+    watch_command = status_command + ["--watch"]
+    watcher_command = [
+        python_executable or sys.executable,
+        "-m",
+        "cli.aisp",
+        "bench",
+        "watch-e2e",
+        "--run-id",
+        str(run_id),
+    ]
+    return _json_safe(
+        {
+            "status_command": status_command,
+            "status_command_shell": _cli_shell_join(status_command),
+            "watch_command": watch_command,
+            "watch_command_shell": _cli_shell_join(watch_command),
+            "watcher_command": watcher_command,
+            "watcher_command_shell": _cli_shell_join(watcher_command),
+            "status_api_path": f"/api/benchmark/e2e-status?{query}",
+            "watcher_api_path": "/api/benchmark/e2e-watch",
+            "dashboard_path": f"/e2e?{query}",
+            "preferred_mcp_tool": "benchmark_e2e_status",
+            "watcher_mcp_tool": "benchmark_e2e_watch",
+        }
+    )
+
+
+def build_benchmark_e2e_progress_surface_hint(
+    run_id: str,
+    *,
+    python_executable: Optional[str] = None,
+) -> Dict[str, Any]:
+    actions = build_benchmark_e2e_status_actions(run_id, python_executable=python_executable)
+    return _json_safe(
+        {
+            "kind": "normalized_e2e_status",
+            "label": "Normalized live e2e status",
+            "reason": (
+                "Prefer this surface for current progress. It merges top-level progress, child run progress, "
+                "watcher state, recent events, and orchestrator liveness; raw summary/checkpoint files can lag "
+                "during long child stages."
+            ),
+            "status_command_shell": actions.get("status_command_shell"),
+            "status_api_path": actions.get("status_api_path"),
+            "dashboard_path": actions.get("dashboard_path"),
+            "preferred_mcp_tool": actions.get("preferred_mcp_tool"),
+        }
+    )
+
+
+def attach_benchmark_e2e_status_hints(payload: Dict[str, Any], run_id: Optional[str]) -> Dict[str, Any]:
+    resolved_run_id = str(run_id or payload.get("run_id") or "").strip()
+    if not resolved_run_id:
+        return _json_safe(payload)
+    enriched = dict(payload)
+    enriched.setdefault("actions", build_benchmark_e2e_status_actions(resolved_run_id))
+    enriched.setdefault("preferred_progress_source", build_benchmark_e2e_progress_surface_hint(resolved_run_id))
+    return _json_safe(enriched)
+
+
+def _dedupe_strings(values: List[str]) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+
+def _stage_snapshot(stage: Dict[str, Any]) -> Dict[str, Any]:
+    attempts = list(stage.get("attempts") or [])
+    latest_attempt = attempts[-1] if attempts else None
+    benchmark_summary = None
+    if isinstance(latest_attempt, dict):
+        benchmark_summary = latest_attempt.get("benchmark_summary")
+    if benchmark_summary is None:
+        benchmark_summary = stage.get("benchmark_summary")
+    if benchmark_summary is None and isinstance(stage.get("result"), dict):
+        benchmark_summary = stage["result"].get("benchmark_summary")
+
+    def _collect_attempt_entries(summary_key: str) -> List[Dict[str, Any]]:
+        latest_by_target_bucket: Dict[tuple[str, str], Dict[str, Any]] = {}
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            attempt_summary = attempt.get("benchmark_summary")
+            if not isinstance(attempt_summary, dict):
+                continue
+            bucket = str(attempt.get("bucket") or "").strip()
+            run_id = str(attempt.get("run_id") or "").strip() or None
+            attempt_artifacts = attempt.get("artifacts") if isinstance(attempt.get("artifacts"), dict) else {}
+            for entry in attempt_summary.get(summary_key) or []:
+                if not isinstance(entry, dict):
+                    continue
+                merged = dict(entry)
+                if bucket and not merged.get("bucket"):
+                    merged["bucket"] = bucket
+                if run_id and not merged.get("run_id"):
+                    merged["run_id"] = run_id
+                for artifact_key in ("events_path", "output_json", "progress_path", "run_dir"):
+                    artifact_value = attempt_artifacts.get(artifact_key)
+                    if artifact_value and not merged.get(artifact_key):
+                        merged[artifact_key] = artifact_value
+                target = str(merged.get("target") or "").strip()
+                latest_by_target_bucket[(target, str(merged.get("bucket") or "").strip())] = merged
+        return list(latest_by_target_bucket.values())
+
+    aggregated_failed_benchmarks = _collect_attempt_entries("failed_benchmarks")
+    aggregated_skipped_benchmarks = _collect_attempt_entries("skipped_benchmarks")
+    aggregated_status_counts: Dict[str, int] = {}
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            continue
+        attempt_summary = attempt.get("benchmark_summary")
+        if not isinstance(attempt_summary, dict):
+            continue
+        for key, value in dict(attempt_summary.get("status_counts") or {}).items():
+            try:
+                aggregated_status_counts[str(key)] = aggregated_status_counts.get(str(key), 0) + int(value)
+            except (TypeError, ValueError):
+                continue
+
+    payload = {
+        "name": stage.get("name"),
+        "enabled": bool(stage.get("enabled", False)),
+        "status": stage.get("status"),
+        "run_id": stage.get("run_id"),
+        "issues": _dedupe_strings(list(stage.get("issues") or [])),
+        "attempt_count": len(attempts),
+        "latest_attempt_run_id": latest_attempt.get("run_id") if isinstance(latest_attempt, dict) else None,
+        "latest_attempt_status": latest_attempt.get("status") if isinstance(latest_attempt, dict) else None,
+        "latest_attempt_bucket": latest_attempt.get("bucket") if isinstance(latest_attempt, dict) else None,
+        "latest_attempt_active_unit": latest_attempt.get("active_unit") if isinstance(latest_attempt, dict) else None,
+        "latest_attempt_completed_units": list(latest_attempt.get("completed_units") or [])
+        if isinstance(latest_attempt, dict)
+        else [],
+    }
+    if isinstance(benchmark_summary, dict):
+        payload["status_counts"] = dict(benchmark_summary.get("status_counts") or {})
+    elif aggregated_status_counts:
+        payload["status_counts"] = aggregated_status_counts
+    if aggregated_failed_benchmarks:
+        payload["failed_benchmarks"] = aggregated_failed_benchmarks
+    elif isinstance(benchmark_summary, dict):
+        payload["failed_benchmarks"] = list(benchmark_summary.get("failed_benchmarks") or [])
+    if aggregated_skipped_benchmarks:
+        payload["skipped_benchmarks"] = aggregated_skipped_benchmarks
+    elif isinstance(benchmark_summary, dict):
+        payload["skipped_benchmarks"] = list(benchmark_summary.get("skipped_benchmarks") or [])
+    return payload
+
+
+def _tail_records(path: Path, *, limit: int) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+    return _read_jsonl(path)[-limit:]
+
+
+def _slugify_issue_component(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+    return text.strip("_") or "unknown"
+
+
+def _event_target(payload: Dict[str, Any]) -> str:
+    chapter = str(payload.get("chapter") or "").strip()
+    example = str(payload.get("example") or "").strip()
+    if chapter and example:
+        return f"{chapter}:{example}"
+    return example or chapter or "<unknown>"
+
+
+def _reported_failures_from_child_events(
+    events_path: Path,
+    *,
+    stage_name: Optional[str],
+    bucket: Optional[str],
+) -> List[Dict[str, Any]]:
+    latest_by_target: Dict[str, Dict[str, Any]] = {}
+    for payload in _read_jsonl(events_path):
+        if payload.get("event_type") != "example_end":
+            continue
+        target = _event_target(payload)
+        latest_by_target[target] = {
+            "target": target,
+            "stage": stage_name,
+            "bucket": bucket,
+            "status": str(payload.get("status") or "").strip() or "unknown",
+            "error": str(payload.get("error") or payload.get("failure_reason") or "").strip() or None,
+            "failure_reason": str(payload.get("failure_reason") or "").strip() or None,
+            "best_speedup": payload.get("best_speedup"),
+            "best_memory_savings_pct": payload.get("best_memory_savings_pct"),
+            "optimization_goal": str(payload.get("optimization_goal") or "").strip() or None,
+            "timestamp": payload.get("timestamp"),
+            "run_id": payload.get("run_id"),
+            "events_path": str(events_path),
+            "source": "live_child_event",
+        }
+    failures = [
+        entry
+        for entry in latest_by_target.values()
+        if str(entry.get("status") or "").startswith("failed")
+    ]
+    failures.sort(key=lambda entry: (str(entry.get("timestamp") or ""), str(entry.get("target") or "")))
+    return failures
+
+
+def _benchmark_failure_issue_row(
+    failure: Dict[str, Any],
+    *,
+    actions: Dict[str, Any],
+    status_paths: Dict[str, Any],
+) -> Dict[str, Any]:
+    stage_name = str(failure.get("stage") or "unknown").strip() or "unknown"
+    bucket = str(failure.get("bucket") or "").strip() or None
+    target = str(failure.get("target") or "<unknown>").strip() or "<unknown>"
+    issue_id_parts = ["reported", stage_name]
+    if bucket:
+        issue_id_parts.append(bucket)
+    issue_id_parts.append(target)
+    issue_id = "_".join(_slugify_issue_component(part) for part in issue_id_parts)
+    symptom = f"{target} reported `{failure.get('status')}`"
+    error = str(failure.get("error") or "").strip()
+    if error:
+        symptom = f"{symptom}: {error}"
+    evidence_paths: Dict[str, Any] = {
+        "status_summary_path": status_paths.get("summary_path"),
+        "status_checkpoint_path": status_paths.get("checkpoint_path"),
+    }
+    for key in ("events_path", "output_json", "progress_path", "run_dir"):
+        value = failure.get(key)
+        if value:
+            evidence_paths[key] = value
+    return {
+        "issue_id": issue_id,
+        "stage": stage_name if not bucket else f"{stage_name}/{bucket}",
+        "status": "reported",
+        "symptom": symptom,
+        "root_cause": "Pending triage.",
+        "fixes": [],
+        "verification": {
+            "status_command": actions.get("status_command_shell"),
+            "status_api_path": actions.get("status_api_path"),
+            "preferred_mcp_tool": actions.get("preferred_mcp_tool"),
+        },
+        "evidence_paths": evidence_paths,
+        "target": target,
+        "benchmark_status": failure.get("status"),
+        "benchmark_run_id": failure.get("run_id"),
+        "optimization_goal": failure.get("optimization_goal"),
+        "best_speedup": failure.get("best_speedup"),
+        "best_memory_savings_pct": failure.get("best_memory_savings_pct"),
+        "reported_at": failure.get("timestamp"),
+        "source": failure.get("source") or "stage_snapshot",
+    }
+
+
+def _render_issue_evidence(row: Dict[str, Any]) -> str:
+    evidence: List[str] = []
+    target = str(row.get("target") or "").strip()
+    if target:
+        evidence.append(f"`{target}`")
+    benchmark_status = str(row.get("benchmark_status") or "").strip()
+    if benchmark_status:
+        evidence.append(f"`{benchmark_status}`")
+    reported_at = str(row.get("reported_at") or "").strip()
+    if reported_at:
+        evidence.append(f"`{reported_at}`")
+    verification = row.get("verification") if isinstance(row.get("verification"), dict) else {}
+    status_command = str(verification.get("status_command") or "").strip()
+    if status_command:
+        evidence.append("`run-e2e-status`")
+    evidence_paths = row.get("evidence_paths") if isinstance(row.get("evidence_paths"), dict) else {}
+    events_path = str(evidence_paths.get("events_path") or "").strip()
+    if events_path:
+        evidence.append(f"`{Path(events_path).name}`")
+    return "; ".join(evidence)
+
+
+def _render_active_issue_ledger_markdown(ledger: Dict[str, Any]) -> str:
+    summary = dict(ledger.get("summary") or {})
+    lines = [
+        "# Active Issue Ledger",
+        "",
+        f"- E2E run: `{summary.get('run_id', '')}`",
+        f"- Issue count: `{summary.get('issue_count', 0)}`",
+        f"- Resolved: `{summary.get('resolved_count', 0)}`",
+        f"- Unresolved: `{summary.get('unresolved_count', 0)}`",
+        "",
+        "| Issue | Stage | Status | Symptom | Root cause | Evidence |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in ledger.get("rows") or []:
+        lines.append(
+            f"| `{row.get('issue_id', '')}` | `{row.get('stage', '')}` | `{row.get('status', '')}` | "
+            f"{row.get('symptom', '')} | {row.get('root_cause', '')} | {_render_issue_evidence(row)} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _sync_active_issue_ledger(
+    *,
+    run_dir: Path,
+    run_id: str,
+    actions: Dict[str, Any],
+    status_paths: Dict[str, Any],
+    aggregate_failures: List[Dict[str, Any]],
+    reported_failures: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    active_issue_json = run_dir / "active_issue_ledger.json"
+    active_issue_md = run_dir / "active_issue_ledger.md"
+    historical_issue_json = run_dir / "historical_failure_ledger.json"
+    historical_issue_md = run_dir / "historical_failure_ledger.md"
+
+    existing_payload = _read_json_if_exists(active_issue_json) or {}
+    existing_rows = list(existing_payload.get("rows") or [])
+    existing_rows_by_id = {
+        str(row.get("issue_id") or "").strip(): row
+        for row in existing_rows
+        if isinstance(row, dict) and str(row.get("issue_id") or "").strip()
+    }
+    manual_rows = []
+    for row in existing_rows:
+        issue_id = str(row.get("issue_id") or "").strip()
+        if not issue_id.startswith("reported_"):
+            manual_rows.append(row)
+    auto_rows_by_id: Dict[str, Dict[str, Any]] = {}
+    for failure in list(aggregate_failures or []) + list(reported_failures or []):
+        row = _benchmark_failure_issue_row(
+            failure,
+            actions=actions,
+            status_paths=status_paths,
+        )
+        issue_id = str(row["issue_id"])
+        existing = existing_rows_by_id.get(issue_id)
+        if isinstance(existing, dict):
+            merged = dict(row)
+            existing_status = str(existing.get("status") or "").strip()
+            if existing_status and existing_status != "reported":
+                merged["status"] = existing_status
+            for field in (
+                "root_cause",
+                "fixes",
+                "verification",
+                "notes",
+                "resolved_at",
+                "resolved_by",
+                "resolution_run_id",
+            ):
+                if existing.get(field):
+                    merged[field] = existing[field]
+            existing_symptom = str(existing.get("symptom") or "").strip()
+            if existing_symptom and existing_symptom != str(row.get("symptom") or "").strip():
+                merged["symptom"] = existing_symptom
+            existing_evidence = existing.get("evidence_paths")
+            if isinstance(existing_evidence, dict):
+                merged_evidence = dict(row.get("evidence_paths") or {})
+                merged_evidence.update(existing_evidence)
+                merged["evidence_paths"] = merged_evidence
+            row = merged
+        auto_rows_by_id[issue_id] = row
+    rows = manual_rows + [auto_rows_by_id[key] for key in sorted(auto_rows_by_id)]
+    resolved_count = sum(1 for row in rows if str(row.get("status") or "").strip() == "resolved")
+    ledger_payload = {
+        "schema_version": "1.0",
+        "preferred_collection_key": "rows",
+        "collection_aliases": {"issues": "rows"},
+        "summary": {
+            "run_id": run_id,
+            "issue_count": len(rows),
+            "resolved_count": resolved_count,
+            "unresolved_count": len(rows) - resolved_count,
+        },
+        "rows": rows,
+    }
+    _write_json(active_issue_json, ledger_payload)
+    active_issue_md.write_text(_render_active_issue_ledger_markdown(ledger_payload), encoding="utf-8")
+    return {
+        "active_issue_ledger_json": str(active_issue_json),
+        "active_issue_ledger_md": str(active_issue_md),
+        "historical_failure_ledger_json": str(historical_issue_json) if historical_issue_json.exists() else None,
+        "historical_failure_ledger_md": str(historical_issue_md) if historical_issue_md.exists() else None,
+        "summary": dict(ledger_payload["summary"]),
+    }
+
+
+def _existing_ledger_refs(run_dir: Path) -> Dict[str, Optional[str]]:
+    return {
+        "active_issue_ledger_json": str(run_dir / "active_issue_ledger.json") if (run_dir / "active_issue_ledger.json").exists() else None,
+        "active_issue_ledger_md": str(run_dir / "active_issue_ledger.md") if (run_dir / "active_issue_ledger.md").exists() else None,
+        "historical_failure_ledger_json": str(run_dir / "historical_failure_ledger.json") if (run_dir / "historical_failure_ledger.json").exists() else None,
+        "historical_failure_ledger_md": str(run_dir / "historical_failure_ledger.md") if (run_dir / "historical_failure_ledger.md").exists() else None,
+    }
+
+
+def _watcher_summary(run_dir: Path) -> Optional[Dict[str, Any]]:
+    return _read_json_if_exists(e2e_watcher_status_path(run_dir))
+
+
+def inspect_benchmark_e2e_sweep_run(
+    *,
+    run_id: Optional[str] = None,
+    repo_root: Optional[Path] = None,
+    artifacts_dir: Optional[str] = None,
+    recent_events_limit: int = 10,
+) -> Dict[str, Any]:
+    root = Path(repo_root or _repo_root()).resolve()
+    resolved_run_id = resolve_e2e_run_id(run_id, repo_root=root) if run_id else resolve_latest_e2e_run_id(repo_root=root)
+    if not resolved_run_id:
+        return {
+            "success": False,
+            "error": f"No e2e runs found under {e2e_runs_root(root)}",
+            "run_state": "missing",
+            "overall_status": "missing",
+        }
+
+    run_dir = e2e_run_dir(resolved_run_id, root)
+    if not run_dir.exists():
+        return {
+            "success": False,
+            "run_id": resolved_run_id,
+            "run_dir": str(run_dir),
+            "error": f"Missing run dir: {run_dir}",
+            "run_state": "missing",
+            "overall_status": "missing",
+        }
+
+    summary_path = run_dir / "summary.json"
+    checkpoint_path = run_dir / "checkpoint.json"
+    progress_path = e2e_progress_path(run_dir)
+    events_path = run_dir / "events.jsonl"
+    summary = _read_json_if_exists(summary_path) or {}
+    checkpoint = _read_json_if_exists(checkpoint_path) or {}
+    progress = _read_json_if_exists(progress_path) or {}
+    current = progress.get("current") if isinstance(progress.get("current"), dict) else {}
+    metrics = current.get("metrics") if isinstance(current.get("metrics"), dict) else {}
+    persisted_run_state = checkpoint.get("run_state") or summary.get("run_state")
+    terminal_persisted_state = str(persisted_run_state or "").strip() in {"completed", "aborted"}
+    if terminal_persisted_state:
+        stages = checkpoint.get("stages")
+        if not isinstance(stages, list):
+            stages = summary.get("stages")
+        if not isinstance(stages, list):
+            stages = metrics.get("stages")
+    else:
+        stages = metrics.get("stages")
+        if not isinstance(stages, list):
+            stages = checkpoint.get("stages")
+        if not isinstance(stages, list):
+            stages = summary.get("stages")
+    if not isinstance(stages, list):
+        stages = []
+
+    contract = checkpoint.get("contract")
+    if not isinstance(contract, dict):
+        contract = summary.get("contract")
+    if not isinstance(contract, dict):
+        contract = {}
+
+    run_state = (
+        metrics.get("run_state")
+        or checkpoint.get("run_state")
+        or summary.get("run_state")
+        or "unknown"
+    )
+    overall_status = (
+        metrics.get("overall_status")
+        or checkpoint.get("overall_status")
+        or summary.get("overall_status")
+        or "unknown"
+    )
+    resume_available = bool(checkpoint.get("resume_available", summary.get("resume_available", False)))
+    orchestrator_pid = metrics.get("orchestrator_pid")
+    if orchestrator_pid is None:
+        orchestrator_pid = checkpoint.get("orchestrator_pid", summary.get("orchestrator_pid"))
+    orchestrator_live = _pid_is_live(orchestrator_pid)
+    progress_timestamp = current.get("timestamp")
+    progress_age_seconds = _age_seconds(progress_timestamp)
+    summary_updated_at = summary.get("updated_at")
+    checkpoint_updated_at = checkpoint.get("updated_at")
+    summary_age_seconds = _age_seconds(summary_updated_at)
+    checkpoint_age_seconds = _age_seconds(checkpoint_updated_at)
+    summary_progress_lag_seconds = None
+    if progress_age_seconds is not None and summary_age_seconds is not None:
+        summary_progress_lag_seconds = max(0.0, summary_age_seconds - progress_age_seconds)
+    checkpoint_progress_lag_seconds = None
+    if progress_age_seconds is not None and checkpoint_age_seconds is not None:
+        checkpoint_progress_lag_seconds = max(0.0, checkpoint_age_seconds - progress_age_seconds)
+
+    inferred_state = "unknown"
+    status_notes: List[str] = []
+    if str(run_state) == "completed":
+        inferred_state = "completed"
+    elif str(run_state) == "aborted" and resume_available:
+        inferred_state = "aborted_resume_available"
+    elif str(run_state) == "running" and orchestrator_live:
+        inferred_state = "running_live"
+    elif str(run_state) == "running":
+        inferred_state = "running_stale"
+        status_notes.append("run is marked running but the orchestrator pid is not live")
+    elif str(run_state) == "aborted":
+        inferred_state = "aborted_terminal"
+    else:
+        inferred_state = f"state_{run_state}"
+
+    if summary_progress_lag_seconds and summary_progress_lag_seconds > 30.0:
+        status_notes.append(
+            f"summary/checkpoint persistence lags live progress by ~{summary_progress_lag_seconds:.0f}s"
+        )
+
+    current_stage_name = metrics.get("current_stage")
+    current_child_run_id = metrics.get("current_stage_run_id")
+    current_bucket = metrics.get("current_bucket")
+    child_artifacts: Dict[str, Optional[str]] = {}
+    recent_child_events: List[Dict[str, Any]] = []
+    child_reported_failures: List[Dict[str, Any]] = []
+    if isinstance(current_child_run_id, str) and current_child_run_id.strip():
+        if current_stage_name in {"tier1", "full_sweep"}:
+            benchmark_paths = _benchmark_run_event_paths(
+                current_child_run_id,
+                repo_root=root,
+                artifacts_dir=artifacts_dir or contract.get("artifacts_dir"),
+            )
+            child_artifacts = {
+                "run_dir": str(benchmark_paths["run_dir"]),
+                "progress_path": str(benchmark_paths["progress"]),
+                "events_path": str(benchmark_paths["events"]),
+                "output_json": str(benchmark_paths["output_json"]),
+            }
+            if benchmark_paths["events"].exists():
+                recent_child_events = _tail_records(benchmark_paths["events"], limit=recent_events_limit)
+                child_reported_failures = _reported_failures_from_child_events(
+                    benchmark_paths["events"],
+                    stage_name=current_stage_name,
+                    bucket=current_bucket,
+                )
+        elif current_stage_name in {"cluster", "fabric"}:
+            child_progress = _cluster_run_progress_path(current_child_run_id, repo_root=root)
+            child_artifacts = {
+                "run_dir": str(child_progress.parents[1]),
+                "progress_path": str(child_progress),
+            }
+
+    watcher = _watcher_summary(run_dir) or {}
+    watcher_pid = watcher.get("watcher_pid")
+    watcher_live = _pid_is_live(watcher_pid)
+    actions = build_benchmark_e2e_status_actions(resolved_run_id, python_executable=sys.executable)
+
+    stage_snapshots = [_stage_snapshot(stage) for stage in stages if isinstance(stage, dict)]
+    aggregate_failures: List[Dict[str, Any]] = []
+    for stage in stage_snapshots:
+        for entry in stage.get("failed_benchmarks") or []:
+            aggregate_failures.append({"stage": stage.get("name"), **entry})
+    seen_failure_keys = {
+        (
+            str(entry.get("stage") or "").strip(),
+            str(entry.get("bucket") or "").strip(),
+            str(entry.get("target") or "").strip(),
+        )
+        for entry in aggregate_failures
+    }
+    for entry in child_reported_failures:
+        key = (
+            str(entry.get("stage") or "").strip(),
+            str(entry.get("bucket") or "").strip(),
+            str(entry.get("target") or "").strip(),
+        )
+        if key in seen_failure_keys:
+            continue
+        aggregate_failures.append(dict(entry))
+        seen_failure_keys.add(key)
+
+    surfaced_failures = list(child_reported_failures or [])
+    if not surfaced_failures and not (str(run_state) == "running" and orchestrator_live):
+        surfaced_failures = list(aggregate_failures)
+
+    recent_events = _tail_records(events_path, limit=recent_events_limit)
+    resume_command = build_benchmark_e2e_resume_command(
+        resolved_run_id,
+        contract=contract,
+        python_executable=sys.executable,
+    )
+    progress_source_path = None
+    if isinstance(child_artifacts, dict):
+        progress_source_path = child_artifacts.get("progress_path")
+    if not progress_source_path:
+        progress_source_path = str(progress_path)
+    progress_source_kind = "checkpoint_summary"
+    progress_source_label = "Checkpoint and summary"
+    progress_source_reason = (
+        "Run is terminal or does not currently expose fresher child progress, so checkpoint/summary are the active status records."
+    )
+    if str(run_state) == "running" and current_child_run_id and progress_timestamp:
+        progress_source_kind = "live_child_progress"
+        progress_source_label = "Live child progress"
+        progress_source_reason = (
+            "Current progress is mirrored from the active child run and cross-checked with top-level progress plus orchestrator liveness."
+        )
+    elif str(run_state) == "running" and progress_timestamp:
+        progress_source_kind = "top_level_progress"
+        progress_source_label = "Top-level progress"
+        progress_source_reason = (
+            "Current progress comes from top-level progress.json because no child run progress path is attached for the active stage."
+        )
+    progress_source = _json_safe(
+        {
+            "kind": progress_source_kind,
+            "label": progress_source_label,
+            "reason": progress_source_reason,
+            "progress_timestamp": progress_timestamp,
+            "progress_path": progress_source_path,
+            "summary_progress_lag_seconds": summary_progress_lag_seconds,
+            "checkpoint_progress_lag_seconds": checkpoint_progress_lag_seconds,
+            "status_command_shell": actions.get("status_command_shell"),
+            "status_api_path": actions.get("status_api_path"),
+            "dashboard_path": actions.get("dashboard_path"),
+            "preferred_mcp_tool": actions.get("preferred_mcp_tool"),
+        }
+    )
+
+    status_paths = {
+        "summary_path": str(summary_path),
+        "checkpoint_path": str(checkpoint_path),
+        "progress_path": str(progress_path),
+        "events_path": str(events_path),
+        "watcher_status_path": str(e2e_watcher_status_path(run_dir)),
+        "watcher_launch_log_path": str(e2e_watcher_launch_log_path(run_dir, resolved_run_id)),
+    }
+    ledgers = _sync_active_issue_ledger(
+        run_dir=run_dir,
+        run_id=resolved_run_id,
+        actions=actions,
+        status_paths=status_paths,
+        aggregate_failures=aggregate_failures,
+        reported_failures=child_reported_failures,
+    )
+
+    return _json_safe(
+        {
+            "success": True,
+            "run_id": resolved_run_id,
+            "run_dir": str(run_dir),
+            "run_state": run_state,
+            "overall_status": overall_status,
+            "inferred_state": inferred_state,
+            "resume_available": resume_available,
+            "notes": status_notes,
+            "progress_source": progress_source,
+            "paths": {
+                **status_paths,
+            },
+            "timestamps": {
+                "progress_timestamp": progress_timestamp,
+                "summary_updated_at": summary_updated_at,
+                "checkpoint_updated_at": checkpoint_updated_at,
+            },
+            "ages_seconds": {
+                "progress": progress_age_seconds,
+                "summary": summary_age_seconds,
+                "checkpoint": checkpoint_age_seconds,
+                "summary_progress_lag": summary_progress_lag_seconds,
+                "checkpoint_progress_lag": checkpoint_progress_lag_seconds,
+            },
+            "liveness": {
+                "orchestrator_pid": orchestrator_pid,
+                "orchestrator_live": orchestrator_live,
+                "watcher_pid": watcher_pid,
+                "watcher_live": watcher_live,
+            },
+            "contract": contract,
+            "watcher": watcher or None,
+            "current": {
+                "stage": current_stage_name,
+                "bucket": current_bucket,
+                "child_run_id": current_child_run_id,
+                "step": current.get("step"),
+                "detail": current.get("step_detail"),
+                "percent_complete": current.get("percent_complete"),
+                "elapsed_seconds": current.get("elapsed_seconds"),
+                "eta_seconds": current.get("eta_seconds"),
+                "child_progress": metrics.get("child_progress"),
+                "child_artifacts": child_artifacts or None,
+                "recent_child_events": recent_child_events,
+                "reported_failures": surfaced_failures,
+            },
+            "stages": stage_snapshots,
+            "aggregate_failures": aggregate_failures,
+            "recent_events": recent_events,
+            "ledgers": ledgers,
+            "actions": {
+                **actions,
+                "resume_command": resume_command,
+                "resume_command_shell": _cli_shell_join(resume_command),
+            },
+        }
+    )
+
+
+def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
+    if not status.get("success", False):
+        return json.dumps(status, indent=2, sort_keys=True)
+    current = status.get("current") or {}
+    liveness = status.get("liveness") or {}
+    watcher = status.get("watcher") or {}
+    lines = [
+        f"run_id={status.get('run_id')}",
+        f"state={status.get('inferred_state')} run_state={status.get('run_state')} overall_status={status.get('overall_status')}",
+        f"orchestrator_pid={liveness.get('orchestrator_pid')} live={liveness.get('orchestrator_live')}",
+    ]
+    progress_source = status.get("progress_source") or {}
+    if progress_source.get("kind"):
+        lines.append(
+            f"progress_source={progress_source.get('kind')} ts={progress_source.get('progress_timestamp')} "
+            f"path={progress_source.get('progress_path')}"
+        )
+    if current.get("stage"):
+        lines.append(
+            "current="
+            + f"{current.get('stage')}"
+            + (f"/{current.get('bucket')}" if current.get("bucket") else "")
+            + f" step={current.get('step')} pct={current.get('percent_complete')}"
+        )
+    if current.get("detail"):
+        lines.append(f"detail={current.get('detail')}")
+    if watcher:
+        lines.append(
+            f"watcher_pid={watcher.get('watcher_pid')} watcher_state={watcher.get('watch_state')} "
+            f"auto_resume_count={watcher.get('auto_resume_count')}"
+        )
+    reported_failures = list(current.get("reported_failures") or [])
+    if reported_failures:
+        lines.append(f"reported_failures={len(reported_failures)}")
+        preview = ", ".join(
+            f"{entry.get('target')}[{entry.get('status')}]"
+            for entry in reported_failures[:5]
+        )
+        if preview:
+            lines.append(f"reported_failure_preview={preview}")
+    ledgers = status.get("ledgers") or {}
+    ledger_summary = dict(ledgers.get("summary") or {})
+    if ledger_summary:
+        lines.append(
+            "active_issue_counts="
+            + f"issues={ledger_summary.get('issue_count')} "
+            + f"resolved={ledger_summary.get('resolved_count')} "
+            + f"unresolved={ledger_summary.get('unresolved_count')}"
+        )
+    if ledgers.get("active_issue_ledger_json"):
+        lines.append(f"active_issue_ledger={ledgers.get('active_issue_ledger_json')}")
+    notes = list(status.get("notes") or [])
+    for note in notes:
+        lines.append(f"note={note}")
+    lines.append(f"resume_available={status.get('resume_available')}")
+    return "\n".join(lines)
+
+
+def _watcher_status_payload(
+    *,
+    run_id: str,
+    watcher_pid: int,
+    watch_state: str,
+    poll_interval_seconds: int,
+    max_auto_resumes: int,
+    auto_resume_count: int,
+    last_action: Optional[Dict[str, Any]],
+    snapshot: Dict[str, Any],
+) -> Dict[str, Any]:
+    current = dict(snapshot.get("current") or {})
+    compact_current = {
+        "stage": current.get("stage"),
+        "bucket": current.get("bucket"),
+        "child_run_id": current.get("child_run_id"),
+        "step": current.get("step"),
+        "detail": current.get("detail"),
+        "percent_complete": current.get("percent_complete"),
+        "elapsed_seconds": current.get("elapsed_seconds"),
+        "eta_seconds": current.get("eta_seconds"),
+    }
+    compact_snapshot = {
+        "run_id": snapshot.get("run_id"),
+        "run_state": snapshot.get("run_state"),
+        "overall_status": snapshot.get("overall_status"),
+        "inferred_state": snapshot.get("inferred_state"),
+        "resume_available": snapshot.get("resume_available"),
+        "notes": list(snapshot.get("notes") or []),
+        "liveness": dict(snapshot.get("liveness") or {}),
+        "current": compact_current,
+        "recent_events": list(snapshot.get("recent_events") or []),
+        "ledgers": dict(snapshot.get("ledgers") or {}),
+    }
+    return _json_safe(
+        {
+            "run_id": run_id,
+            "timestamp": _utc_now(),
+            "watcher_pid": watcher_pid,
+            "watch_state": watch_state,
+            "poll_interval_seconds": poll_interval_seconds,
+            "max_auto_resumes": max_auto_resumes,
+            "auto_resume_count": auto_resume_count,
+            "last_action": last_action,
+            "last_snapshot": compact_snapshot,
+        }
+    )
+
+
+def watch_benchmark_e2e_sweep_foreground(
+    *,
+    run_id: str,
+    repo_root: Optional[Path] = None,
+    poll_interval_seconds: int = _E2E_WATCHER_POLL_SECONDS,
+    max_auto_resumes: int = _E2E_WATCHER_MAX_AUTO_RESUMES,
+) -> Dict[str, Any]:
+    root = Path(repo_root or _repo_root()).resolve()
+    run_dir = e2e_run_dir(run_id, root)
+    if not run_dir.exists():
+        return {
+            "success": False,
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+            "error": f"Missing run dir: {run_dir}",
+        }
+
+    watch_status_path = e2e_watcher_status_path(run_dir)
+    events_path = run_dir / "events.jsonl"
+    auto_resume_count = 0
+    last_action: Optional[Dict[str, Any]] = None
+
+    while True:
+        snapshot = inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=root)
+        inferred_state = str(snapshot.get("inferred_state") or "unknown")
+        watch_state = "watching"
+        if inferred_state == "completed":
+            watch_state = "completed"
+            _write_json(
+                watch_status_path,
+                _watcher_status_payload(
+                    run_id=run_id,
+                    watcher_pid=os.getpid(),
+                    watch_state=watch_state,
+                    poll_interval_seconds=poll_interval_seconds,
+                    max_auto_resumes=max_auto_resumes,
+                    auto_resume_count=auto_resume_count,
+                    last_action=last_action,
+                    snapshot=snapshot,
+                ),
+            )
+            return {
+                "success": True,
+                "run_id": run_id,
+                "watch_state": watch_state,
+                "auto_resume_count": auto_resume_count,
+                "watcher_status_path": str(watch_status_path),
+            }
+
+        if inferred_state in {"running_stale", "aborted_resume_available"}:
+            if auto_resume_count >= max_auto_resumes:
+                watch_state = "exhausted"
+                last_action = {
+                    "timestamp": _utc_now(),
+                    "action": "auto_resume_skipped",
+                    "reason": f"max_auto_resumes={max_auto_resumes} exhausted",
+                }
+                _append_event(
+                    events_path,
+                    "auto_resume_exhausted",
+                    run_id=run_id,
+                    max_auto_resumes=max_auto_resumes,
+                )
+                _write_json(
+                    watch_status_path,
+                    _watcher_status_payload(
+                        run_id=run_id,
+                        watcher_pid=os.getpid(),
+                        watch_state=watch_state,
+                        poll_interval_seconds=poll_interval_seconds,
+                        max_auto_resumes=max_auto_resumes,
+                        auto_resume_count=auto_resume_count,
+                        last_action=last_action,
+                        snapshot=snapshot,
+                    ),
+                )
+                return {
+                    "success": False,
+                    "run_id": run_id,
+                    "watch_state": watch_state,
+                    "auto_resume_count": auto_resume_count,
+                    "watcher_status_path": str(watch_status_path),
+                    "error": f"max_auto_resumes={max_auto_resumes} exhausted",
+                }
+
+            resume_command = list(snapshot.get("actions", {}).get("resume_command") or [])
+            if not resume_command:
+                watch_state = "resume_missing"
+                last_action = {
+                    "timestamp": _utc_now(),
+                    "action": "auto_resume_skipped",
+                    "reason": "missing resume command",
+                }
+            else:
+                watch_state = "resuming"
+                auto_resume_count += 1
+                last_action = {
+                    "timestamp": _utc_now(),
+                    "action": "auto_resume_started",
+                    "attempt": auto_resume_count,
+                    "command": resume_command,
+                }
+                _append_event(
+                    events_path,
+                    "auto_resume_started",
+                    run_id=run_id,
+                    attempt=auto_resume_count,
+                    command=resume_command,
+                )
+                _write_json(
+                    watch_status_path,
+                    _watcher_status_payload(
+                        run_id=run_id,
+                        watcher_pid=os.getpid(),
+                        watch_state=watch_state,
+                        poll_interval_seconds=poll_interval_seconds,
+                        max_auto_resumes=max_auto_resumes,
+                        auto_resume_count=auto_resume_count,
+                        last_action=last_action,
+                        snapshot=snapshot,
+                    ),
+                )
+                env = dict(os.environ)
+                env[_E2E_WATCHER_SUPERVISED_ENV] = "1"
+                returncode = subprocess.call(resume_command, cwd=str(root), env=env)
+                last_action = {
+                    "timestamp": _utc_now(),
+                    "action": "auto_resume_finished",
+                    "attempt": auto_resume_count,
+                    "command": resume_command,
+                    "returncode": returncode,
+                }
+                _append_event(
+                    events_path,
+                    "auto_resume_finished",
+                    run_id=run_id,
+                    attempt=auto_resume_count,
+                    command=resume_command,
+                    returncode=returncode,
+                )
+                continue
+
+        _write_json(
+            watch_status_path,
+            _watcher_status_payload(
+                run_id=run_id,
+                watcher_pid=os.getpid(),
+                watch_state=watch_state,
+                poll_interval_seconds=poll_interval_seconds,
+                max_auto_resumes=max_auto_resumes,
+                auto_resume_count=auto_resume_count,
+                last_action=last_action,
+                snapshot=snapshot,
+            ),
+        )
+        time.sleep(max(1, int(poll_interval_seconds)))
+
+
+def watch_benchmark_e2e_sweep_run(
+    *,
+    run_id: str,
+    repo_root: Optional[Path] = None,
+    poll_interval_seconds: int = _E2E_WATCHER_POLL_SECONDS,
+    max_auto_resumes: int = _E2E_WATCHER_MAX_AUTO_RESUMES,
+) -> Dict[str, Any]:
+    root = Path(repo_root or _repo_root()).resolve()
+    run_dir = e2e_run_dir(run_id, root)
+    if not run_dir.exists():
+        return {"success": False, "error": f"Missing run dir: {run_dir}"}
+    script = _watch_e2e_sweep_script()
+    if not script.exists():
+        return {"success": False, "error": f"Missing script: {script}"}
+
+    status_path = e2e_watcher_status_path(run_dir)
+    existing = _read_json_if_exists(status_path) or {}
+    existing_pid = existing.get("watcher_pid")
+    if _pid_is_live(existing_pid):
+        return {
+            "success": True,
+            "run_id": run_id,
+            "run_dir": str(run_dir),
+            "watcher_pid": existing_pid,
+            "watch_status_path": str(status_path),
+            "launch_log_path": str(e2e_watcher_launch_log_path(run_dir, run_id)),
+            "already_running": True,
+        }
+
+    launch_log_path = e2e_watcher_launch_log_path(run_dir, run_id)
+    launch_log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(script),
+        "--repo-root",
+        str(root),
+        "--run-id",
+        run_id,
+        "--poll-interval-seconds",
+        str(int(poll_interval_seconds)),
+        "--max-auto-resumes",
+        str(int(max_auto_resumes)),
+    ]
+    with launch_log_path.open("a", encoding="utf-8") as log_handle:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(root),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _write_json(
+        status_path,
+        {
+            "run_id": run_id,
+            "timestamp": _utc_now(),
+            "watcher_pid": proc.pid,
+            "watch_state": "launched",
+            "poll_interval_seconds": int(poll_interval_seconds),
+            "max_auto_resumes": int(max_auto_resumes),
+            "auto_resume_count": 0,
+        },
+    )
+    return {
+        "success": True,
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "watcher_pid": proc.pid,
+        "watch_command": cmd,
+        "watch_status_path": str(status_path),
+        "launch_log_path": str(launch_log_path),
+    }
 
 
 def _find_stage(stages: List[Dict[str, Any]], name: str) -> Dict[str, Any]:
@@ -1439,6 +2641,20 @@ def _validate_resume_contract(
     requested: Dict[str, Any],
     stored: Dict[str, Any],
 ) -> Optional[str]:
+    def _timeout_is_compatible(field_name: str, requested_value: Any, stored_value: Any) -> bool:
+        if field_name != "suite_timeout":
+            return False
+        if requested_value == stored_value:
+            return True
+        if requested_value in (0, None):
+            return True
+        if stored_value in (0, None):
+            return False
+        try:
+            return int(requested_value) >= int(stored_value)
+        except (TypeError, ValueError):
+            return False
+
     fields_to_validate = [
         "profile_type",
         "validity_profile",
@@ -1468,6 +2684,7 @@ def _validate_resume_contract(
         "coverage_baseline_run_id",
         "timeout_seconds",
         "suite_timeout",
+        "full_sweep_suite_timeout",
         "timeout_multiplier",
         "accept_regressions",
         "update_expectations",
@@ -1481,6 +2698,9 @@ def _validate_resume_contract(
         "ncu_replay_mode",
         "nsys_timeout_seconds",
         "ncu_timeout_seconds",
+        "auto_resume",
+        "max_auto_resumes",
+        "watch_poll_interval_seconds",
     ]
     mismatches: List[str] = []
     for field_name in fields_to_validate:
@@ -1488,6 +2708,8 @@ def _validate_resume_contract(
             continue
         requested_value = _json_safe(requested.get(field_name))
         stored_value = _json_safe(stored.get(field_name))
+        if _timeout_is_compatible(field_name, requested_value, stored_value):
+            continue
         if requested_value != stored_value:
             mismatches.append(
                 f"{field_name}: requested={requested_value!r}, original={stored_value!r}"
@@ -1517,7 +2739,10 @@ def _build_checkpoint_payload(
     artifact_paths: Dict[str, Path],
     crash: Optional[Dict[str, Any]],
     orchestrator_pid: Optional[int],
+    watcher: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    status_actions = build_benchmark_e2e_status_actions(run_id)
+    ledger_refs = _existing_ledger_refs(run_dir)
     return {
         "schema_version": "1.0",
         "run_id": run_id,
@@ -1538,6 +2763,10 @@ def _build_checkpoint_payload(
         "artifact_paths": {key: str(value) for key, value in artifact_paths.items()},
         "crash": crash,
         "orchestrator_pid": orchestrator_pid,
+        "watcher": watcher,
+        "ledgers": ledger_refs,
+        "actions": status_actions,
+        "preferred_progress_source": build_benchmark_e2e_progress_surface_hint(run_id),
     }
 
 
@@ -1560,7 +2789,10 @@ def _build_summary_payload(
     artifact_paths: Dict[str, Path],
     crash: Optional[Dict[str, Any]],
     orchestrator_pid: Optional[int],
+    watcher: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    status_actions = build_benchmark_e2e_status_actions(run_id)
+    ledger_refs = _existing_ledger_refs(run_dir)
     return {
         "success": success,
         "run_id": run_id,
@@ -1585,6 +2817,10 @@ def _build_summary_payload(
         "stages": stages,
         "crash": crash,
         "orchestrator_pid": orchestrator_pid,
+        "watcher": watcher,
+        "ledgers": ledger_refs,
+        "actions": status_actions,
+        "preferred_progress_source": build_benchmark_e2e_progress_surface_hint(run_id),
     }
 
 
@@ -1617,6 +2853,7 @@ def run_benchmark_e2e_sweep(
     profile_type: str = "minimal",
     output_format: str = "both",
     suite_timeout: Optional[int] = 14400,
+    full_sweep_suite_timeout: Optional[int] = 0,
     timeout_multiplier: float = 3.0,
     validity_profile: str = "strict",
     allow_portable_expectations_update: bool = False,
@@ -1638,6 +2875,9 @@ def run_benchmark_e2e_sweep(
     ncu_replay_mode: Optional[str] = None,
     nsys_timeout_seconds: Optional[int] = None,
     ncu_timeout_seconds: Optional[int] = None,
+    auto_resume: bool = True,
+    max_auto_resumes: int = _E2E_WATCHER_MAX_AUTO_RESUMES,
+    watch_poll_interval_seconds: int = _E2E_WATCHER_POLL_SECONDS,
     timeout_seconds: Optional[int] = None,
     run_id: Optional[str] = None,
     dry_run: bool = False,
@@ -1740,7 +2980,7 @@ def run_benchmark_e2e_sweep(
             _write_json(summary_path, safe_failure)
             summary_markdown_path.write_text(_render_summary_markdown(safe_failure), encoding="utf-8")
             _write_json(manifest_path, {**safe_failure, "inventory": inventory})
-        return safe_failure
+        return attach_benchmark_e2e_status_hints(safe_failure, resolved_run_id)
     gpu_count = _visible_gpu_count(single_gpu=single_gpu)
     cluster_extra_args = _with_e2e_cluster_extra_args(extra_cluster_args)
     provenance = {
@@ -1781,6 +3021,7 @@ def run_benchmark_e2e_sweep(
         bench_root=str(active_bench_root),
         profile_type=profile_type,
         suite_timeout=suite_timeout,
+        full_sweep_suite_timeout=full_sweep_suite_timeout,
         timeout_multiplier=timeout_multiplier,
         timeout_seconds=timeout_seconds,
         validity_profile=normalized_validity_profile,
@@ -1803,6 +3044,9 @@ def run_benchmark_e2e_sweep(
         ncu_replay_mode=ncu_replay_mode,
         nsys_timeout_seconds=nsys_timeout_seconds,
         ncu_timeout_seconds=ncu_timeout_seconds,
+        auto_resume=auto_resume,
+        max_auto_resumes=max_auto_resumes,
+        watch_poll_interval_seconds=watch_poll_interval_seconds,
     )
 
     if expectation_error:
@@ -1835,7 +3079,7 @@ def run_benchmark_e2e_sweep(
             _write_json(summary_path, _json_safe(result))
             summary_markdown_path.write_text(_render_summary_markdown(_json_safe(result)), encoding="utf-8")
             _write_json(manifest_path, {**_json_safe(result), "inventory": inventory})
-        return _json_safe(result)
+        return attach_benchmark_e2e_status_hints(_json_safe(result), resolved_run_id)
 
     def _materialize_stages(loaded_stages: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         loaded_by_name = {
@@ -1860,29 +3104,32 @@ def run_benchmark_e2e_sweep(
     frozen_plan = _build_frozen_plan(inventory=inventory)
     if resume:
         if not checkpoint_path.exists() and not events_path.exists():
-            return _json_safe(
-                {
-                    "success": False,
-                    "run_id": resolved_run_id,
-                    "run_dir": str(run_dir),
-                    "run_state": "completed",
-                    "overall_status": "failed",
-                    "generated_at": generated_at,
-                    "updated_at": generated_at,
-                    "resume_available": False,
-                    "error": f"No prior run state found for run_id={resolved_run_id!r}",
-                    "manifest_path": str(manifest_path),
-                    "summary_path": str(summary_path),
-                    "summary_markdown_path": str(summary_markdown_path),
-                    "progress_path": str(progress_path),
-                    "checkpoint_path": str(checkpoint_path),
-                    "target_inventory_path": str(target_inventory_path),
-                    "events_path": str(events_path),
-                    "inventory": _summarize_inventory_for_summary(inventory),
-                    "stages": _json_safe(planned_stages),
-                    "provenance": provenance,
-                    "contract": requested_contract,
-                }
+            return attach_benchmark_e2e_status_hints(
+                _json_safe(
+                    {
+                        "success": False,
+                        "run_id": resolved_run_id,
+                        "run_dir": str(run_dir),
+                        "run_state": "completed",
+                        "overall_status": "failed",
+                        "generated_at": generated_at,
+                        "updated_at": generated_at,
+                        "resume_available": False,
+                        "error": f"No prior run state found for run_id={resolved_run_id!r}",
+                        "manifest_path": str(manifest_path),
+                        "summary_path": str(summary_path),
+                        "summary_markdown_path": str(summary_markdown_path),
+                        "progress_path": str(progress_path),
+                        "checkpoint_path": str(checkpoint_path),
+                        "target_inventory_path": str(target_inventory_path),
+                        "events_path": str(events_path),
+                        "inventory": _summarize_inventory_for_summary(inventory),
+                        "stages": _json_safe(planned_stages),
+                        "provenance": provenance,
+                        "contract": requested_contract,
+                    }
+                ),
+                resolved_run_id,
             )
         resume_state = _load_resume_state(
             run_dir=run_dir,
@@ -1911,29 +3158,32 @@ def run_benchmark_e2e_sweep(
             stored=resume_state.get("contract") or {},
         )
         if mismatch_error:
-            return _json_safe(
-                {
-                    "success": False,
-                    "run_id": resolved_run_id,
-                    "run_dir": str(run_dir),
-                    "run_state": "completed",
-                    "overall_status": "failed",
-                    "generated_at": str(resume_state.get("generated_at") or generated_at),
-                    "updated_at": generated_at,
-                    "resume_available": True,
-                    "error": mismatch_error,
-                    "manifest_path": str(manifest_path),
-                    "summary_path": str(summary_path),
-                    "summary_markdown_path": str(summary_markdown_path),
-                    "progress_path": str(progress_path),
-                    "checkpoint_path": str(checkpoint_path),
-                    "target_inventory_path": str(target_inventory_path),
-                    "events_path": str(events_path),
-                    "inventory": _summarize_inventory_for_summary(inventory),
-                    "stages": _json_safe(resume_state.get("stages") or planned_stages),
-                    "provenance": provenance,
-                    "contract": requested_contract,
-                }
+            return attach_benchmark_e2e_status_hints(
+                _json_safe(
+                    {
+                        "success": False,
+                        "run_id": resolved_run_id,
+                        "run_dir": str(run_dir),
+                        "run_state": "completed",
+                        "overall_status": "failed",
+                        "generated_at": str(resume_state.get("generated_at") or generated_at),
+                        "updated_at": generated_at,
+                        "resume_available": True,
+                        "error": mismatch_error,
+                        "manifest_path": str(manifest_path),
+                        "summary_path": str(summary_path),
+                        "summary_markdown_path": str(summary_markdown_path),
+                        "progress_path": str(progress_path),
+                        "checkpoint_path": str(checkpoint_path),
+                        "target_inventory_path": str(target_inventory_path),
+                        "events_path": str(events_path),
+                        "inventory": _summarize_inventory_for_summary(inventory),
+                        "stages": _json_safe(resume_state.get("stages") or planned_stages),
+                        "provenance": provenance,
+                        "contract": requested_contract,
+                    }
+                ),
+                resolved_run_id,
             )
         generated_at = str(resume_state.get("generated_at") or generated_at)
         frozen_plan = _json_safe(resume_state.get("frozen_plan") or frozen_plan)
@@ -1944,7 +3194,8 @@ def run_benchmark_e2e_sweep(
             artifacts_dir=artifacts_dir,
             reason="resume superseded unfinished attempt",
         )
-        requested_contract = _json_safe(resume_state.get("contract") or requested_contract)
+        stored_contract = dict(resume_state.get("contract") or {})
+        requested_contract = _json_safe({**stored_contract, **requested_contract})
     else:
         stages = _materialize_stages()
 
@@ -1976,6 +3227,7 @@ def run_benchmark_e2e_sweep(
         updated_at = _utc_now()
         overall_status = _current_overall_status()
         success = run_state == "completed" and overall_status not in {"failed", "aborted"}
+        watcher = _watcher_summary(run_dir)
         summary_payload = _build_summary_payload(
             run_id=resolved_run_id,
             run_dir=run_dir,
@@ -1994,6 +3246,7 @@ def run_benchmark_e2e_sweep(
             artifact_paths=artifact_paths,
             crash=crash,
             orchestrator_pid=os.getpid(),
+            watcher=watcher,
         )
         checkpoint_payload = _build_checkpoint_payload(
             run_id=resolved_run_id,
@@ -2014,6 +3267,7 @@ def run_benchmark_e2e_sweep(
             artifact_paths=artifact_paths,
             crash=crash,
             orchestrator_pid=os.getpid(),
+            watcher=watcher,
         )
         if not dry_run:
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -2077,6 +3331,7 @@ def run_benchmark_e2e_sweep(
             return invoke()
 
         stop_event = threading.Event()
+        last_state_persist = {"monotonic": time.monotonic()}
 
         def _mirror_worker() -> None:
             while True:
@@ -2086,6 +3341,10 @@ def run_benchmark_e2e_sweep(
                     child_progress_path,
                     bucket=bucket,
                 )
+                now = time.monotonic()
+                if now - last_state_persist["monotonic"] >= _STATE_HEARTBEAT_SECONDS:
+                    _persist_state()
+                    last_state_persist["monotonic"] = now
                 if stop_event.wait(_STAGE_PROGRESS_POLL_SECONDS):
                     break
 
@@ -2200,37 +3459,56 @@ def run_benchmark_e2e_sweep(
         _persist_state()
 
     if dry_run:
-        return _json_safe(
-            {
-                "success": True,
-                "dry_run": True,
-                "run_id": resolved_run_id,
-                "run_dir": str(run_dir),
-                "run_state": "dry_run",
-                "overall_status": "dry_run",
-                "generated_at": generated_at,
-                "updated_at": generated_at,
-                "resume_available": bool(resume),
-                "manifest_path": str(manifest_path),
-                "summary_path": str(summary_path),
-                "summary_markdown_path": str(summary_markdown_path),
-                "progress_path": str(progress_path),
-                "checkpoint_path": str(checkpoint_path),
-                "target_inventory_path": str(target_inventory_path),
-                "events_path": str(events_path),
-                "inventory": _summarize_inventory_for_summary(inventory),
-                "hosts": cluster_host_config,
-                "provenance": provenance,
-                "contract": requested_contract,
-                "stages": stages,
-                "frozen_plan": frozen_plan,
-            }
+        return attach_benchmark_e2e_status_hints(
+            _json_safe(
+                {
+                    "success": True,
+                    "dry_run": True,
+                    "run_id": resolved_run_id,
+                    "run_dir": str(run_dir),
+                    "run_state": "dry_run",
+                    "overall_status": "dry_run",
+                    "generated_at": generated_at,
+                    "updated_at": generated_at,
+                    "resume_available": bool(resume),
+                    "manifest_path": str(manifest_path),
+                    "summary_path": str(summary_path),
+                    "summary_markdown_path": str(summary_markdown_path),
+                    "progress_path": str(progress_path),
+                    "checkpoint_path": str(checkpoint_path),
+                    "target_inventory_path": str(target_inventory_path),
+                    "events_path": str(events_path),
+                    "inventory": _summarize_inventory_for_summary(inventory),
+                    "hosts": cluster_host_config,
+                    "provenance": provenance,
+                    "contract": requested_contract,
+                    "stages": stages,
+                    "frozen_plan": frozen_plan,
+                }
+            ),
+            resolved_run_id,
         )
 
     run_dir.mkdir(parents=True, exist_ok=True)
     _write_json(target_inventory_path, inventory)
     _append_event(events_path, "run_resumed" if resume else "run_started", run_id=resolved_run_id)
     _persist_state()
+    if auto_resume and not dry_run and not os.environ.get(_E2E_WATCHER_SUPERVISED_ENV):
+        watcher_info = watch_benchmark_e2e_sweep_run(
+            run_id=resolved_run_id,
+            repo_root=repo_root,
+            poll_interval_seconds=watch_poll_interval_seconds,
+            max_auto_resumes=max_auto_resumes,
+        )
+        if watcher_info.get("success"):
+            _append_event(
+                events_path,
+                "watcher_armed",
+                run_id=resolved_run_id,
+                watcher_pid=watcher_info.get("watcher_pid"),
+                already_running=bool(watcher_info.get("already_running", False)),
+            )
+        _persist_state()
 
     class _E2EAbort(RuntimeError):
         pass
@@ -2243,7 +3521,11 @@ def run_benchmark_e2e_sweep(
         abort_signal["signal"] = signame
         raise _E2EAbort(f"received {signame}")
 
-    for signum in (signal.SIGINT, signal.SIGTERM):
+    abort_signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGHUP"):
+        abort_signals.append(signal.SIGHUP)
+
+    for signum in abort_signals:
         previous_handlers[signum] = signal.getsignal(signum)
         signal.signal(signum, _handle_abort_signal)
 
@@ -2455,6 +3737,8 @@ def run_benchmark_e2e_sweep(
                             normalized_validity_profile,
                             *sum([["-t", target] for target in remaining_targets], []),
                         ]
+                        if full_sweep_suite_timeout is not None:
+                            bucket_command.extend(["--suite-timeout", str(full_sweep_suite_timeout)])
                         attempt_units = [entry["name"] for entry in _group_targets_by_unit(remaining_targets)]
                         bucket_attempt = _stage_attempt_entry(
                             run_id=bucket_run_id,
@@ -2485,7 +3769,7 @@ def run_benchmark_e2e_sweep(
                                     bench_root=active_bench_root,
                                     output_format=output_format,
                                     profile_type=profile_type,
-                                    suite_timeout=suite_timeout,
+                                    suite_timeout=full_sweep_suite_timeout,
                                     timeout_multiplier=timeout_multiplier,
                                     validity_profile=normalized_validity_profile,
                                     allow_portable_expectations_update=allow_portable_expectations_update,
@@ -2745,7 +4029,7 @@ def run_benchmark_e2e_sweep(
             not in {"failed", "aborted"},
         )
         run_finished_event_emitted = True
-        return _persist_state()
+        return attach_benchmark_e2e_status_hints(_persist_state(), resolved_run_id)
     except (_E2EAbort, KeyboardInterrupt) as exc:
         error = str(exc)
         crash = {
@@ -2781,4 +4065,4 @@ def run_benchmark_e2e_sweep(
             success=False,
             error=error,
         )
-    return _persist_state()
+    return attach_benchmark_e2e_status_hints(_persist_state(), resolved_run_id)

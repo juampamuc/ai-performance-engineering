@@ -193,12 +193,15 @@ Generated from `mcp.mcp_server.TOOLS`. Run `python -m scripts.generate_mcp_docs`
 - `inference_quantization` — Get quantization recommendations: precision format, method, expected accuracy/speedup tradeoffs
 - `inference_vllm` — Generate optimized vLLM configuration for inference serving (explicit model size required)
 
-### Benchmark (17)
+### Benchmark (20)
 - `benchmark_compare` — Compare two benchmark run JSON files (baseline vs candidate)
 - `benchmark_compare_runs` — Compare two benchmark runs showing speedup deltas, regressions, and improvements
 - `benchmark_contracts` — Return the repo benchmark methodology, warehouse, and BenchmarkRun contract surfaces
 - `benchmark_data` — Fetch benchmark results with filtering/sorting/pagination (dashboard data view)
 - `benchmark_deep_dive_compare` — ONE-SHOT deep-dive workflow: run benchmarks with profile='deep_dive' AND return structured diffs from Nsight Systems + Nsight Compute (+ any available profiler artifacts)
+- `benchmark_e2e_status` — Inspect an e2e run using the authoritative normalized live-status surface
+- `benchmark_e2e_sweep` — Run the tier1/full-sweep/cluster/fabric end-to-end orchestration flow
+- `benchmark_e2e_watch` — Launch the detached e2e watcher that auto-resumes stale or aborted runs
 - `benchmark_explore` — Copy a baseline_*.py (or baseline_*.cu; auto-generates wrapper if missing), run minimal profiling with LLM patch variants, compare resource utilization across variants, and optionally run deep_dive profiling when minimal results are inconclusive
 - `benchmark_export` — Export benchmark results to CSV/Markdown/JSON format for further analysis
 - `benchmark_history` — List historical benchmark runs with summary stats

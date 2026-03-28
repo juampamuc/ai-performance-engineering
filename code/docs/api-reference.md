@@ -316,6 +316,9 @@ Benchmark execution, history tracking, and result comparison.
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
 | `run(targets, profile)` | Run benchmarks | `aisp bench run` | `run_benchmarks` |
+| `run_e2e(...)` | Run the all-stages tier1/full-sweep/cluster/fabric orchestration flow | `aisp bench run-e2e` | `benchmark_e2e_sweep` |
+| `e2e_status(run_id)` | Inspect the authoritative normalized live-status surface for an e2e run | `aisp bench run-e2e-status` | `benchmark_e2e_status` |
+| `e2e_watch(run_id)` | Arm the detached watcher that auto-resumes stale or aborted e2e runs | `aisp bench watch-e2e` | `benchmark_e2e_watch` |
 | `targets()` | List benchmark targets | `aisp bench list-targets` | `benchmark_targets` |
 | `explore(path, ...)` | Copy baseline, run LLM variants w/ profiling | `aisp bench explore` | `benchmark_explore` |
 | `history()` | Historical benchmark runs | - | `benchmark_history` |
@@ -327,6 +330,8 @@ Benchmark execution, history tracking, and result comparison.
 | `speed_test()` | Quick speed tests (diagnostic) | `aisp benchmark speed` | `hw_speed` |
 
 **Explore workflow:** `aisp bench explore` / `benchmark_explore` copies a `baseline_*.py` (or a `baseline_*.cu` with auto-generated wrapper), runs minimal profiling with LLM patch variants, compares utilization deltas, and triggers deep_dive when minimal results are inconclusive.
+
+**E2E status workflow:** prefer `aisp bench run-e2e-status` / `benchmark_e2e_status` for live progress. It joins top-level progress, child benchmark progress, recent events, watcher state, and process liveness. Raw `summary.json` / `checkpoint.json` can lag during long child stages; the run package now advertises this via `preferred_progress_source` and `actions`.
 
 **Python API:**
 ```python

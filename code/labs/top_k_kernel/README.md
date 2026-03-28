@@ -7,6 +7,14 @@ The public pair shape stays the same:
 - `labs/top_k_kernel:top_k_kernel` compares the exact dense grouped baseline against a Triton grouped block-score kernel.
 - `labs/top_k_kernel:top_k_kernel_cuda` compares the same baseline against a CUTLASS-backed CUDA grouped path.
 
+The default harnessed workload is the large forward-routing case used in the slide matrix:
+- `mode=forward`
+- `batch=4, heads=8, kv_heads=1`
+- `q_len=compressed_k_len=32768`
+- `head_dim=128, top_k=16, selection_block_size=64, compress_stride=1`
+
+Keep `fwd_bwd` as an explicit override when you want to study backward-path parity instead of the public routing-stage speed story.
+
 ## Problem
 Selection attention only pays off when block routing is cheaper than evaluating every compressed K position for every query head. In the real algorithm, query heads are grouped onto fewer K/V heads, then reduced head-wise to produce one block selection per K/V head and query position.
 
@@ -55,7 +63,19 @@ python -m cli.aisp bench run \
   --targets labs/top_k_kernel:top_k_kernel \
   --profile none \
   --single-gpu \
+  --target-extra-arg 'labs_top_k_kernel:top_k_kernel=--mode forward --batch-size 4 --heads 8 --kv-heads 1 --q-len 32768 --compressed-k-len 32768 --head-dim 128 --top-k 16 --selection-block-size 64 --compress-stride 1'
+
+python -m cli.aisp bench run \
+  --targets labs/top_k_kernel:top_k_kernel \
+  --profile none \
+  --single-gpu \
   --target-extra-arg 'labs_top_k_kernel:top_k_kernel=--mode fwd_bwd --batch-size 4 --heads 16 --kv-heads 1 --q-len 1024 --compressed-k-len 1024 --head-dim 128 --top-k 16 --selection-block-size 64 --compress-stride 1'
+
+python -m cli.aisp bench run \
+  --targets labs/top_k_kernel:top_k_kernel_cuda \
+  --profile none \
+  --single-gpu \
+  --target-extra-arg 'labs_top_k_kernel:top_k_kernel_cuda=--mode forward --batch-size 4 --heads 8 --kv-heads 1 --q-len 32768 --compressed-k-len 32768 --head-dim 128 --top-k 16 --selection-block-size 64 --compress-stride 1'
 
 python -m cli.aisp bench run \
   --targets labs/top_k_kernel:top_k_kernel_cuda \

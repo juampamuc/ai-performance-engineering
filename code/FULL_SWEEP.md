@@ -15,7 +15,18 @@ python -m cli.aisp bench run-e2e \
   --validity-profile portable
 ```
 
-- Monitor the run continuously.
+- Monitor the run continuously with the repo-native status surface:
+
+```bash
+python -m cli.aisp bench run-e2e-status --run-id <RUN_ID> --watch
+```
+
+- `run-e2e` auto-arms a detached watcher by default. Re-arm it manually if needed:
+
+```bash
+python -m cli.aisp bench watch-e2e --run-id <RUN_ID>
+```
+- The dashboard now exposes the same normalized source under `/e2e?run_id=<RUN_ID>` instead of reading raw package JSON directly.
 - For each failure or suspicious weak result:
   - root-cause it
   - fix it in the most local correct place
@@ -38,6 +49,8 @@ python -m cli.aisp bench run-e2e \
 - Dogfood every changed runtime path with a real repo invocation.
 - Record exact commands, run ids, and artifact paths while working.
 - If the e2e run aborts, fix durability or resume behavior before restarting broad reruns.
+- Prefer `run-e2e-status` over manual JSON/log joins. It normalizes live child progress, stale-orchestrator detection, watcher state, recent events, ledgers, and the exact resume command.
+- `run-e2e` defaults `--full-sweep-suite-timeout 0` so long full-sweep buckets are not killed by the 4-hour aggregate suite watchdog. Per-benchmark and profiler timeouts still apply.
 - If a benchmark is unsupported on the current host, emit an explicit `SKIPPED:` result instead of degrading silently.
 - If a speed-goal benchmark lands below `1.05x`, ensure status semantics are correct and visible in structured outputs.
 - For every touched chapter or lab, check the corresponding `book-after/chXX*` material and fix any meaningful mismatch.
@@ -72,6 +85,12 @@ python -m cli.aisp bench run-e2e \
   --validity-profile portable
 ```
 
+- The run package records watcher metadata and status under:
+  - `artifacts/e2e_runs/<RUN_ID>/watcher_status.json`
+  - `artifacts/e2e_runs/<RUN_ID>/<RUN_ID>_watcher.launch.log`
+- Use `run-e2e-status` for one normalized snapshot instead of manually diffing `summary.json`, `checkpoint.json`, `progress.json`, and child run artifacts.
+- The raw run package now includes `preferred_progress_source` and `actions` fields so humans, MCP clients, and dashboard views can discover the authoritative status surface without reconstructing it manually.
+
 - If the host is virtualized, single-GPU, or lacks IB / Spectrum-X management-plane coverage, keep results truthful:
   - do not force `succeeded` when the correct result is `partial`
   - capability-gated multi-GPU work must remain explicit `skipped` / `partial`
@@ -80,7 +99,7 @@ python -m cli.aisp bench run-e2e \
 - Never disable `nsys` or `ncu`.
 
 ## While The Sweep Is Running
-- Monitor the run continuously.
+- Monitor the run continuously with `run-e2e-status`.
 - For any failed benchmark, failed profiler, broken resume behavior, missing artifact, bad classification, or suspiciously weak result:
   - root-cause it
   - fix it in the most local correct place

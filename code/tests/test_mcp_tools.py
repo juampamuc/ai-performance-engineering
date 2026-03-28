@@ -18,12 +18,14 @@ import mcp.mcp_server as mcp_server
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACT_RUNS_DIR = REPO_ROOT / "artifacts" / "runs"
 ARTIFACT_DIR = ARTIFACT_RUNS_DIR
+E2E_RUNS_DIR = REPO_ROOT / "artifacts" / "e2e_runs"
 MICROBENCH_DIR = REPO_ROOT / "artifacts" / "mcp-microbench"
 REPORT_OUTPUT = REPO_ROOT / "artifacts" / "mcp-report.pdf"
 EXPORT_OUTPUT = REPO_ROOT / "artifacts" / "mcp-export.csv"
 BENCH_FILE = REPO_ROOT / "benchmark_test_results.json"
 PROFILE_FIXTURE_DIR = ARTIFACT_RUNS_DIR / "mcp-fixtures" / "profiles" / "bench" / "ch04"
 QUEUE_DIR = REPO_ROOT / "artifacts" / "parallel_runs"
+E2E_STATUS_FIXTURE_RUN_ID = "mcp_e2e_status_smoke"
 NSYS_SAMPLE = PROFILE_FIXTURE_DIR / "baseline_nccl_baseline.nsys-summary.csv"
 NCU_SAMPLE = PROFILE_FIXTURE_DIR / "baseline_nvlink_baseline.ncu-rep"
 NSYS_REP_FIXTURE = PROFILE_FIXTURE_DIR / "baseline_fixture.nsys-rep"
@@ -71,6 +73,8 @@ CATEGORY_TOOLS: Dict[str, List[str]] = {
         "list_chapters",
         "run_benchmarks",
         "benchmark_e2e_sweep",
+        "benchmark_e2e_status",
+        "benchmark_e2e_watch",
         "benchmark_variants",
         "benchmark_explore",
         "benchmark_deep_dive_compare",
@@ -249,6 +253,15 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "run_cluster": False,
         "run_fabric": False,
         "dry_run": True,
+    },
+    "benchmark_e2e_status": {
+        "run_id": "mcp_e2e_status_smoke",
+        "recent_events": 2,
+    },
+    "benchmark_e2e_watch": {
+        "run_id": "mcp_e2e_status_smoke",
+        "poll_interval_seconds": 5,
+        "max_auto_resumes": 0,
     },
     "benchmark_variants": {
         "targets": ["ch10:atomic_reduction"],
@@ -482,9 +495,71 @@ def prepare_artifacts() -> None:
     }
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    E2E_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     MICROBENCH_DIR.mkdir(parents=True, exist_ok=True)
     PROFILE_FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+    e2e_run_dir = E2E_RUNS_DIR / E2E_STATUS_FIXTURE_RUN_ID
+    e2e_run_dir.mkdir(parents=True, exist_ok=True)
+    (e2e_run_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "run_id": E2E_STATUS_FIXTURE_RUN_ID,
+                "run_state": "completed",
+                "overall_status": "succeeded",
+                "updated_at": "2026-03-27T00:00:00Z",
+                "resume_available": False,
+                "stages": [],
+                "contract": {
+                    "run_tier1": False,
+                    "run_full_sweep": False,
+                    "run_cluster": False,
+                    "run_fabric": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (e2e_run_dir / "checkpoint.json").write_text(
+        json.dumps(
+            {
+                "run_id": E2E_STATUS_FIXTURE_RUN_ID,
+                "run_state": "completed",
+                "overall_status": "succeeded",
+                "updated_at": "2026-03-27T00:00:00Z",
+                "resume_available": False,
+                "stages": [],
+                "contract": {
+                    "run_tier1": False,
+                    "run_full_sweep": False,
+                    "run_cluster": False,
+                    "run_fabric": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (e2e_run_dir / "progress.json").write_text(
+        json.dumps(
+            {
+                "run_id": E2E_STATUS_FIXTURE_RUN_ID,
+                "current": {
+                    "timestamp": "2026-03-27T00:00:00+00:00",
+                    "metrics": {
+                        "run_state": "completed",
+                        "overall_status": "succeeded",
+                        "stages": [],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (e2e_run_dir / "events.jsonl").write_text(
+        json.dumps({"ts": "2026-03-27T00:00:00Z", "event": "run_finished", "run_id": E2E_STATUS_FIXTURE_RUN_ID})
+        + "\n",
+        encoding="utf-8",
+    )
     nsys_csv = PROFILE_FIXTURE_DIR / "baseline_nccl_baseline.nsys-summary.csv"
     if not nsys_csv.exists():
         nsys_csv.write_text(

@@ -126,6 +126,10 @@ class OptimizedMemoryProfilingBenchmark(VerificationPayloadMixin, BaseBenchmark)
             "memory.compute_dtype_fp32": 1.0,
         }
 
+    def get_optimization_goal(self) -> str:
+        """Gradient checkpointing is measured here as a memory optimization."""
+        return "memory"
+
     def validate_result(self) -> Optional[str]:
         if self.model is None:
             return "Model not initialized"

@@ -18,10 +18,11 @@ export const DASHBOARD_TABS: DashboardTab[] = [
   { id: 'memory', label: 'Memory', href: '/memory', shortcut: '4' },
   { id: 'multi-gpu', label: 'Multi-GPU', href: '/multi-gpu', shortcut: '5' },
   { id: 'history', label: 'History', href: '/history', shortcut: '6' },
-  { id: 'tier1', label: 'Tier-1', href: '/tier1', shortcut: '7' },
-  { id: 'system', label: 'System', href: '/system', shortcut: '8' },
-  { id: 'cluster', label: 'Cluster', href: '/cluster', shortcut: '9' },
-  { id: 'contracts', label: 'Contracts', href: '/contracts', shortcut: '0' },
+  { id: 'e2e', label: 'E2E', href: '/e2e', shortcut: '7' },
+  { id: 'tier1', label: 'Tier-1', href: '/tier1', shortcut: '8' },
+  { id: 'system', label: 'System', href: '/system', shortcut: '9' },
+  { id: 'cluster', label: 'Cluster', href: '/cluster', shortcut: '0' },
+  { id: 'contracts', label: 'Contracts', href: '/contracts', shortcut: 'C' },
 ];
 
 export function Navigation() {

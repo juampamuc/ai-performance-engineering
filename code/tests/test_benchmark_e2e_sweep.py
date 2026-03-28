@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import getpass
 import json
+import signal
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -347,6 +348,71 @@ def test_run_benchmark_e2e_sweep_mirrors_cluster_stage_progress(tmp_path: Path, 
     assert payload["current"]["metrics"]["current_stage_run_id"] == "e2e_cluster_progress__cluster"
 
 
+def test_run_benchmark_e2e_sweep_heartbeats_summary_during_stage_progress(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    cluster_run_dir = tmp_path / "cluster" / "runs" / "e2e_cluster_heartbeat__cluster"
+    manifest_path = cluster_run_dir / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_STAGE_PROGRESS_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(e2e_sweep, "_STATE_HEARTBEAT_SECONDS", 0.01)
+
+    def _fake_cluster_eval(**kwargs):
+        child_progress_path = cluster_run_dir / "progress" / "run_progress.json"
+        recorder = e2e_sweep.ProgressRecorder(run_id=kwargs["run_id"], progress_path=child_progress_path)
+        recorder.emit(
+            e2e_sweep.ProgressEvent(
+                phase="cluster_eval_suite",
+                phase_index=2,
+                total_phases=10,
+                step="vllm_serve_sweep",
+                step_detail="completed 2/10 suite steps",
+                percent_complete=20.0,
+            )
+        )
+        run_dir = e2e_sweep.e2e_run_dir("e2e_cluster_heartbeat", tmp_path)
+        summary_path = run_dir / "summary.json"
+        before = summary_path.stat().st_mtime_ns
+        time.sleep(0.05)
+        after = summary_path.stat().st_mtime_ns
+        observed["before"] = before
+        observed["after"] = after
+        return {
+            "success": True,
+            "run_id": kwargs["run_id"],
+            "run_dir": str(cluster_run_dir),
+            "manifest_path": str(manifest_path),
+            "returncode": 0,
+            "command": ["fake-cluster"],
+        }
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_run_cluster_common_eval", _fake_cluster_eval)
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_cluster_heartbeat",
+        run_tier1=False,
+        run_full_sweep=False,
+        run_cluster=True,
+        run_fabric=False,
+    )
+
+    assert result["success"] is True
+    assert observed["after"] > observed["before"]
+
+
 def test_run_benchmark_e2e_sweep_mirrors_fabric_stage_progress(tmp_path: Path, monkeypatch) -> None:
     observed: dict[str, object] = {}
     fabric_run_dir = tmp_path / "cluster" / "runs" / "e2e_fabric_progress__fabric"
@@ -568,6 +634,56 @@ def test_run_benchmark_e2e_sweep_persists_aborted_state_on_unhandled_exception(
     assert tier1_stage["attempts"][-1]["status"] == "aborted"
 
 
+def test_run_benchmark_e2e_sweep_persists_aborted_state_on_sighup(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    if not hasattr(signal, "SIGHUP"):
+        return
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
+
+    def _raise_hup(**_kwargs):
+        signal.raise_signal(signal.SIGHUP)
+        raise AssertionError("SIGHUP handler should have interrupted execution")
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_run_tier1_suite", _raise_hup)
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_sighup_abort",
+        run_full_sweep=False,
+        run_cluster=False,
+        run_fabric=False,
+    )
+
+    run_dir = e2e_sweep.e2e_run_dir("e2e_sighup_abort", tmp_path)
+    summary_payload = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    checkpoint_payload = json.loads((run_dir / "checkpoint.json").read_text(encoding="utf-8"))
+
+    assert result["run_state"] == "aborted"
+    assert result["overall_status"] == "aborted"
+    assert result["resume_available"] is True
+    assert "received SIGHUP" in result["error"]
+    assert result["crash"]["signal"] == "SIGHUP"
+    assert summary_payload["run_state"] == "aborted"
+    assert checkpoint_payload["run_state"] == "aborted"
+    tier1_stage = next(stage for stage in summary_payload["stages"] if stage["name"] == "tier1")
+    assert tier1_stage["status"] == "aborted"
+    assert tier1_stage["attempts"][-1]["status"] == "aborted"
+
+
 def test_run_benchmark_e2e_sweep_resume_requires_explicit_run_id() -> None:
     result = e2e_sweep.run_benchmark_e2e_sweep(
         resume=True,
@@ -645,6 +761,76 @@ def test_run_benchmark_e2e_sweep_resume_rejects_contract_mismatch(tmp_path: Path
     assert result["resume_available"] is True
     assert "Resume contract mismatch" in result["error"]
     assert "profile_type" in result["error"]
+
+
+def test_run_benchmark_e2e_sweep_resume_allows_extending_suite_timeout(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+
+    run_dir = e2e_sweep.e2e_run_dir("e2e_resume_suite_timeout", tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoint.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-03-25T00:00:00Z",
+                "run_state": "aborted",
+                "overall_status": "aborted",
+                "success": False,
+                "resume_available": True,
+                "contract": {
+                    "profile_type": "minimal",
+                    "run_tier1": False,
+                    "run_full_sweep": False,
+                    "run_cluster": False,
+                    "run_fabric": False,
+                    "cluster_preset": "common-answer-fast",
+                    "hosts": ["localhost"],
+                    "labels": ["localhost"],
+                    "ssh_user": getpass.getuser(),
+                    "ssh_key": None,
+                    "bench_root": str(tmp_path),
+                    "validity_profile": "strict",
+                    "single_gpu": False,
+                    "suite_timeout": 14400,
+                },
+                "stages": [
+                    {"name": "tier1", "enabled": False, "status": "planned", "attempts": []},
+                    {"name": "full_sweep", "enabled": False, "status": "planned", "attempts": []},
+                    {"name": "cluster", "enabled": False, "status": "planned", "attempts": []},
+                    {"name": "fabric", "enabled": False, "status": "planned", "attempts": []},
+                ],
+                "frozen_plan": {"full_sweep": {"single_gpu_targets": [], "multi_gpu_targets": []}},
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_resume_suite_timeout",
+        resume=True,
+        run_tier1=False,
+        run_full_sweep=False,
+        run_cluster=False,
+        run_fabric=False,
+        profile_type="minimal",
+        suite_timeout=0,
+    )
+
+    assert result["success"] is True
+    assert result["run_state"] == "completed"
+    assert result["overall_status"] == "succeeded"
+    assert result["contract"]["suite_timeout"] == 0
 
 
 def test_run_benchmark_e2e_sweep_resume_marks_superseded_running_attempt_aborted(
@@ -1410,6 +1596,9 @@ def test_benchmark_e2e_sweep_handler_returns_async_ticket(monkeypatch) -> None:
     assert ticket["run_id"] == "handler_async_e2e"
     assert ticket["run_dir"].endswith("artifacts/e2e_runs/handler_async_e2e")
     assert ticket["progress_path"].endswith("artifacts/e2e_runs/handler_async_e2e/progress.json")
+    assert ticket["actions"]["preferred_mcp_tool"] == "benchmark_e2e_status"
+    assert ticket["preferred_progress_source"]["kind"] == "normalized_e2e_status"
+    assert ticket["actions"]["status_api_path"].endswith("/api/benchmark/e2e-status?run_id=handler_async_e2e")
 
     record = handlers.JobStore.get().get_status(ticket["job_id"])
     if record is not None:
@@ -1452,3 +1641,692 @@ def test_benchmark_e2e_sweep_handler_passes_resume_flag(monkeypatch) -> None:
     assert payload["success"] is True
     assert payload["resume"] is True
     assert captured["resume"] is True
+
+
+def test_run_benchmark_e2e_sweep_uses_full_sweep_suite_timeout_for_bucket_runs(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    output_json = tmp_path / "artifacts" / "runs" / "e2e_fs_timeout__full_sweep__single" / "results" / "benchmark_test_results.json"
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps({"results": []}), encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {
+            "counts": {"total": 1, "single_gpu": 1, "multi_gpu": 0},
+            "single_gpu": ["ch10:atomic_reduction"],
+            "multi_gpu": [],
+            "targets": [],
+        },
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(e2e_sweep, "_visible_gpu_count", lambda **kwargs: 1)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "watch_benchmark_e2e_sweep_run",
+        lambda **kwargs: {"success": True, "watcher_pid": 777, "watch_status_path": str(tmp_path / "watcher.json")},
+    )
+
+    def _fake_execute(**kwargs):
+        captured.update(kwargs)
+        return {
+            "run_id": kwargs["run_id"],
+            "output_json": str(output_json),
+            "total_failed": 0,
+            "total_skipped": 0,
+        }
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_execute_benchmarks", _fake_execute)
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_fs_timeout",
+        run_tier1=False,
+        run_full_sweep=True,
+        run_cluster=False,
+        run_fabric=False,
+        suite_timeout=14400,
+        full_sweep_suite_timeout=0,
+        artifacts_dir=str(tmp_path / "artifacts"),
+    )
+
+    assert result["success"] is True
+    assert captured["suite_timeout"] == 0
+    full_stage = next(stage for stage in result["stages"] if stage["name"] == "full_sweep")
+    assert "--suite-timeout" in full_stage["attempts"][0]["command"]
+    assert "0" in full_stage["attempts"][0]["command"]
+
+
+def test_inspect_benchmark_e2e_sweep_run_detects_live_progress_and_child_events(tmp_path: Path, monkeypatch) -> None:
+    run_id = "e2e_live_status"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    child_paths = e2e_sweep._benchmark_run_event_paths(
+        f"{run_id}__full_sweep__single",
+        repo_root=tmp_path,
+        artifacts_dir=str(artifacts_dir),
+    )
+    child_paths["events"].parent.mkdir(parents=True, exist_ok=True)
+    child_paths["events"].write_text(
+        json.dumps({"event_type": "example_end", "chapter": "ch10", "example": "cluster_multicast", "status": "succeeded"})
+        + "\n",
+        encoding="utf-8",
+    )
+    child_paths["output_json"].parent.mkdir(parents=True, exist_ok=True)
+    child_paths["output_json"].write_text(json.dumps({"results": []}), encoding="utf-8")
+    watcher_status_path = e2e_sweep.e2e_watcher_status_path(run_dir)
+    watcher_status_path.write_text(json.dumps({"watcher_pid": 456, "watch_state": "watching", "auto_resume_count": 0}), encoding="utf-8")
+
+    stage_payload = [
+        {
+            "name": "full_sweep",
+            "enabled": True,
+            "run_id": f"{run_id}__full_sweep",
+            "status": "running",
+            "attempts": [
+                {
+                    "run_id": f"{run_id}__full_sweep__single",
+                    "bucket": "single_gpu",
+                    "status": "running",
+                    "active_unit": "ch10",
+                    "completed_units": ["ch06"],
+                }
+            ],
+        }
+    ]
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "running",
+        "overall_status": "running",
+        "updated_at": "2026-03-27T16:00:00Z",
+        "resume_available": True,
+        "stages": stage_payload,
+        "contract": {"run_full_sweep": True, "full_sweep_suite_timeout": 0},
+    }
+    checkpoint_payload = dict(summary_payload)
+    checkpoint_payload["orchestrator_pid"] = 123
+    progress_payload = {
+        "run_id": run_id,
+        "current": {
+            "timestamp": "2026-03-27T16:10:00+00:00",
+            "step": "full_sweep/single_gpu:ch10:cluster_multicast",
+            "step_detail": "ncu profiling (optimized)",
+            "percent_complete": 42.0,
+            "elapsed_seconds": 100.0,
+            "eta_seconds": 200.0,
+            "metrics": {
+                "run_state": "running",
+                "overall_status": "running",
+                "current_stage": "full_sweep",
+                "current_stage_run_id": f"{run_id}__full_sweep__single",
+                "current_bucket": "single_gpu",
+                "orchestrator_pid": 123,
+                "stages": stage_payload,
+            },
+        },
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(checkpoint_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(json.dumps(progress_payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text(json.dumps({"ts": "2026-03-27T16:10:00Z", "event": "stage_started", "stage": "full_sweep"}) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: int(pid or 0) in {123, 456})
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(
+        run_id=run_id,
+        repo_root=tmp_path,
+        artifacts_dir=str(artifacts_dir),
+        recent_events_limit=5,
+    )
+
+    assert status["success"] is True
+    assert status["inferred_state"] == "running_live"
+    assert status["progress_source"]["kind"] == "live_child_progress"
+    assert status["progress_source"]["preferred_mcp_tool"] == "benchmark_e2e_status"
+    assert status["current"]["child_artifacts"]["events_path"].endswith("benchmark_events.jsonl")
+    assert status["current"]["recent_child_events"][0]["event_type"] == "example_end"
+    assert status["watcher"]["watcher_pid"] == 456
+    assert status["actions"]["status_api_path"].endswith(f"/api/benchmark/e2e-status?run_id={run_id}")
+    assert status["actions"]["dashboard_path"].endswith(f"/e2e?run_id={run_id}")
+
+
+def test_inspect_benchmark_e2e_sweep_run_syncs_active_issue_ledger_from_live_failures(tmp_path: Path, monkeypatch) -> None:
+    run_id = "e2e_live_issue_sync"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    child_run_id = f"{run_id}__full_sweep__single"
+    child_paths = e2e_sweep._benchmark_run_event_paths(
+        child_run_id,
+        repo_root=tmp_path,
+        artifacts_dir=str(artifacts_dir),
+    )
+    child_paths["events"].parent.mkdir(parents=True, exist_ok=True)
+    child_paths["events"].write_text(
+        json.dumps(
+            {
+                "event_type": "example_end",
+                "timestamp": "2026-03-27T16:20:34.180782",
+                "run_id": child_run_id,
+                "chapter": "ch13",
+                "example": "memory_profiling",
+                "status": "failed_no_speedup",
+                "best_speedup": 1.0,
+                "best_memory_savings_pct": 10.1673,
+                "optimization_goal": "speed",
+                "error": "Best speedup 1.00x below required 1.05x threshold for speed-goal benchmark",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    child_paths["output_json"].parent.mkdir(parents=True, exist_ok=True)
+    child_paths["output_json"].write_text(json.dumps({"results": []}), encoding="utf-8")
+
+    existing_ledger = {
+        "summary": {"run_id": run_id, "issue_count": 1, "resolved_count": 1, "unresolved_count": 0},
+        "rows": [
+            {
+                "issue_id": "tier1_goalaware_regression_summary",
+                "stage": "tier1",
+                "status": "resolved",
+                "symptom": "Existing manual issue",
+                "root_cause": "Fixed already.",
+                "fixes": [],
+                "verification": {"pytest": "pytest -q tests/test_tier1_suite.py"},
+                "evidence_paths": {},
+            }
+        ],
+    }
+    (run_dir / "active_issue_ledger.json").write_text(json.dumps(existing_ledger), encoding="utf-8")
+    (run_dir / "active_issue_ledger.md").write_text("# Active Issue Ledger\n", encoding="utf-8")
+
+    stage_payload = [
+        {
+            "name": "full_sweep",
+            "enabled": True,
+            "run_id": f"{run_id}__full_sweep",
+            "status": "running",
+            "attempts": [
+                {
+                    "run_id": child_run_id,
+                    "bucket": "single_gpu",
+                    "status": "running",
+                    "active_unit": "ch13",
+                    "completed_units": ["ch06"],
+                }
+            ],
+        }
+    ]
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "running",
+        "overall_status": "running",
+        "updated_at": "2026-03-27T16:00:00Z",
+        "resume_available": True,
+        "stages": stage_payload,
+        "contract": {"run_full_sweep": True, "full_sweep_suite_timeout": 0},
+    }
+    checkpoint_payload = dict(summary_payload)
+    checkpoint_payload["orchestrator_pid"] = 123
+    progress_payload = {
+        "run_id": run_id,
+        "current": {
+            "timestamp": "2026-03-27T16:21:00+00:00",
+            "step": "full_sweep/single_gpu:ch13:memory_profiling",
+            "step_detail": "timing (optimized)",
+            "percent_complete": 48.0,
+            "metrics": {
+                "run_state": "running",
+                "overall_status": "running",
+                "current_stage": "full_sweep",
+                "current_stage_run_id": child_run_id,
+                "current_bucket": "single_gpu",
+                "orchestrator_pid": 123,
+                "stages": stage_payload,
+            },
+        },
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(checkpoint_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(json.dumps(progress_payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: int(pid or 0) == 123)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(
+        run_id=run_id,
+        repo_root=tmp_path,
+        artifacts_dir=str(artifacts_dir),
+        recent_events_limit=5,
+    )
+
+    assert status["current"]["reported_failures"][0]["target"] == "ch13:memory_profiling"
+    assert any(entry["target"] == "ch13:memory_profiling" for entry in status["aggregate_failures"])
+    assert status["ledgers"]["active_issue_ledger_json"].endswith("active_issue_ledger.json")
+
+    synced_ledger = json.loads((run_dir / "active_issue_ledger.json").read_text(encoding="utf-8"))
+    assert synced_ledger["schema_version"] == "1.0"
+    assert synced_ledger["preferred_collection_key"] == "rows"
+    assert synced_ledger["collection_aliases"] == {"issues": "rows"}
+    assert synced_ledger["summary"] == {
+        "run_id": run_id,
+        "issue_count": 2,
+        "resolved_count": 1,
+        "unresolved_count": 1,
+    }
+    issue_ids = [row["issue_id"] for row in synced_ledger["rows"]]
+    assert "tier1_goalaware_regression_summary" in issue_ids
+    assert "reported_full_sweep_single_gpu_ch13_memory_profiling" in issue_ids
+    markdown = (run_dir / "active_issue_ledger.md").read_text(encoding="utf-8")
+    assert "ch13:memory_profiling" in markdown
+
+
+def test_inspect_benchmark_e2e_sweep_run_detects_stale_running_and_builds_resume_command(tmp_path: Path, monkeypatch) -> None:
+    run_id = "e2e_stale_status"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    contract = {
+        "run_tier1": True,
+        "run_full_sweep": True,
+        "run_cluster": False,
+        "run_fabric": False,
+        "validity_profile": "portable",
+        "suite_timeout": 14400,
+        "full_sweep_suite_timeout": 0,
+        "auto_resume": True,
+        "max_auto_resumes": 3,
+        "watch_poll_interval_seconds": 15,
+    }
+    payload = {
+        "run_id": run_id,
+        "run_state": "running",
+        "overall_status": "running",
+        "updated_at": "2026-03-27T16:00:00Z",
+        "resume_available": True,
+        "contract": contract,
+        "stages": [],
+        "orchestrator_pid": 999,
+    }
+    (run_dir / "summary.json").write_text(json.dumps(payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "current": {
+                    "timestamp": "2026-03-27T16:10:00+00:00",
+                    "metrics": {
+                        "run_state": "running",
+                        "overall_status": "running",
+                        "orchestrator_pid": 999,
+                        "stages": [],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=tmp_path)
+
+    assert status["inferred_state"] == "running_stale"
+    assert "--resume" in status["actions"]["resume_command"]
+    assert "--full-sweep-suite-timeout" in status["actions"]["resume_command"]
+    assert status["resume_available"] is True
+
+
+def test_inspect_benchmark_e2e_sweep_run_preserves_terminal_full_sweep_failures_from_all_attempts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_id = "e2e_completed_full_sweep_failures"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "completed",
+        "overall_status": "failed",
+        "updated_at": "2026-03-28T04:55:27Z",
+        "resume_available": False,
+        "contract": {"run_full_sweep": True, "full_sweep_suite_timeout": 0},
+        "stages": [
+            {
+                "name": "full_sweep",
+                "enabled": True,
+                "run_id": f"{run_id}__full_sweep",
+                "status": "failed",
+                "attempts": [
+                    {
+                        "run_id": f"{run_id}__full_sweep__single",
+                        "bucket": "single_gpu",
+                        "status": "aborted",
+                        "artifacts": {
+                            "events_path": str(tmp_path / "events_single.jsonl"),
+                            "output_json": str(tmp_path / "single_results.json"),
+                            "progress_path": str(tmp_path / "single_progress.json"),
+                            "run_dir": str(tmp_path / "single_run"),
+                        },
+                        "benchmark_summary": {
+                            "failed_benchmarks": [
+                                {
+                                    "target": "ch06:launch_bounds",
+                                    "status": "failed_no_speedup",
+                                    "error": "Best speedup 1.01x below required 1.05x threshold",
+                                }
+                            ],
+                            "skipped_benchmarks": [],
+                        },
+                    },
+                    {
+                        "run_id": f"{run_id}__full_sweep__single__resume1",
+                        "bucket": "single_gpu",
+                        "status": "failed",
+                        "artifacts": {
+                            "events_path": str(tmp_path / "events_resume.jsonl"),
+                            "output_json": str(tmp_path / "resume_results.json"),
+                            "progress_path": str(tmp_path / "resume_progress.json"),
+                            "run_dir": str(tmp_path / "resume_run"),
+                        },
+                        "benchmark_summary": {
+                            "failed_benchmarks": [
+                                {
+                                    "target": "ch13:regional_compile",
+                                    "status": "failed_no_speedup",
+                                    "error": "Best speedup 1.05x below required 1.05x threshold",
+                                }
+                            ],
+                            "skipped_benchmarks": [],
+                        },
+                    },
+                    {
+                        "run_id": f"{run_id}__full_sweep__multi",
+                        "bucket": "multi_gpu",
+                        "status": "skipped",
+                    },
+                ],
+            }
+        ],
+    }
+    checkpoint_payload = dict(summary_payload)
+    checkpoint_payload["orchestrator_pid"] = 1204046
+    progress_payload = {
+        "run_id": run_id,
+        "current": {
+            "timestamp": "2026-03-28T04:55:27+00:00",
+            "metrics": {
+                "run_state": "completed",
+                "overall_status": "failed",
+                "orchestrator_pid": 1204046,
+                "stages": [
+                    {
+                        "name": "full_sweep",
+                        "enabled": True,
+                        "run_id": f"{run_id}__full_sweep",
+                        "status": "failed",
+                        "attempts": [
+                            {
+                                "run_id": f"{run_id}__full_sweep__multi",
+                                "bucket": "multi_gpu",
+                                "status": "skipped",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(checkpoint_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(json.dumps(progress_payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    existing_ledger = {
+        "summary": {"run_id": run_id, "issue_count": 1, "resolved_count": 1, "unresolved_count": 0},
+        "rows": [
+            {
+                "issue_id": "tier1_goalaware_regression_summary",
+                "stage": "tier1",
+                "status": "resolved",
+                "symptom": "Existing manual issue",
+                "root_cause": "Fixed already.",
+                "fixes": [],
+                "verification": {"pytest": "pytest -q tests/test_tier1_suite.py"},
+                "evidence_paths": {},
+            }
+        ],
+    }
+    (run_dir / "active_issue_ledger.json").write_text(json.dumps(existing_ledger), encoding="utf-8")
+    (run_dir / "active_issue_ledger.md").write_text("# Active Issue Ledger\n", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=tmp_path)
+
+    aggregate_targets = {entry["target"] for entry in status["aggregate_failures"]}
+    assert "ch06:launch_bounds" in aggregate_targets
+    assert "ch13:regional_compile" in aggregate_targets
+    surfaced_targets = {entry["target"] for entry in status["current"]["reported_failures"]}
+    assert surfaced_targets == aggregate_targets
+
+    synced_ledger = json.loads((run_dir / "active_issue_ledger.json").read_text(encoding="utf-8"))
+    assert synced_ledger["schema_version"] == "1.0"
+    assert synced_ledger["preferred_collection_key"] == "rows"
+    assert synced_ledger["collection_aliases"] == {"issues": "rows"}
+    issue_ids = {row["issue_id"] for row in synced_ledger["rows"]}
+    assert "reported_full_sweep_single_gpu_ch06_launch_bounds" in issue_ids
+    assert "reported_full_sweep_single_gpu_ch13_regional_compile" in issue_ids
+    assert synced_ledger["summary"]["issue_count"] == 3
+    assert status["ledgers"]["summary"]["issue_count"] == 3
+    assert status["ledgers"]["summary"]["resolved_count"] == 1
+    assert status["ledgers"]["summary"]["unresolved_count"] == 2
+
+    rendered = e2e_sweep.render_benchmark_e2e_status_text(status)
+    assert "reported_failures=2" in rendered
+    assert "active_issue_counts=issues=3 resolved=1 unresolved=2" in rendered
+    assert "ch06:launch_bounds[failed_no_speedup]" in rendered
+    assert "ch13:regional_compile[failed_no_speedup]" in rendered
+
+
+def test_inspect_benchmark_e2e_sweep_run_preserves_resolved_reported_issue_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_id = "e2e_completed_preserve_resolved_reported"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_attempts = [
+        {
+            "run_id": f"{run_id}__full_sweep__single",
+            "bucket": "single_gpu",
+            "status": "failed",
+            "artifacts": {
+                "events_path": str(tmp_path / "events_single.jsonl"),
+                "output_json": str(tmp_path / "single_results.json"),
+            },
+            "benchmark_summary": {
+                "failed_benchmarks": [
+                    {
+                        "target": "ch13:regional_compile",
+                        "status": "failed_no_speedup",
+                        "error": "Best speedup 1.05x below required 1.05x threshold",
+                    }
+                ],
+                "skipped_benchmarks": [],
+            },
+        },
+        {
+            "run_id": f"{run_id}__full_sweep__multi",
+            "bucket": "multi_gpu",
+            "status": "skipped",
+        },
+    ]
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "completed",
+        "overall_status": "failed",
+        "updated_at": "2026-03-28T05:30:00Z",
+        "resume_available": False,
+        "stages": [
+            {
+                "name": "full_sweep",
+                "enabled": True,
+                "run_id": f"{run_id}__full_sweep",
+                "status": "failed",
+                "attempts": stage_attempts,
+            }
+        ],
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "current": {
+                    "timestamp": "2026-03-28T05:30:00+00:00",
+                    "metrics": {
+                        "run_state": "completed",
+                        "overall_status": "failed",
+                        "stages": [
+                            {
+                                "name": "full_sweep",
+                                "enabled": True,
+                                "run_id": f"{run_id}__full_sweep",
+                                "status": "failed",
+                                "attempts": [{"run_id": f"{run_id}__full_sweep__multi", "bucket": "multi_gpu", "status": "skipped"}],
+                            }
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "active_issue_ledger.json").write_text(
+        json.dumps(
+            {
+                "summary": {"run_id": run_id, "issue_count": 1, "resolved_count": 1, "unresolved_count": 0},
+                "rows": [
+                    {
+                        "issue_id": "reported_full_sweep_single_gpu_ch13_regional_compile",
+                        "stage": "full_sweep/single_gpu",
+                        "status": "resolved",
+                        "symptom": "regional_compile rerun passed at 1.08x",
+                        "root_cause": "Initial full sweep result was a noisy borderline measurement.",
+                        "fixes": ["Re-ran ch13:regional_compile on an uncontended GPU and confirmed 1.08x."],
+                        "verification": {"command": "python -m cli.aisp bench run --targets ch13:regional_compile --profile minimal --validity-profile portable --single-gpu"},
+                        "evidence_paths": {"rerun_output_json": str(tmp_path / "rerun.json")},
+                        "resolved_at": "2026-03-28T06:10:00Z",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "active_issue_ledger.md").write_text("# Active Issue Ledger\n", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=tmp_path)
+
+    assert {entry["target"] for entry in status["aggregate_failures"]} == {"ch13:regional_compile"}
+    synced_ledger = json.loads((run_dir / "active_issue_ledger.json").read_text(encoding="utf-8"))
+    assert synced_ledger["schema_version"] == "1.0"
+    assert synced_ledger["preferred_collection_key"] == "rows"
+    assert synced_ledger["collection_aliases"] == {"issues": "rows"}
+    row = next(item for item in synced_ledger["rows"] if item["issue_id"] == "reported_full_sweep_single_gpu_ch13_regional_compile")
+    assert row["status"] == "resolved"
+    assert row["root_cause"] == "Initial full sweep result was a noisy borderline measurement."
+    assert row["verification"]["command"].endswith("--single-gpu")
+    assert row["evidence_paths"]["rerun_output_json"].endswith("rerun.json")
+    assert status["ledgers"]["summary"]["resolved_count"] == 1
+    assert status["ledgers"]["summary"]["unresolved_count"] == 0
+
+
+def test_watch_benchmark_e2e_sweep_run_launches_detached_watcher(monkeypatch, tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    run_id = "e2e_watch_launch"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, repo_root)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: repo_root)
+
+    captured: dict[str, object] = {}
+
+    class DummyProc:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def _fake_popen(cmd, cwd=None, stdout=None, stderr=None, start_new_session=None):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["stdout_name"] = getattr(stdout, "name", None)
+        captured["stderr"] = stderr
+        captured["start_new_session"] = start_new_session
+        return DummyProc(54321)
+
+    monkeypatch.setattr(e2e_sweep.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    result = e2e_sweep.watch_benchmark_e2e_sweep_run(run_id=run_id, repo_root=repo_root, poll_interval_seconds=5, max_auto_resumes=2)
+
+    assert result["success"] is True
+    assert result["watcher_pid"] == 54321
+    assert "--run-id" in captured["cmd"]
+    assert "--poll-interval-seconds" in captured["cmd"]
+    assert "--max-auto-resumes" in captured["cmd"]
+    assert captured["cwd"] == str(repo_root)
+    assert captured["start_new_session"] is True
+    assert captured["stdout_name"].endswith(f"{run_id}_watcher.launch.log")
+
+
+def test_benchmark_e2e_status_handler_and_tool(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.benchmark.e2e_sweep.inspect_benchmark_e2e_sweep_run",
+        lambda **kwargs: {"success": True, "run_id": kwargs["run_id"], "inferred_state": "running_live"},
+    )
+
+    payload = handlers.benchmark_e2e_status({"run_id": "handler_status"})
+    assert payload["run_id"] == "handler_status"
+    assert payload["inferred_state"] == "running_live"
+
+    monkeypatch.setattr(
+        "core.api.handlers.benchmark_e2e_status",
+        lambda params: {"success": True, "run_id": params.get("run_id"), "source": "tool"},
+    )
+    tool_payload = mcp_server.tool_benchmark_e2e_status({"run_id": "tool_status"})
+    assert tool_payload["source"] == "tool"
+
+
+def test_benchmark_e2e_watch_handler_and_tool(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.benchmark.e2e_sweep.watch_benchmark_e2e_sweep_run",
+        lambda **kwargs: {"success": True, "run_id": kwargs["run_id"], "watcher_pid": 123},
+    )
+    monkeypatch.setattr(
+        "core.benchmark.e2e_sweep.resolve_latest_e2e_run_id",
+        lambda **kwargs: "latest_watch",
+    )
+
+    payload = handlers.benchmark_e2e_watch({})
+    assert payload["run_id"] == "latest_watch"
+    assert payload["watcher_pid"] == 123
+
+    monkeypatch.setattr(
+        "core.api.handlers.benchmark_e2e_watch",
+        lambda params: {"success": True, "run_id": params.get("run_id"), "source": "tool-watch"},
+    )
+    tool_payload = mcp_server.tool_benchmark_e2e_watch({"run_id": "tool_watch"})
+    assert tool_payload["source"] == "tool-watch"

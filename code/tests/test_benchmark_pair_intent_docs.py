@@ -91,6 +91,8 @@ def test_ch14_readme_uses_renamed_compile_and_library_targets() -> None:
     assert "model_compile_reduced_precision" in readme_text
     assert "baseline_model_compile_reduced_precision.py" in readme_text
     assert "baseline_cublas_vs_cutlass.py" in readme_text
+    assert "informational control surface" in readme_text
+    assert "supplementary control pair" in readme_text
     assert "model_compile_bf16" not in readme_text
     assert "baseline_cutlass.py" not in readme_text
 
@@ -160,7 +162,10 @@ def test_ch13_readme_marks_canonical_vs_informational_variants() -> None:
     assert "token-by-token decode with naive concat cache versus paged cache allocation" in readme_text
     assert "kv_cache_naive_flash_blockwise" in readme_text
     assert "torchao_quantization_compiled" in readme_text
+    assert "precisionfp8_rowwise" in readme_text
+    assert "precisionfp8_rowwise_gw_hp" in readme_text
     assert "quantization-only canonical pair" in readme_text
+    assert "memory-goal benchmark" in readme_text
 
 
 def test_ch18_flexdecoding_docs_call_out_intentional_work_reduction() -> None:
@@ -180,3 +185,18 @@ def test_fullstack_cluster_docs_call_out_uniform_default_and_topology_override()
     assert "Canonical hybrid-EP comparisons now keep the same default routing mode" in readme_text
     assert "--route-mode topology_aware" in readme_text
     assert "silent default" in readme_text
+
+
+def test_top_k_kernel_docs_and_defaults_align_to_large_forward_routing_case() -> None:
+    common_text = (REPO_ROOT / "labs" / "top_k_kernel" / "top_k_kernel_common.py").read_text(encoding="utf-8")
+    readme_text = (REPO_ROOT / "labs" / "top_k_kernel" / "README.md").read_text(encoding="utf-8")
+
+    assert 'mode: str = "forward"' in common_text
+    assert "q_len: int = 32768" in common_text
+    assert "compressed_k_len: int = 32768" in common_text
+    assert "head_dim: int = 128" in common_text
+    assert "top_k: int = 16" in common_text
+    assert "selection_block_size: int = 64" in common_text
+    assert "compress_stride: int = 1" in common_text
+    assert "The default harnessed workload is the large forward-routing case" in readme_text
+    assert "Keep `fwd_bwd` as an explicit override" in readme_text

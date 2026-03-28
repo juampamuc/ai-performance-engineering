@@ -1413,6 +1413,7 @@ if TYPER_AVAILABLE:
         ssh_key: Optional[str] = Option(None, "--ssh-key", help="SSH key path for non-local cluster runs."),
         profile_type: str = Option("minimal", "--profile", "-p", help="Profiling preset: minimal (default), none, deep_dive, or roofline.", callback=_validate_profile_type),
         suite_timeout: Optional[int] = Option(14400, "--suite-timeout", help="Benchmark suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)."),
+        full_sweep_suite_timeout: Optional[int] = Option(0, "--full-sweep-suite-timeout", help="Aggregate suite timeout applied to each full-sweep benchmark bucket. Default 0 disables the bucket-wide watchdog while preserving per-benchmark/profiler timeouts."),
         timeout_seconds: Optional[int] = Option(None, "--timeout-seconds", help="Optional cluster stage timeout in seconds."),
         artifacts_dir: Optional[str] = Option(None, "--artifacts-dir", help="Base directory for benchmark run artifacts."),
         run_id: Optional[str] = Option(None, "--run-id", help="Explicit top-level e2e sweep run id."),
@@ -1431,6 +1432,9 @@ if TYPER_AVAILABLE:
         update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware."),
         allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations)."),
         allow_portable_expectations_update: bool = Option(False, "--allow-portable-expectations-update", help=PORTABLE_EXPECTATIONS_UPDATE_HELP_TEXT),
+        auto_resume: bool = Option(True, "--auto-resume/--no-auto-resume", help="Launch a detached watcher that auto-resumes stale or aborted e2e runs using the stored contract."),
+        max_auto_resumes: int = Option(3, "--max-auto-resumes", help="Maximum detached auto-resume attempts before the watcher gives up."),
+        watch_poll_interval_seconds: int = Option(15, "--watch-poll-interval-seconds", help="Detached watcher poll interval in seconds."),
         resume: bool = Option(False, "--resume", help="Resume an aborted e2e run. Requires --run-id and preserves prior stage artifacts."),
         dry_run: bool = Option(False, "--dry-run", help="Describe planned execution without running stages."),
     ):
@@ -1450,6 +1454,7 @@ if TYPER_AVAILABLE:
             bench_root=bench_root,
             profile_type=profile_type,
             suite_timeout=suite_timeout,
+            full_sweep_suite_timeout=full_sweep_suite_timeout,
             timeout_seconds=timeout_seconds,
             validity_profile=validity_profile,
             allow_portable_expectations_update=allow_portable_expectations_update,
@@ -1462,9 +1467,67 @@ if TYPER_AVAILABLE:
             accept_regressions=accept_regressions,
             update_expectations=update_expectations,
             allow_mixed_provenance=allow_mixed_provenance,
+            auto_resume=auto_resume,
+            max_auto_resumes=max_auto_resumes,
+            watch_poll_interval_seconds=watch_poll_interval_seconds,
             run_id=run_id,
             resume=resume,
             dry_run=dry_run,
+        )
+        typer.echo(json.dumps(result, indent=2))
+        if result.get("success") is False:
+            raise typer.Exit(code=1)
+
+    @app.command("run-e2e-status")
+    def run_e2e_status(
+        run_id: Optional[str] = Option(None, "--run-id", help="Explicit e2e run id to inspect; defaults to the latest run."),
+        artifacts_dir: Optional[str] = Option(None, "--artifacts-dir", help="Base directory for benchmark run artifacts."),
+        recent_events: int = Option(10, "--recent-events", help="How many recent top-level and child events to include."),
+        watch: bool = Option(False, "--watch", help="Continuously print status snapshots until the run reaches a terminal state."),
+        poll_interval_seconds: int = Option(15, "--poll-interval-seconds", help="Polling interval in seconds when --watch is enabled."),
+        as_json: bool = Option(False, "--json", help="Emit structured JSON instead of the concise text view."),
+    ):
+        from core.benchmark.e2e_sweep import inspect_benchmark_e2e_sweep_run, render_benchmark_e2e_status_text
+
+        last_rendered: Optional[str] = None
+        while True:
+            result = inspect_benchmark_e2e_sweep_run(
+                run_id=run_id,
+                artifacts_dir=artifacts_dir,
+                recent_events_limit=recent_events,
+            )
+            rendered = json.dumps(result, indent=2) if as_json else render_benchmark_e2e_status_text(result)
+            if rendered != last_rendered:
+                typer.echo(rendered)
+                last_rendered = rendered
+                if watch:
+                    typer.echo("")
+            if not watch:
+                if result.get("success") is False:
+                    raise typer.Exit(code=1)
+                return
+            if str(result.get("inferred_state") or "") in {"completed", "aborted_terminal"}:
+                if result.get("success") is False:
+                    raise typer.Exit(code=1)
+                return
+            time.sleep(max(1, poll_interval_seconds))
+
+    @app.command("watch-e2e")
+    def watch_e2e(
+        run_id: Optional[str] = Option(None, "--run-id", help="Explicit e2e run id to supervise; defaults to the latest run."),
+        poll_interval_seconds: int = Option(15, "--poll-interval-seconds", help="Detached watcher poll interval in seconds."),
+        max_auto_resumes: int = Option(3, "--max-auto-resumes", help="Maximum detached auto-resume attempts before the watcher gives up."),
+    ):
+        from core.benchmark.e2e_sweep import resolve_latest_e2e_run_id, watch_benchmark_e2e_sweep_run
+
+        resolved_run_id = run_id or resolve_latest_e2e_run_id()
+        if not resolved_run_id:
+            typer.echo(json.dumps({"success": False, "error": "No e2e runs found to watch."}, indent=2))
+            raise typer.Exit(code=1)
+        result = watch_benchmark_e2e_sweep_run(
+            run_id=resolved_run_id,
+            poll_interval_seconds=poll_interval_seconds,
+            max_auto_resumes=max_auto_resumes,
         )
         typer.echo(json.dumps(result, indent=2))
         if result.get("success") is False:

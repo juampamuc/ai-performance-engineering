@@ -27,16 +27,16 @@ resolve_device = lambda: require_cuda_device("Top-K selection lab requires CUDA.
 
 @dataclass
 class TopKKernelWorkload:
-    batch_size: int = 2
+    batch_size: int = 4
     heads: int = 8
     kv_heads: int = 1
-    q_len: int = 256
-    compressed_k_len: int = 256
-    head_dim: int = 64
-    top_k: int = 8
-    selection_block_size: int = 32
-    compress_stride: int = 8
-    mode: str = "fwd_bwd"
+    q_len: int = 32768
+    compressed_k_len: int = 32768
+    head_dim: int = 128
+    top_k: int = 16
+    selection_block_size: int = 64
+    compress_stride: int = 1
+    mode: str = "forward"
     dtype: torch.dtype = torch.float16
 
     @property

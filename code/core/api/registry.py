@@ -244,6 +244,20 @@ _ROUTES: List[ApiRoute] = [
     ),
     ApiRoute(
         "GET",
+        "/api/benchmark/e2e-status",
+        "benchmark.e2e_status",
+        handlers.benchmark_e2e_status,
+        mcp_tool="benchmark_e2e_status",
+    ),
+    ApiRoute(
+        "POST",
+        "/api/benchmark/e2e-watch",
+        "benchmark.e2e_watch",
+        handlers.benchmark_e2e_watch,
+        mcp_tool="benchmark_e2e_watch",
+    ),
+    ApiRoute(
+        "GET",
         "/api/profile/flame",
         "profile.flame_graph",
         handlers.profile_flame,

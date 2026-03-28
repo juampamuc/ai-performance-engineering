@@ -259,6 +259,83 @@ export interface CompileAnalysis {
   graph_breaks_list?: unknown[];
 }
 
+export interface BenchmarkE2EStatusStage {
+  name: string;
+  status: string;
+  description?: string;
+  run_id?: string;
+  issues?: string[];
+  attempts?: Array<Record<string, unknown>>;
+  failed_benchmarks?: Array<Record<string, unknown>>;
+}
+
+export interface BenchmarkE2EStatusSnapshot {
+  success: boolean;
+  error?: string;
+  run_id?: string;
+  run_dir?: string;
+  run_state?: string;
+  overall_status?: string;
+  inferred_state?: string;
+  resume_available?: boolean;
+  notes?: string[];
+  progress_source?: {
+    kind?: string;
+    label?: string;
+    reason?: string;
+    progress_timestamp?: string | null;
+    progress_path?: string | null;
+    summary_progress_lag_seconds?: number | null;
+    checkpoint_progress_lag_seconds?: number | null;
+    status_command_shell?: string;
+    status_api_path?: string;
+    dashboard_path?: string;
+    preferred_mcp_tool?: string;
+  };
+  current?: {
+    stage?: string | null;
+    bucket?: string | null;
+    child_run_id?: string | null;
+    step?: string | null;
+    detail?: string | null;
+    percent_complete?: number | null;
+    elapsed_seconds?: number | null;
+    eta_seconds?: number | null;
+    child_progress?: Record<string, unknown> | null;
+    child_artifacts?: Record<string, string | null> | null;
+    recent_child_events?: Array<Record<string, unknown>>;
+  };
+  liveness?: {
+    orchestrator_pid?: number | null;
+    orchestrator_live?: boolean;
+    watcher_pid?: number | null;
+    watcher_live?: boolean;
+  };
+  watcher?: {
+    watcher_pid?: number | null;
+    watch_state?: string | null;
+    poll_interval_seconds?: number | null;
+    max_auto_resumes?: number | null;
+    auto_resume_count?: number | null;
+    last_action?: Record<string, unknown> | null;
+  } | null;
+  stages?: BenchmarkE2EStatusStage[];
+  recent_events?: Array<Record<string, unknown>>;
+  ledgers?: Record<string, string | null>;
+  actions?: {
+    status_command_shell?: string;
+    watch_command_shell?: string;
+    watcher_command_shell?: string;
+    resume_command_shell?: string;
+    status_api_path?: string;
+    watcher_api_path?: string;
+    dashboard_path?: string;
+    preferred_mcp_tool?: string;
+    watcher_mcp_tool?: string;
+  };
+  paths?: Record<string, string>;
+}
+
 export interface NcuKernelRow {
   id: number;
   kernel_name: string;

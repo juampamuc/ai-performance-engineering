@@ -15,6 +15,17 @@ def _target_map(summary: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def _normalized_optimization_goal(*targets: Dict[str, Any]) -> str:
+    for target in targets:
+        raw_goal = str(target.get("optimization_goal") or "").strip().lower()
+        if not raw_goal:
+            continue
+        if raw_goal == "performance":
+            return "speed"
+        return raw_goal
+    return "speed"
+
+
 def compare_suite_summaries(
     current: Dict[str, Any],
     baseline: Optional[Dict[str, Any]],
@@ -42,6 +53,7 @@ def compare_suite_summaries(
         previous = baseline_map.get(target_name)
         if previous is None:
             continue
+        optimization_goal = _normalized_optimization_goal(current_target, previous)
 
         current_status = str(current_target.get("status", "unknown"))
         previous_status = str(previous.get("status", "unknown"))
@@ -67,7 +79,7 @@ def compare_suite_summaries(
 
         current_speedup = float(current_target.get("best_speedup", 0.0) or 0.0)
         previous_speedup = float(previous.get("best_speedup", 0.0) or 0.0)
-        if current_speedup > 0 and previous_speedup > 0:
+        if optimization_goal != "memory" and current_speedup > 0 and previous_speedup > 0:
             delta_pct = ((current_speedup - previous_speedup) / previous_speedup) * 100.0
             current_optimized_ms = float(current_target.get("best_optimized_time_ms", 0.0) or 0.0)
             previous_optimized_ms = float(previous.get("best_optimized_time_ms", 0.0) or 0.0)
@@ -94,29 +106,30 @@ def compare_suite_summaries(
             elif delta_pct >= speedup_regression_threshold_pct and significant_optimized_time_change:
                 improvements.append(payload)
 
-        current_memory = float(current_target.get("best_memory_savings_pct", 0.0) or 0.0)
-        previous_memory = float(previous.get("best_memory_savings_pct", 0.0) or 0.0)
-        memory_delta = current_memory - previous_memory
-        if memory_delta <= -memory_regression_threshold_points:
-            regressions.append(
-                {
-                    "target": target_name,
-                    "reason": "memory_savings",
-                    "before": previous_memory,
-                    "after": current_memory,
-                    "delta_points": memory_delta,
-                }
-            )
-        elif memory_delta >= memory_regression_threshold_points:
-            improvements.append(
-                {
-                    "target": target_name,
-                    "reason": "memory_savings",
-                    "before": previous_memory,
-                    "after": current_memory,
-                    "delta_points": memory_delta,
-                }
-            )
+        if optimization_goal == "memory":
+            current_memory = float(current_target.get("best_memory_savings_pct", 0.0) or 0.0)
+            previous_memory = float(previous.get("best_memory_savings_pct", 0.0) or 0.0)
+            memory_delta = current_memory - previous_memory
+            if memory_delta <= -memory_regression_threshold_points:
+                regressions.append(
+                    {
+                        "target": target_name,
+                        "reason": "memory_savings",
+                        "before": previous_memory,
+                        "after": current_memory,
+                        "delta_points": memory_delta,
+                    }
+                )
+            elif memory_delta >= memory_regression_threshold_points:
+                improvements.append(
+                    {
+                        "target": target_name,
+                        "reason": "memory_savings",
+                        "before": previous_memory,
+                        "after": current_memory,
+                        "delta_points": memory_delta,
+                    }
+                )
 
     return {
         "baseline_run_id": baseline.get("run_id"),

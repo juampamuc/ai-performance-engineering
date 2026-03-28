@@ -24,6 +24,8 @@ def _write_result_payload(
     block_scaling_speedup: float,
     flash_speedup: float,
     kv_speedup: float = 1.58,
+    kv_memory_savings_pct: float = 49.7,
+    llama_speedup: float = 2.49,
 ) -> None:
     payload = {
         "timestamp": "2026-03-08T00:00:00Z",
@@ -89,7 +91,7 @@ def _write_result_payload(
                         "best_optimization": "kv_standard",
                         "optimization_goal": "memory",
                         "baseline_memory_mb": 32140.0,
-                        "best_memory_savings_pct": 49.7,
+                        "best_memory_savings_pct": kv_memory_savings_pct,
                         "baseline_file": "labs/kv_optimization/baseline_kv_standard.py",
                     }
                 ],
@@ -117,7 +119,7 @@ def _write_result_payload(
                         "example": "llama_3_1_8b",
                         "status": "succeeded",
                         "baseline_time_ms": 13.143,
-                        "best_speedup": 2.49,
+                        "best_speedup": llama_speedup,
                         "best_optimization": "optimized_llama_3_1_8b",
                         "optimization_goal": "performance",
                         "baseline_memory_mb": 4096.0,
@@ -245,14 +247,93 @@ def test_compare_suite_summaries_ignores_small_absolute_speedup_drift(tmp_path: 
     )
 
 
+def test_compare_suite_summaries_uses_memory_goal_for_kv_target(tmp_path: Path) -> None:
+    suite = load_tier1_suite()
+    baseline_json = tmp_path / "baseline.json"
+    current_json = tmp_path / "current.json"
+    _write_result_payload(
+        baseline_json,
+        block_scaling_speedup=1.60,
+        flash_speedup=12.0,
+        kv_speedup=1.58,
+        kv_memory_savings_pct=49.7,
+    )
+    _write_result_payload(
+        current_json,
+        block_scaling_speedup=1.60,
+        flash_speedup=12.0,
+        kv_speedup=1.10,
+        kv_memory_savings_pct=49.7,
+    )
+
+    baseline_summary = build_tier1_suite_summary(baseline_json, suite, run_id="tier1_old")
+    current_summary = build_tier1_suite_summary(current_json, suite, run_id="tier1_new")
+
+    comparison = compare_suite_summaries(current_summary, baseline_summary)
+
+    assert not any(
+        row["target"] == "labs/kv_optimization:kv_standard" and row["reason"] == "speedup"
+        for row in comparison["regressions"]
+    )
+    assert not any(
+        row["target"] == "labs/kv_optimization:kv_standard" and row["reason"] == "speedup"
+        for row in comparison["improvements"]
+    )
+
+
+def test_compare_suite_summaries_tracks_memory_regression_for_memory_goal_target(tmp_path: Path) -> None:
+    suite = load_tier1_suite()
+    baseline_json = tmp_path / "baseline.json"
+    current_json = tmp_path / "current.json"
+    _write_result_payload(
+        baseline_json,
+        block_scaling_speedup=1.60,
+        flash_speedup=12.0,
+        kv_speedup=1.58,
+        kv_memory_savings_pct=49.7,
+    )
+    _write_result_payload(
+        current_json,
+        block_scaling_speedup=1.60,
+        flash_speedup=12.0,
+        kv_speedup=1.10,
+        kv_memory_savings_pct=42.0,
+    )
+
+    baseline_summary = build_tier1_suite_summary(baseline_json, suite, run_id="tier1_old")
+    current_summary = build_tier1_suite_summary(current_json, suite, run_id="tier1_new")
+
+    comparison = compare_suite_summaries(current_summary, baseline_summary)
+
+    assert any(
+        row["target"] == "labs/kv_optimization:kv_standard" and row["reason"] == "memory_savings"
+        for row in comparison["regressions"]
+    )
+
+
 def test_confirm_speedup_regressions_suppresses_unconfirmed_noise(tmp_path: Path, monkeypatch) -> None:
     suite = load_tier1_suite()
     baseline_json = tmp_path / "baseline.json"
     current_json = tmp_path / "current.json"
     recheck_json = tmp_path / "recheck.json"
-    _write_result_payload(baseline_json, block_scaling_speedup=1.60, flash_speedup=12.0, kv_speedup=1.58)
-    _write_result_payload(current_json, block_scaling_speedup=1.45, flash_speedup=14.45, kv_speedup=1.16)
-    _write_result_payload(recheck_json, block_scaling_speedup=1.62, flash_speedup=14.45, kv_speedup=1.67)
+    _write_result_payload(
+        baseline_json,
+        block_scaling_speedup=1.60,
+        flash_speedup=12.0,
+        llama_speedup=2.49,
+    )
+    _write_result_payload(
+        current_json,
+        block_scaling_speedup=1.45,
+        flash_speedup=14.45,
+        llama_speedup=2.20,
+    )
+    _write_result_payload(
+        recheck_json,
+        block_scaling_speedup=1.62,
+        flash_speedup=14.45,
+        llama_speedup=2.55,
+    )
 
     baseline_summary = build_tier1_suite_summary(baseline_json, suite, run_id="tier1_old")
     current_summary = build_tier1_suite_summary(current_json, suite, run_id="tier1_new")
@@ -266,9 +347,9 @@ def test_confirm_speedup_regressions_suppresses_unconfirmed_noise(tmp_path: Path
     recheck_markdown_path.write_text("# recheck\n", encoding="utf-8")
 
     def _fake_execute_benchmarks(**kwargs):
-        assert kwargs["targets"] == ["labs/kv_optimization:kv_standard"]
+        assert kwargs["targets"] == ["labs/real_world_models:llama_3_1_8b"]
         return {
-            "run_id": "tier1_new__recheck__kv_standard",
+            "run_id": "tier1_new__recheck__llama_3_1_8b",
             "output_json": str(recheck_result_path),
             "manifest_path": str(recheck_manifest_path),
             "output_markdown": str(recheck_markdown_path),
@@ -330,11 +411,11 @@ def test_confirm_speedup_regressions_suppresses_unconfirmed_noise(tmp_path: Path
     )
 
     assert not any(
-        row["target"] == "labs/kv_optimization:kv_standard" and row["reason"] == "speedup"
+        row["target"] == "labs/real_world_models:llama_3_1_8b" and row["reason"] == "speedup"
         for row in updated["regressions"]
     )
     assert any(
-        row["target"] == "labs/kv_optimization:kv_standard"
+        row["target"] == "labs/real_world_models:llama_3_1_8b"
         and row["suppression_reason"] == "recheck_not_regressed"
         for row in updated["suppressed_regressions"]
     )

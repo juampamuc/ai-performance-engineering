@@ -2,7 +2,12 @@
  * API Client - MCP/Engine aligned endpoints only.
  */
 
-import type { BenchmarkContractsSummary, BenchmarkRunGeneratorDefaults, BenchmarkRunRenderResult } from '@/types';
+import type {
+  BenchmarkContractsSummary,
+  BenchmarkE2EStatusSnapshot,
+  BenchmarkRunGeneratorDefaults,
+  BenchmarkRunRenderResult,
+} from '@/types';
 
 const API_BASE = '/api';
 
@@ -113,6 +118,11 @@ export async function getBenchmarkHistory() {
 
 export async function getBenchmarkTrends() {
   return fetchAPI('/benchmark/trends');
+}
+
+export async function getBenchmarkE2eStatus(params?: Record<string, unknown>) {
+  const query = buildQuery(params);
+  return fetchAPI<BenchmarkE2EStatusSnapshot>(`/benchmark/e2e-status${query}`, undefined, { allowErrorResult: true });
 }
 
 export async function getTier1History() {

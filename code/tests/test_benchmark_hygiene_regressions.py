@@ -316,6 +316,8 @@ def test_ch13_memory_profiling_pair_keeps_compute_dtype_fixed_and_direct_output_
     assert "self.output = outputs.detach().clone()" in baseline_benchmark
     assert "self.output = outputs.detach().clone()" in optimized_benchmark
     assert "self.output_buffer" not in optimized_source
+    assert 'return "memory"' in baseline_source
+    assert 'return "memory"' in optimized_source
 
 
 def test_ch12_kernel_launches_pair_keeps_hot_path_work_fixed() -> None:

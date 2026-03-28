@@ -241,6 +241,7 @@ def test_ch14_cutlass_pair_is_renamed_to_explicit_cublas_vs_cutlass() -> None:
     assert "from core.benchmark.cutlass_binding import cublas_gemm_fp16" in baseline_source
     assert "def cublas_gemm_fp16" in binding_source
     assert "torch::Tensor cublas_gemm_fp16" in extension_source
+    assert "cublas_vs_cutlass" in INFORMATIONAL_BENCHMARKS["ch14"]
 
 
 def test_ch14_model_compile_pair_uses_reduced_precision_name_not_bf16_alias() -> None:
@@ -424,6 +425,8 @@ def test_ch13_pair_remediations_keep_canonical_and_informational_targets_split()
     compiled_quant = _read("ch13/optimized_torchao_quantization_compiled.py")
     canonical_kv = _read("ch13/optimized_kv_cache_naive.py")
     flash_kv = _read("ch13/optimized_kv_cache_naive_flash_blockwise.py")
+    memory_baseline = _read("ch13/baseline_memory_profiling.py")
+    memory_optimized = _read("ch13/optimized_memory_profiling.py")
 
     assert 'configure_tf32(' in baseline_quant
     assert 'matmul_precision="highest"' in baseline_quant
@@ -434,12 +437,17 @@ def test_ch13_pair_remediations_keep_canonical_and_informational_targets_split()
     assert "restore_tf32(self._tf32_state)" in canonical_quant
     assert "torch.compile(self.model" in compiled_quant
     assert "torchao_quantization_compiled" in INFORMATIONAL_BENCHMARKS["ch13"]
+    assert "precisionfp8" in INFORMATIONAL_BENCHMARKS["ch13"]
+    assert "precisionfp8_rowwise" in INFORMATIONAL_BENCHMARKS["ch13"]
+    assert "precisionfp8_rowwise_gw_hp" in INFORMATIONAL_BENCHMARKS["ch13"]
     assert '"tf32": False' in baseline_quant
     assert '"tf32": False' in canonical_quant
 
     assert "for pos in range(seq_len):" in canonical_kv
     assert "range(0, seq_len, self.block_size)" not in canonical_kv
     assert 'return "memory"' in canonical_kv
+    assert 'return "memory"' in memory_baseline
+    assert 'return "memory"' in memory_optimized
     assert "range(0, seq_len, self.block_size)" in flash_kv
     assert "kv_cache_naive_flash_blockwise" in INFORMATIONAL_BENCHMARKS["ch13"]
 
