@@ -29,6 +29,12 @@ def _load_module(module_path: Path):
         "ch15/optimized_guided_decoding.py",
         "ch15/baseline_speculative_decoding.py",
         "ch15/optimized_speculative_decoding.py",
+        "ch15/baseline_medusa_eagle_speculative.py",
+        "ch15/optimized_medusa_eagle_speculative_medusa.py",
+        "ch15/optimized_medusa_eagle_speculative_eagle.py",
+        "ch15/baseline_moe_comm_exchange.py",
+        "ch15/optimized_moe_comm_exchange_overlap.py",
+        "ch15/optimized_moe_comm_exchange_hierarchical.py",
     ],
 )
 def test_shared_ch15_wrappers_attach_metadata(relative_path: str) -> None:
@@ -50,6 +56,12 @@ def test_shared_ch15_wrappers_attach_metadata(relative_path: str) -> None:
         "ch15/optimized_guided_decoding.py",
         "ch15/baseline_speculative_decoding.py",
         "ch15/optimized_speculative_decoding.py",
+        "ch15/baseline_medusa_eagle_speculative.py",
+        "ch15/optimized_medusa_eagle_speculative_medusa.py",
+        "ch15/optimized_medusa_eagle_speculative_eagle.py",
+        "ch15/baseline_moe_comm_exchange.py",
+        "ch15/optimized_moe_comm_exchange_overlap.py",
+        "ch15/optimized_moe_comm_exchange_hierarchical.py",
     ],
 )
 def test_shared_ch15_benchmark_fns_stay_hot_path_clean(relative_path: str) -> None:
@@ -65,3 +77,22 @@ def test_shared_ch15_benchmark_fns_stay_hot_path_clean(relative_path: str) -> No
 
     assert sync_ok, sync_warnings
     assert antipattern_ok, antipattern_warnings
+
+
+@pytest.mark.parametrize(
+    "relative_path,expected_goal",
+    [
+        ("ch15/baseline_medusa_eagle_speculative.py", "throughput"),
+        ("ch15/optimized_medusa_eagle_speculative_medusa.py", "throughput"),
+        ("ch15/optimized_medusa_eagle_speculative_eagle.py", "throughput"),
+        ("ch15/baseline_moe_comm_exchange.py", "speed"),
+        ("ch15/optimized_moe_comm_exchange_overlap.py", "speed"),
+        ("ch15/optimized_moe_comm_exchange_hierarchical.py", "speed"),
+    ],
+)
+def test_shared_ch15_family_goals_match_benchmark_contract(relative_path: str, expected_goal: str) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_module(repo_root / relative_path)
+    bench = module.get_benchmark()
+
+    assert bench.get_optimization_goal() == expected_goal

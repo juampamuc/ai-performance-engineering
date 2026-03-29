@@ -26,8 +26,10 @@ from ch04.baseline_symmetric_memory_perf import BaselineSymmetricMemoryPerfBench
 from ch04.optimized_symmetric_memory_perf import OptimizedSymmetricMemoryPerfBenchmark
 from ch13.baseline_context_parallel_multigpu import BaselineContextParallelMultigpuBenchmark
 from ch13.baseline_expert_parallel_multigpu import BaselineExpertParallelMultigpuBenchmark
+from ch13.baseline_sequence_parallel_multigpu import BaselineSequenceParallelMultigpuBenchmark
 from ch13.optimized_context_parallel_multigpu import OptimizedContextParallelMultigpuBenchmark
 from ch13.optimized_expert_parallel_multigpu import OptimizedExpertParallelMultigpuBenchmark
+from ch13.optimized_sequence_parallel_multigpu import OptimizedSequenceParallelMultigpuBenchmark
 from ch17.baseline_inference_full import BaselineInferenceFullBenchmark
 from ch17.optimized_inference_full import OptimizedInferenceFullBenchmark
 from ch15.baseline_single_gpu_kv_handoff import get_benchmark as get_baseline_single_gpu_kv_handoff
@@ -242,6 +244,8 @@ def test_ch13_multigpu_wrappers_expose_verification_and_launch_modes_in_story_me
         OptimizedContextParallelMultigpuBenchmark,
         BaselineExpertParallelMultigpuBenchmark,
         OptimizedExpertParallelMultigpuBenchmark,
+        BaselineSequenceParallelMultigpuBenchmark,
+        OptimizedSequenceParallelMultigpuBenchmark,
     ]
 
     for bench_cls in benches:
@@ -256,6 +260,14 @@ def test_ch13_multigpu_wrappers_expose_verification_and_launch_modes_in_story_me
     assert OptimizedContextParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "ring_attention"
     assert BaselineExpertParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "per_iteration_list_all_to_all"
     assert OptimizedExpertParallelMultigpuBenchmark.story_metadata["optimization_mechanism"] == "preallocated_all_to_all_single"
+    assert (
+        BaselineSequenceParallelMultigpuBenchmark.story_metadata["optimization_mechanism"]
+        == "all_gather_full_sequence_after_tp_all_reduce"
+    )
+    assert (
+        OptimizedSequenceParallelMultigpuBenchmark.story_metadata["optimization_mechanism"]
+        == "keep_tp_activations_sequence_sharded_between_layers"
+    )
 
 
 def test_ch15_disagg_multigpu_wrappers_expose_baseline_owned_shared_harness_metadata() -> None:

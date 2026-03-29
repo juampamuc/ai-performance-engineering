@@ -1,0 +1,309 @@
+"""Shared MoE communication benchmarks with explicit overlap and hierarchy variants."""
+
+from __future__ import annotations
+
+from typing import Dict, Optional
+
+import torch
+import torch.nn as nn
+
+from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.benchmark.wrapper_utils import attach_benchmark_metadata
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from core.optimization.moe_inference import ExpertMLP
+
+
+def _pseudo_uniform_expert_ids(token_ids: torch.Tensor, num_experts: int) -> torch.Tensor:
+    if token_ids.dtype != torch.int64:
+        token_ids = token_ids.to(torch.int64)
+    return ((token_ids * 1103515245 + 12345) % int(num_experts)).to(torch.int64)
+
+
+class MoeCommExchangeBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Communication-focused MoE benchmark with flat, overlap, and hierarchical paths."""
+
+    def __init__(self, *, variant: str, label: str) -> None:
+        super().__init__()
+        self.variant = str(variant).strip().lower()
+        if self.variant not in {"baseline", "overlap", "hierarchical"}:
+            raise ValueError(f"Unsupported MoE communication variant '{variant}'")
+        self.label = label
+
+        self.hidden_size = 1024
+        self.ffn_size = 4096
+        self.logical_world_size = 32
+        self.ranks_per_group = 4
+        self.experts_per_rank = 1
+        self.num_experts = self.logical_world_size * self.experts_per_rank
+        self.batch = 128
+        self.seq = 32
+        self.dtype = torch.bfloat16
+
+        tokens = self.batch * self.seq
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=float(self.batch),
+            tokens_per_iteration=float(tokens),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=float(self.batch),
+            tokens_per_iteration=float(tokens),
+        )
+
+        self.expert: Optional[nn.Module] = None
+        self.inputs: Optional[torch.Tensor] = None
+        self.expert_ids: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
+        self._dest_ranks: Optional[torch.Tensor] = None
+        self._dest_groups: Optional[torch.Tensor] = None
+        self._out_flat: Optional[torch.Tensor] = None
+        self._local_perm: Optional[torch.Tensor] = None
+        self._remote_perm: Optional[torch.Tensor] = None
+        self._remote_cpu_sorted: Optional[torch.Tensor] = None
+        self._remote_packed: Optional[torch.Tensor] = None
+        self._remote_out: Optional[torch.Tensor] = None
+        self._hierarchical_perm: Optional[torch.Tensor] = None
+        self._hierarchical_cpu_sorted: Optional[torch.Tensor] = None
+        self._hierarchical_packed: Optional[torch.Tensor] = None
+        self._hierarchical_out: Optional[torch.Tensor] = None
+        self._group_offsets: Optional[torch.Tensor] = None
+        self._group_ranges: Optional[list[tuple[int, int]]] = None
+        self._comm_stream: Optional[torch.cuda.Stream] = None
+        self._verify_probe: Optional[torch.Tensor] = None
+        self._verify_meta: Optional[torch.Tensor] = None
+
+    def setup(self) -> None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("SKIPPED: CUDA required for MoE communication benchmark")
+        if self.logical_world_size % self.ranks_per_group != 0:
+            raise ValueError("logical_world_size must be divisible by ranks_per_group")
+
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+
+        self.expert = ExpertMLP(self.hidden_size, self.ffn_size, device=self.device, dtype=self.dtype).eval()
+        self.inputs = torch.randn(self.batch, self.seq, self.hidden_size, device=self.device, dtype=self.dtype)
+        flat = self.inputs.view(-1, self.hidden_size)
+        token_ids = torch.arange(flat.shape[0], device=self.device, dtype=torch.int64)
+        self.expert_ids = _pseudo_uniform_expert_ids(token_ids, self.num_experts).view(self.batch, self.seq)
+        self._dest_ranks = torch.div(self.expert_ids.reshape(-1), self.experts_per_rank, rounding_mode="floor")
+        self._dest_groups = torch.div(self._dest_ranks, self.ranks_per_group, rounding_mode="floor")
+        self._out_flat = torch.empty_like(flat)
+
+        local_mask = self._dest_groups == 0
+        remote_mask = ~local_mask
+        self._local_perm = local_mask.nonzero(as_tuple=False).squeeze(-1)
+        self._remote_perm = remote_mask.nonzero(as_tuple=False).squeeze(-1)
+
+        if self._remote_perm.numel() > 0:
+            remote_sort = torch.argsort(
+                (self._dest_groups.index_select(0, self._remote_perm) * self.logical_world_size)
+                + self._dest_ranks.index_select(0, self._remote_perm)
+            )
+            self._remote_perm = self._remote_perm.index_select(0, remote_sort)
+            self._remote_cpu_sorted = flat.index_select(0, self._remote_perm).detach().cpu().pin_memory()
+            self._remote_packed = torch.empty(
+                self._remote_perm.numel(),
+                self.hidden_size,
+                device=self.device,
+                dtype=self.dtype,
+            )
+            self._remote_out = torch.empty_like(self._remote_packed)
+        else:
+            self._remote_cpu_sorted = None
+            self._remote_packed = None
+            self._remote_out = None
+
+        hierarchical_key = (self._dest_groups * self.logical_world_size) + self._dest_ranks
+        self._hierarchical_perm = torch.argsort(hierarchical_key)
+        self._hierarchical_cpu_sorted = flat.index_select(0, self._hierarchical_perm).detach().cpu().pin_memory()
+        self._hierarchical_packed = torch.empty_like(flat)
+        self._hierarchical_out = torch.empty_like(flat)
+        group_counts = torch.bincount(self._dest_groups, minlength=self.logical_world_size // self.ranks_per_group)
+        self._group_offsets = torch.zeros(group_counts.numel() + 1, device=self.device, dtype=torch.int64)
+        self._group_offsets[1:] = torch.cumsum(group_counts, dim=0)
+        group_offsets_host = self._group_offsets.detach().cpu().tolist()
+        self._group_ranges = [
+            (int(start), int(end))
+            for start, end in zip(group_offsets_host[:-1], group_offsets_host[1:])
+        ]
+        self._comm_stream = torch.cuda.Stream(device=self.device)
+
+        self._verify_probe = self.inputs[:1, :1, :256].detach().cpu()
+        self._verify_meta = torch.tensor(
+            [int(self.logical_world_size), int(self.ranks_per_group), int(self.num_experts)],
+            dtype=torch.int64,
+        )
+
+        for _ in range(3):
+            with torch.no_grad():
+                _ = self.expert(flat)
+        self._synchronize()
+
+    def get_custom_streams(self) -> list[torch.cuda.Stream]:
+        if self._comm_stream is None or self.variant != "overlap":
+            return []
+        return [self._comm_stream]
+
+    def benchmark_fn(self) -> None:
+        if (
+            self.expert is None
+            or self.inputs is None
+            or self._out_flat is None
+            or self._dest_ranks is None
+            or self._dest_groups is None
+        ):
+            raise RuntimeError("setup() must run before benchmark_fn()")
+
+        if self.variant == "baseline":
+            self._run_baseline()
+        elif self.variant == "overlap":
+            self._run_overlap()
+        else:
+            self._run_hierarchical()
+
+    def _run_baseline(self) -> None:
+        if self.expert is None or self.inputs is None or self._out_flat is None or self._dest_ranks is None:
+            raise RuntimeError("setup() must run before benchmark_fn()")
+
+        flat = self.inputs.view(-1, self.hidden_size)
+        send_tokens: list[torch.Tensor] = []
+        send_pos: list[torch.Tensor] = []
+
+        with self._nvtx_range(self.label):
+            with torch.no_grad():
+                for rank in range(self.logical_world_size):
+                    indices = (self._dest_ranks == rank).nonzero(as_tuple=False).squeeze(-1)
+                    if indices.numel() == 0:
+                        continue
+                    send_tokens.append(flat.index_select(0, indices))
+                    send_pos.append(indices)
+                if not send_tokens:
+                    raise RuntimeError("Routing produced no tokens for any logical rank")
+                perm = torch.cat(send_pos, dim=0)
+                packed = torch.cat(send_tokens, dim=0)
+                recv_out = self.expert(packed)
+                self._out_flat.index_copy_(0, perm, recv_out)
+                self.output = self._out_flat.view(self.batch, self.seq, self.hidden_size)
+
+    def _run_overlap(self) -> None:
+        if (
+            self.expert is None
+            or self.inputs is None
+            or self._out_flat is None
+            or self._local_perm is None
+            or self._remote_perm is None
+            or self._remote_cpu_sorted is None
+            or self._remote_packed is None
+            or self._remote_out is None
+            or self._comm_stream is None
+        ):
+            raise RuntimeError("setup() must run before benchmark_fn()")
+
+        flat = self.inputs.view(-1, self.hidden_size)
+
+        with self._nvtx_range(self.label):
+            with torch.no_grad():
+                if self._remote_perm.numel() > 0:
+                    with torch.cuda.stream(self._comm_stream):
+                        self._remote_packed.copy_(self._remote_cpu_sorted, non_blocking=True)
+                if self._local_perm.numel() > 0:
+                    local_tokens = flat.index_select(0, self._local_perm)
+                    local_out = self.expert(local_tokens)
+                    self._out_flat.index_copy_(0, self._local_perm, local_out)
+                if self._remote_perm.numel() > 0:
+                    torch.cuda.current_stream(self.device).wait_stream(self._comm_stream)
+                    self._remote_out.copy_(self.expert(self._remote_packed))
+                    self._out_flat.index_copy_(0, self._remote_perm, self._remote_out)
+                self.output = self._out_flat.view(self.batch, self.seq, self.hidden_size)
+
+    def _run_hierarchical(self) -> None:
+        if (
+            self.expert is None
+            or self._out_flat is None
+            or self._hierarchical_perm is None
+            or self._hierarchical_cpu_sorted is None
+            or self._hierarchical_packed is None
+            or self._hierarchical_out is None
+            or self._group_ranges is None
+        ):
+            raise RuntimeError("setup() must run before benchmark_fn()")
+
+        with self._nvtx_range(self.label):
+            with torch.no_grad():
+                self._hierarchical_packed.copy_(self._hierarchical_cpu_sorted, non_blocking=True)
+                for start, end in self._group_ranges:
+                    if end <= start:
+                        continue
+                    self._hierarchical_out[start:end].copy_(self.expert(self._hierarchical_packed[start:end]))
+                self._out_flat.index_copy_(0, self._hierarchical_perm, self._hierarchical_out)
+                self.output = self._out_flat.view(self.batch, self.seq, self.hidden_size)
+
+    def capture_verification_payload(self) -> None:
+        if self.output is None or self._verify_probe is None or self._verify_meta is None:
+            raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
+        output_slice = self.output[:2, :2, :256].detach().cpu().float().clone()
+        param_count = sum(p.numel() for p in self.expert.parameters()) if self.expert is not None else 0
+        self._set_verification_payload(
+            inputs={"probe": self._verify_probe, "routing": self._verify_meta},
+            output=output_slice,
+            batch_size=int(self.batch),
+            parameter_count=int(param_count),
+            precision_flags={
+                "fp16": False,
+                "bf16": True,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+            output_tolerance=(0.0, 0.0),
+            signature_overrides={
+                "world_size": int(self.logical_world_size),
+                "shards": int(self.logical_world_size // self.ranks_per_group),
+                "collective_type": "all_to_all",
+            },
+        )
+
+    def teardown(self) -> None:
+        self.expert = None
+        self.inputs = None
+        self.expert_ids = None
+        self.output = None
+        self._dest_ranks = None
+        self._dest_groups = None
+        self._out_flat = None
+        self._local_perm = None
+        self._remote_perm = None
+        self._remote_cpu_sorted = None
+        self._remote_packed = None
+        self._remote_out = None
+        self._hierarchical_perm = None
+        self._hierarchical_cpu_sorted = None
+        self._hierarchical_packed = None
+        self._hierarchical_out = None
+        self._group_offsets = None
+        self._group_ranges = None
+        self._comm_stream = None
+        super().teardown()
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=20, warmup=10)
+
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        total_tokens = float(self.batch * self.seq)
+        remote_tokens = 0.0 if self._remote_perm is None else float(self._remote_perm.numel())
+        return {
+            "moe_comm.logical_world_size": float(self.logical_world_size),
+            "moe_comm.ranks_per_group": float(self.ranks_per_group),
+            "moe_comm.logical_groups": float(self.logical_world_size // self.ranks_per_group),
+            "moe_comm.remote_token_pct": (remote_tokens / max(total_tokens, 1.0)) * 100.0,
+            "moe_comm.variant_baseline": 1.0 if self.variant == "baseline" else 0.0,
+            "moe_comm.variant_overlap": 1.0 if self.variant == "overlap" else 0.0,
+            "moe_comm.variant_hierarchical": 1.0 if self.variant == "hierarchical" else 0.0,
+        }
+
+    def validate_result(self) -> Optional[str]:
+        if self.output is None:
+            return "Output not produced"
+        return None

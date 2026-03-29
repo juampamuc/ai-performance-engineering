@@ -39,6 +39,10 @@ python -m cli.aisp bench run --targets ch15:speculative_decoding --profile deep_
 
 Those runs are the right place to check whether the win came from less queue idle time, less cache movement, or fewer wasted decode steps.
 
+The chapter now also exposes two more explicit inference-system axes as first-class targets:
+- `medusa_eagle_speculative`: acceptance-rate tradeoff benchmark for Medusa/EAGLE-style speculative decoding profiles
+- `moe_comm_exchange`: MoE communication benchmark focused on overlap and hierarchical expert exchange rather than only router math
+
 ## Repro Commands
 ```bash
 python -m ch15.compare
@@ -62,8 +66,9 @@ python -m cli.aisp bench run --targets ch15:kv_cache_nvlink_pool --profile deep_
 | `baseline_kv_cache_management.py`, `optimized_kv_cache_management.py`, `kv_cache_management_math.py`, `baseline_kv_cache_nvlink_pool.py`, `optimized_kv_cache_nvlink_pool.py`, `baseline_kv_cache_nvlink_pool_multigpu.py`, `optimized_kv_cache_nvlink_pool_multigpu.py` | KV-cache orchestration utilities with local-only, math-only, and NVLink-pooled variants. |
 | `baseline_continuous_batching.py`, `optimized_continuous_batching.py` | Single-GPU continuous batching scheduler for TTFT-aware queueing. |
 | `baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py` | Multi-GPU continuous batching scheduler for scaled queueing throughput. |
+| `baseline_medusa_eagle_speculative.py`, `optimized_medusa_eagle_speculative_medusa.py`, `optimized_medusa_eagle_speculative_eagle.py`, `medusa_eagle_speculative_benchmarks.py` | First-class Medusa/EAGLE speculative decoding family with explicit acceptance-rate versus wasted-verification tradeoff profiles. |
 | `baseline_moe_inference.py`, `optimized_moe_inference.py` | Inference-specific MoE workloads that pair router load with communication control. |
-| `baseline_moe_overlap.py`, `optimized_moe_overlap_shared_expert.py`, `baseline_wide_ep.py`, `optimized_wide_ep.py`, `baseline_moe_dispatch.py`, `optimized_moe_dispatch.py`, `baseline_moe_routing_topology_aware.py`, `optimized_moe_routing_topology_aware.py` | MoE expert-parallel microbenchmarks that now split dispatch-path optimization from topology-aware routing locality so attribution stays clean. |
+| `baseline_moe_overlap.py`, `optimized_moe_overlap_shared_expert.py`, `baseline_wide_ep.py`, `optimized_wide_ep.py`, `baseline_moe_dispatch.py`, `optimized_moe_dispatch.py`, `baseline_moe_routing_topology_aware.py`, `optimized_moe_routing_topology_aware.py`, `baseline_moe_comm_exchange.py`, `optimized_moe_comm_exchange_overlap.py`, `optimized_moe_comm_exchange_hierarchical.py`, `moe_comm_exchange_benchmarks.py` | MoE expert-parallel microbenchmarks spanning dispatch-path optimization, topology-aware routing locality, and an explicit communication-only benchmark for overlap plus hierarchical exchange. |
 | `compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`, `Makefile` | Harness entry and dependencies for inference-focused validation. |
 
 ## Running the Benchmarks

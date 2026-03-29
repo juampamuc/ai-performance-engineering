@@ -41,6 +41,9 @@ Those targets answer different questions:
 - `flashinfer_block_sparse`: structured sparsity payoff
 - `runtime_scheduler`: queueing and scheduling overhead reduction
 
+This chapter now also includes a first-class post-training quantization target family:
+- `awq_gptq_smoothquant`: reference dense serving path versus explicit AWQ, GPTQ, and SmoothQuant benchmark variants
+
 ## Repro Commands
 ```bash
 python -m ch16.compare
@@ -61,6 +64,7 @@ python -m cli.aisp bench run --targets ch16:flash_sdp --profile deep_dive --sing
 | `inference_optimizations_blackwell.py`, `inference_profiling.py`, `inference_server_load_test.py`, `inference_serving_multigpu.py` | Top-level orchestration scripts for profiling and load testing multi-GPU inference deployments. |
 | `baseline_flash_sdp.py`, `optimized_flash_sdp.py`, `baseline_dense_attention_flash.py`, `optimized_dense_attention_flash.py`, `optimized_dense_attention_flash_blackwell_variant.py` | Attention kernels that compare naive implementations versus Flash backends, including an explicit non-canonical hardware variant for the Blackwell-tagged dense-attention path. |
 | `baseline_piece_graphs.py`, `optimized_piece_graphs.py`, `baseline_regional_compilation.py`, `optimized_regional_compilation.py` | Piecewise graph capture and regional compilation for stable low-latency decode, with explicit steady-state replay metrics such as `regional_compilation.capture_ms`, `regional_compilation.graph_bucket_count`, and `regional_compilation.steady_state_only`. |
+| `baseline_awq_gptq_smoothquant.py`, `optimized_awq_gptq_smoothquant_awq.py`, `optimized_awq_gptq_smoothquant_gptq.py`, `optimized_awq_gptq_smoothquant_smoothquant.py`, `awq_gptq_smoothquant_benchmarks.py` | First-class post-training quantization benchmark family comparing a dense reference MLP against explicit AWQ, GPTQ, and SmoothQuant serving-style transforms. |
 | `fp8_transformer_engine.py`, `test_fp8_quantization_real.py`, `symmetric_memory_inference.py`, `multi_gpu_validation.py` | Serving-time FP8 and symmetric-memory validations to guarantee accuracy and NVLink efficiency. |
 | `moe_performance_benchmark.py`, `synthetic_moe_inference_benchmark.py`, `moe_workload.py` | MoE inference harnesses that stress router placement and per-expert batching. |
 | `cache_monitoring.py`, `dcgm_prometheus_exporter.py`, `scheduler.py`, `perplexity_eval.py` | Telemetry, scheduling, and accuracy utilities wired into the inference pipeline. |

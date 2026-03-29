@@ -290,6 +290,34 @@ class TestPythonBenchmarkDiscovery:
             assert expected_names <= names
             assert not (removed_names & names)
 
+    def test_discover_benchmarks_surfaces_new_first_class_coverage_targets(self):
+        """New benchmark families should be discoverable as first-class targets."""
+        chapter_expectations = {
+            "ch13": {"sequence_parallel_multigpu"},
+            "ch15": {
+                "medusa_eagle_speculative",
+                "medusa_eagle_speculative_medusa",
+                "medusa_eagle_speculative_eagle",
+                "moe_comm_exchange",
+                "moe_comm_exchange_overlap",
+                "moe_comm_exchange_hierarchical",
+            },
+            "ch16": {
+                "awq_gptq_smoothquant",
+                "awq_gptq_smoothquant_awq",
+                "awq_gptq_smoothquant_gptq",
+                "awq_gptq_smoothquant_smoothquant",
+            },
+        }
+
+        for chapter, expected_names in chapter_expectations.items():
+            chapter_dir = repo_root / chapter
+            if not chapter_dir.exists():
+                pytest.skip(f"{chapter} directory not found")
+            pairs = discover_benchmarks(chapter_dir)
+            names = {example_name for _, _, example_name in pairs}
+            assert expected_names <= names
+
     def test_discover_benchmarks_ch12_graph_conditional_runtime_keeps_python_entrypoint(self):
         """Discovery should keep the optimized Python graph-conditional runtime benchmark."""
         ch12_dir = repo_root / "ch12"

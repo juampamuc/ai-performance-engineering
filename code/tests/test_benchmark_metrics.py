@@ -346,6 +346,17 @@ class TestPrecisionMetrics:
         assert metrics["precision.memory_reduction_factor"] == 4.0
         assert metrics["precision.speedup_efficiency_pct"] == 100.0
 
+    def test_int4_reports_eight_x_memory_reduction(self):
+        """INT4 should report the expected post-training quantization storage gain."""
+        metrics = compute_precision_metrics(
+            fp32_time_ms=12.0,
+            reduced_precision_time_ms=2.0,
+            precision_type="int4",
+        )
+
+        assert metrics["precision.speedup"] == 6.0
+        assert metrics["precision.memory_reduction_factor"] == 8.0
+
     def test_fp32_is_neutral_precision(self):
         """FP32 should report no storage reduction versus itself."""
         metrics = compute_precision_metrics(
