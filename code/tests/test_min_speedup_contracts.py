@@ -1,9 +1,16 @@
+import json
+from pathlib import Path
+
 from core.benchmark.expectations import ExpectationEntry, RunProvenance
 from core.harness.run_benchmarks import (
     _format_failed_no_speedup,
+    _resolve_local_contract_from_expectation,
     _should_fail_no_speedup,
     build_expectation_metadata,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _provenance() -> RunProvenance:
@@ -32,6 +39,21 @@ def test_should_fail_no_speedup_respects_local_minimum_speedup() -> None:
             "optimization_goal": "speed",
             "best_speedup": 1.03,
             "minimum_required_speedup": 1.02,
+        }
+    ) is False
+
+
+def test_should_fail_no_speedup_defaults_to_generic_gate_without_local_contract() -> None:
+    assert _should_fail_no_speedup(
+        {
+            "optimization_goal": "speed",
+            "best_speedup": 1.04,
+        }
+    ) is True
+    assert _should_fail_no_speedup(
+        {
+            "optimization_goal": "speed",
+            "best_speedup": 1.05,
         }
     ) is False
 
@@ -82,3 +104,58 @@ def test_expectation_entry_round_trip_preserves_minimum_required_speedup() -> No
 
     restored = ExpectationEntry.from_dict(serialized)
     assert restored.minimum_required_speedup == 1.02
+
+
+def test_resolve_local_contract_from_expectation_requires_explicit_speed_floor() -> None:
+    entry = ExpectationEntry(
+        example="launch_bounds",
+        type="python",
+        optimization_goal="speed",
+        baseline_time_ms=10.072,
+        best_optimized_time_ms=10.0,
+        provenance=_provenance(),
+        best_optimization_name="optimized_launch_bounds",
+    )
+
+    goal, minimum_required_speedup = _resolve_local_contract_from_expectation(entry)
+
+    assert goal == "speed"
+    assert minimum_required_speedup is None
+
+
+def test_resolve_local_contract_from_expectation_keeps_non_speed_goal_without_threshold() -> None:
+    entry = ExpectationEntry(
+        example="padding_aware_transformer",
+        type="python",
+        optimization_goal="memory",
+        baseline_time_ms=10.0,
+        best_optimized_time_ms=12.0,
+        baseline_memory_mb=1000.0,
+        best_optimized_memory_mb=250.0,
+        provenance=_provenance(),
+        best_optimization_name="optimized_padding_aware_transformer",
+    )
+
+    goal, minimum_required_speedup = _resolve_local_contract_from_expectation(entry)
+
+    assert goal == "memory"
+    assert minimum_required_speedup is None
+
+
+def test_block_scaling_expectation_uses_explicit_local_floor_below_historical_best() -> None:
+    payload = json.loads((REPO_ROOT / "labs" / "block_scaling" / "expectations_b200.json").read_text(encoding="utf-8"))
+    entry = ExpectationEntry.from_dict(payload["examples"]["block_scaling"])
+
+    assert entry.minimum_required_speedup == 1.75
+    assert entry.best_speedup > entry.minimum_required_speedup
+
+
+def test_persistent_decode_nvlink_offload_is_control_contract_while_paged_offload_stays_speed() -> None:
+    payload = json.loads((REPO_ROOT / "labs" / "persistent_decode" / "expectations_b200.json").read_text(encoding="utf-8"))
+    nvlink_entry = ExpectationEntry.from_dict(payload["examples"]["nvlink_offload"])
+    paged_entry = ExpectationEntry.from_dict(payload["examples"]["paged_kv_offload"])
+
+    assert nvlink_entry.optimization_goal == "control"
+    assert nvlink_entry.minimum_required_speedup is None
+    assert paged_entry.optimization_goal == "speed"
+    assert paged_entry.minimum_required_speedup is None

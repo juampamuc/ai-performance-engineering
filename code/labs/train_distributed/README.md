@@ -28,6 +28,8 @@ Representative strict result from `artifacts/runs/20260302_full_strict_chapter_l
 
 The useful point is that the lab shows more than one kind of "distributed optimization." Compression and pipeline scheduling move the needle more than the current symmetric-memory path on this local setup.
 
+Treat single-GPU `fsdp2` on `b200` as a supplementary control surface with a local control contract. The real FSDP2 speed gate stays on the multi-GPU `2x_b200` contract where sharding and overlap can actually change the communication story.
+
 ## Profiler Evidence
 ```bash
 python -m cli.aisp bench run --targets labs/train_distributed:ddp_compression --profile deep_dive --single-gpu
@@ -79,5 +81,6 @@ python -m cli.aisp bench run --targets labs/train_distributed --profile minimal
 - Set `TORCHRUN_ARGS` or pass `--torchrun-env` via the CLI when launching multi-node tests.
 - `utils.py` exposes helper functions (like `resolve_topology()`) that can be reused in other labs.
 - FSDP/FSDP2 benchmarks default to `labs/train_distributed/data/tinystories_packed_seq128.jsonl` plus `labs/train_distributed/data/tinyllama_config.json`, with `AISP_TINYSTORIES_LAYERS=4` to keep the model small. Override with `AISP_TINYSTORIES_PACKED_PATH`, `AISP_TINYSTORIES_LOCAL_PATH`, `AISP_TINYSTORIES_CONFIG_PATH`, or `AISP_TINYSTORIES_LAYERS`.
+- On single-GPU `b200`, `fsdp2` remains runnable for regression tracking and profiler capture, but the benchmark is judged as a local control contract rather than a canonical speed claim.
 - Scale up by increasing `AISP_TINYSTORIES_LAYERS` or swapping to a larger config and pairing it with a packed dataset that matches the new sequence length.
 - Set `AISP_FSDP_DISABLE_FP8=1` to keep the minimal BF16 path; unset it when you want to exercise the FP8 conversion on larger workloads.

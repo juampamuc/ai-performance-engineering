@@ -169,6 +169,12 @@ def maybe_write_sidecar(summary: Dict[str, float]) -> None:
     write_json(Path(sidecar), {"custom_metrics": summary})
 
 
+def _steady_state_warmup_steps(topology: TopologyInfo) -> int:
+    # Match the harness warmup so standalone report.json artifacts describe the
+    # same steady-state step that the benchmark contract gates on.
+    return 5 if topology.world_size <= 1 else 2
+
+
 def _run_preflight(rank: int) -> None:
     if rank != 0:
         return
@@ -916,11 +922,13 @@ def run_cli(*, optimized: bool, argv: Optional[Sequence[str]] = None) -> Dict[st
         if not args.skip_preflight:
             _run_preflight(topology.rank)
         trainer = HybridEPTrainer(args, topology, optimized=optimized)
+        warmup_steps = _steady_state_warmup_steps(topology)
         if args.torch_profile_output:
             activities = [torch.profiler.ProfilerActivity.CPU]
             if torch.cuda.is_available():
                 activities.append(torch.profiler.ProfilerActivity.CUDA)
-            trainer.run_step()
+            for _ in range(warmup_steps):
+                trainer.run_step()
             with torch.profiler.profile(activities=activities) as prof:
                 trainer.run_step()
             if topology.rank == 0:
@@ -928,6 +936,8 @@ def run_cli(*, optimized: bool, argv: Optional[Sequence[str]] = None) -> Dict[st
                 trace_path.parent.mkdir(parents=True, exist_ok=True)
                 prof.export_chrome_trace(str(trace_path))
             return {}
+        for _ in range(warmup_steps):
+            trainer.run_step()
         step_history = [trainer.run_step() for _ in range(args.iters)]
         return summarize_and_write_report(
             args=args,
@@ -976,7 +986,6 @@ class MoEHybridEPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         artifacts = self._single_gpu_trainer.run_step()
         self._latest_metrics = dict(artifacts.metrics)
         self._latest_metrics["moe_hybrid_ep.workload_size"] = float(self.workload_size)
-        maybe_write_sidecar(self._latest_metrics)
         self._verify_output.fill_(artifacts.loss)
 
     def setup(self) -> None:

@@ -11,7 +11,7 @@
         "best_optimization_speedup": 2.4424457062131615,
         "best_optimization_technique": "optimized_ai_optimization",
         "best_optimization_time_ms": 0.28601158502959617,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 214.42724609375,
@@ -335,7 +335,7 @@
         "best_optimization_speedup": 27.460710452301985,
         "best_optimization_technique": "optimized_tcgen05_custom_vs_cublas",
         "best_optimization_time_ms": 0.8360520695094709,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 942.30029296875,

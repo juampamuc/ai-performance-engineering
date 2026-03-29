@@ -73,7 +73,9 @@ def test_ch08_readme_marks_bridge_controls_vs_native_exemplars() -> None:
     assert "chapter-native exemplars" in readme_text
     assert "bridge control" in readme_text
     assert "`threshold`, `loop_unrolling`, and `ai_optimization` are the chapter-native exemplars" in readme_text
-    assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, `tcgen05_custom_vs_cublas`, and `nvfp4_mlp` remain real baseline/optimized bridge controls" in readme_text
+    assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp` remain real baseline/optimized bridge controls" in readme_text
+    assert "`tcgen05_custom_vs_cublas`" in readme_text
+    assert "supplementary control benchmark with a local contract" in readme_text
     assert "historical baseline/optimized filenames" not in readme_text
 
 
@@ -101,7 +103,7 @@ def test_ch08_readme_marks_tcgen05_custom_vs_cublas_informational_and_tiling_fas
     readme_text = (REPO_ROOT / "ch08" / "README.md").read_text(encoding="utf-8")
 
     assert "tcgen05_custom_vs_cublas" in readme_text
-    assert "informational control surface" in readme_text
+    assert "supplementary control benchmark with a local contract" in readme_text
     assert "matmul_tiled_fast" in readme_text
 
 
@@ -119,7 +121,7 @@ def test_nvfp4_group_gemm_readme_marks_case012_informational_and_case3_canonical
     assert "nvfp4_group_gemm_case0" in readme_text
     assert "nvfp4_group_gemm_case1" in readme_text
     assert "nvfp4_group_gemm_case2" in readme_text
-    assert "informational control surface" in readme_text
+    assert "local-contract speed benchmark" in readme_text
     assert "case3 route verification-clean" in readme_text
     assert "older strict all-case snapshots" in readme_text
 
@@ -192,7 +194,8 @@ def test_persistent_decode_readme_marks_direct_offload_controls_vs_prefetch_over
 
     assert "nvlink_offload" in readme_text
     assert "paged_kv_offload" in readme_text
-    assert "informational control surfaces" in readme_text
+    assert "transport-control benchmark" in readme_text
+    assert "paged_kv_offload` as a real speed benchmark" in readme_text
     assert "paged_kv_offload_prefetch" in readme_text
     assert "canonical KV-offload overlap claim" in readme_text
 
@@ -201,7 +204,7 @@ def test_decode_optimization_readme_marks_decode_pinned_as_control_surface() -> 
     readme_text = (REPO_ROOT / "labs" / "decode_optimization" / "README.md").read_text(encoding="utf-8")
 
     assert "decode_pinned" in readme_text
-    assert "informational control surface" in readme_text
+    assert "supplementary local-contract speed benchmark" in readme_text
     assert "decode_streams" in readme_text
     assert "large host payload" in readme_text
 
@@ -215,11 +218,27 @@ def test_training_hotpath_readme_marks_padding_aware_transformer_memory_goal() -
     assert "not by raw speedup" in readme_text
 
 
+def test_cache_aware_disagg_readme_marks_single_gpu_locality_control_contract() -> None:
+    readme_text = (REPO_ROOT / "labs" / "cache_aware_disagg_inference" / "README.md").read_text(encoding="utf-8")
+
+    assert "cache_aware_disagg" in readme_text
+    assert "locality-control benchmark with a local control contract" in readme_text
+    assert "cache hit rate, KV transfer volume, and worker affinity" in readme_text
+
+
+def test_train_distributed_readme_marks_single_gpu_fsdp2_as_control_surface() -> None:
+    readme_text = (REPO_ROOT / "labs" / "train_distributed" / "README.md").read_text(encoding="utf-8")
+
+    assert "single-GPU `fsdp2` on `b200`" in readme_text
+    assert "supplementary control surface with a local control contract" in readme_text
+    assert "multi-GPU `2x_b200` contract" in readme_text
+
+
 def test_occupancy_tuning_readme_marks_low_warp_schedule_informational() -> None:
     readme_text = (REPO_ROOT / "labs" / "occupancy_tuning" / "README.md").read_text(encoding="utf-8")
 
     assert "proton_matmul_bm64_bn64_bk32_nw2" in readme_text
-    assert "informational control surface" in readme_text
+    assert "supplementary local-contract schedule benchmark" in readme_text
     assert "proton_matmul_bm64_bn256_bk32" in readme_text
     assert "proton_matmul_bm128_bn128_bk32_nw8" in readme_text
     assert "proton_matmul_bm128_bn256_bk64" in readme_text
@@ -240,12 +259,14 @@ def test_fullstack_cluster_docs_call_out_uniform_default_and_topology_override()
 
     assert 'route_mode="uniform"' in common_text
     assert "Single-GPU `moe_hybrid_ep` benchmark runs measure `HybridEPTrainer.run_step()` in-process" in readme_text
-    assert "Canonical hybrid-EP comparisons now keep the same default routing mode" in readme_text
-    assert "--route-mode topology_aware" in readme_text
-    assert "silent default" in readme_text
-    assert "cluster_gemm_tcgen05" in readme_text
-    assert "supplementary informational control surface" in readme_text
-    assert "canonical cluster-GEMM speed claim" in readme_text
+
+
+def test_block_scaling_readme_calls_out_local_floor_below_stale_single_run_peak() -> None:
+    readme_text = (REPO_ROOT / "labs" / "block_scaling" / "README.md").read_text(encoding="utf-8")
+
+    assert "roughly `1.76x`" in readme_text
+    assert "local gating floor is `1.75x`" in readme_text
+    assert "`1.784x` single-run best" in readme_text
 
 
 def test_top_k_kernel_docs_and_defaults_align_to_large_forward_routing_case() -> None:

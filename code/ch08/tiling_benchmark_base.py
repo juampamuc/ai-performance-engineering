@@ -26,7 +26,9 @@ class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
     matrix_rows: int = 4096
     matrix_cols: int = 4096
     shared_dim: int = 4096
-    inner_iterations: int = 8
+    # Keep enough repeated kernel work inside one timed call that the bridge
+    # control pair reflects the kernel delta instead of Python launch overhead.
+    inner_iterations: int = 12
 
     def __init__(self) -> None:
         super().__init__()

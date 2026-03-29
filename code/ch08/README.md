@@ -25,7 +25,7 @@ Representative validated results from `ch08/expectations_b200.json`:
 | `loop_unrolling` | `1.591 ms` | `0.382 ms` | `4.17x` | more independent work per thread reduces execution-dependency stalls |
 | `ai_optimization` | `0.646 ms` | `0.241 ms` | `2.68x` | occupancy-aware scheduling keeps more useful work resident |
 
-These are the chapter-native exemplars. The repo also keeps a few real bridge-control pairs here, such as `thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp`, but those are explicitly marked in structured metrics as control pairs so dashboards do not blur them with the book's core Chapter 8 story. `tcgen05_custom_vs_cublas` remains an explicit custom-versus-library comparison target, but it is treated as an informational control surface rather than a canonical Chapter 8 speed claim.
+These are the chapter-native exemplars. The repo also keeps a few real bridge-control pairs here, such as `thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp`, but those are explicitly marked in structured metrics as control pairs so dashboards do not blur them with the book's core Chapter 8 story. `tcgen05_custom_vs_cublas` remains an explicit custom-versus-library comparison target, and it now stays runnable as a supplementary control benchmark with a local contract rather than being skipped as informational.
 
 ## Profiler Evidence
 Use deep-dive harness runs when you want to see whether the improvement came from better warp efficiency, more ILP, or a better occupancy/resource balance:
@@ -64,7 +64,7 @@ python -m cli.aisp bench run --targets ch08:threshold --profile deep_dive --sing
 | `baseline_ai_optimization.py`, `optimized_ai_optimization.py`, `ai_optimization_kernels.cu`, `independent_ops.cu` | AI-kernel scheduling samples that stage independent ops to highlight occupancy and issue-efficiency tradeoffs. |
 | `baseline_thresholdtma.py`, `optimized_thresholdtma.py`, `threshold_tma_benchmark_base.py` | Bridge control pair into the later TMA chapters: same threshold workload shape, but a TMA-backed path marked as a control pair in structured metrics. |
 | `baseline_tiling.py`, `optimized_tiling.py`, `baseline_tiling_tcgen05.py`, `optimized_tiling_tcgen05.py`, `tiling_kernels.cu`, `tiling_extension_tcgen05.py` | Bridge control pairs into Chapter 9: arithmetic-intensity and tensor-core tiling workloads kept as real baseline/optimized pairs but marked non-native for Chapter 8. `optimized_tiling.py` uses the strict `matmul_tiled_fast` path so runtime issues fail fast instead of silently falling back. |
-| `baseline_tcgen05_custom_vs_cublas.py`, `optimized_tcgen05_custom_vs_cublas.py`, `tcgen05_custom_vs_cublas_benchmark_base.py` | Informational custom-tcgen05-versus-cuBLAS control/library comparison that points ahead to Chapter 9 tensor-core scheduling without acting as a canonical Chapter 8 speed claim. |
+| `baseline_tcgen05_custom_vs_cublas.py`, `optimized_tcgen05_custom_vs_cublas.py`, `tcgen05_custom_vs_cublas_benchmark_base.py` | Supplementary custom-tcgen05-versus-cuBLAS bridge control benchmark that points ahead to Chapter 9 tensor-core scheduling without acting as a canonical Chapter 8 speed claim. |
 | `baseline_nvfp4_mlp.py`, `optimized_nvfp4_mlp.py` | Precision bridge control pair: BF16 versus NVFP4 MLP path kept here as a real pair, but explicitly marked as a Chapter 9-style control. |
 | `compare.py`, `requirements.txt`, `expectations_{hardware_key}.json` | Harness entry, dependencies, and regression thresholds. |
 
@@ -88,5 +88,5 @@ python -m cli.aisp bench run --targets ch08 --profile minimal
 - `arch_config.py` exposes toggles for enabling/disabling tcgen05 lowering per GPU so the same scripts work on SM100 and SM121.
 - `threshold`, `loop_unrolling`, and `ai_optimization` are the chapter-native exemplars. `thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp` remain real baseline/optimized bridge controls and expose `story.control_pair=1` plus `story.chapter_native_exemplar=0` in structured metrics.
 - `optimized_tiling.py` intentionally uses the strict `matmul_tiled_fast` path from the Chapter 8 fix packet; if that path breaks, the benchmark should fail fast instead of silently swapping kernels.
-- `tcgen05_custom_vs_cublas` is intentionally named as a custom-versus-library comparison target so the benchmark surface matches the story it is telling, but it is treated as an informational control surface rather than a canonical speedup benchmark.
+- `tcgen05_custom_vs_cublas` is intentionally named as a custom-versus-library comparison target so the benchmark surface matches the story it is telling. It remains a non-headline bridge control, but it now runs under a local control contract instead of being skipped as informational.
 - `build/` caches CUDA object files per configuration; clean via `python cleanup.py --include-build` when adjusting toolchains.

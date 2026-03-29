@@ -19,7 +19,9 @@ class BaselineLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.input_data: Optional[torch.Tensor] = None
         self.output_data: Optional[torch.Tensor] = None
         self.N = 1024 * 1024  # 1M elements
-        self.kernel_launches_per_timed_call = 48
+        # Batch more launches per timed call so the launch-bounds delta rises
+        # above harness/Python overhead on single-GPU portable runs.
+        self.kernel_launches_per_timed_call = 96
         self._extension = None
         # Launch bounds benchmark - fixed input size
         # Treat each element as a token

@@ -20,24 +20,26 @@ class GradientFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         fused: bool,
         num_tensors: int = 256,
         tensor_kb: int = 32,
+        reduction_repeats: int = 16,
         equivalence_group: str = "ch04_gradient_fusion_single",
     ) -> None:
         super().__init__()
         self.fused = bool(fused)
         self.num_tensors = int(num_tensors)
         self.tensor_kb = int(tensor_kb)
+        self.reduction_repeats = max(1, int(reduction_repeats))
         self.signature_equivalence_group = equivalence_group
         self.signature_equivalence_ignore_fields = ("precision_flags",)
         elem_bytes = torch.tensor([], dtype=torch.float32).element_size()
         numel = max(1, (self.tensor_kb * 1024) // elem_bytes)
         total_bytes = self.num_tensors * numel * elem_bytes
         self._workload = WorkloadMetadata(
-            requests_per_iteration=1.0,
-            tokens_per_iteration=float(total_bytes),
+            requests_per_iteration=float(self.reduction_repeats),
+            tokens_per_iteration=float(total_bytes * self.reduction_repeats),
         )
         self.register_workload_metadata(
-            requests_per_iteration=1.0,
-            tokens_per_iteration=float(total_bytes),
+            requests_per_iteration=float(self.reduction_repeats),
+            tokens_per_iteration=float(total_bytes * self.reduction_repeats),
         )
         self.tensors: list[torch.Tensor] = []
         self.fused_tensor: Optional[torch.Tensor] = None
@@ -62,14 +64,16 @@ class GradientFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         if not self.tensors or self.fused_tensor is None:
             raise RuntimeError("setup() must run before benchmark_fn()")
+        accum = self._accum_buffer
+        accum.zero_()
         if self.fused:
-            self.output = self.fused_tensor.sum()
+            for _ in range(self.reduction_repeats):
+                accum.add_(self.fused_tensor.sum())
         else:
-            accum = self._accum_buffer
-            accum.zero_()
-            for tensor in self.tensors:
-                accum = accum + tensor.sum()
-            self.output = accum
+            for _ in range(self.reduction_repeats):
+                for tensor in self.tensors:
+                    accum.add_(tensor.sum())
+        self.output = accum
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None or self.output is None:

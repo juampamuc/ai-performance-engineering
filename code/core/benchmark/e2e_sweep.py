@@ -1426,6 +1426,9 @@ def _benchmark_failure_issue_row(
         },
         "evidence_paths": evidence_paths,
         "target": target,
+        "bucket": bucket,
+        "error": failure.get("error"),
+        "failure_reason": failure.get("failure_reason"),
         "benchmark_status": failure.get("status"),
         "benchmark_run_id": failure.get("run_id"),
         "optimization_goal": failure.get("optimization_goal"),
@@ -1447,6 +1450,121 @@ def _benchmark_failure_issue_id(
         issue_id_parts.append(bucket)
     issue_id_parts.append(target)
     return "_".join(_slugify_issue_component(part) for part in issue_id_parts)
+
+
+def _issue_error_text(row: Dict[str, Any]) -> str:
+    for key in ("error", "failure_reason"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    symptom = str(row.get("symptom") or "").strip()
+    if ": " in symptom:
+        return symptom.split(": ", 1)[1].strip()
+    return symptom
+
+
+def _issue_signature(error_text: str) -> Tuple[str, str, Optional[str]]:
+    normalized = re.sub(r"\s+", " ", str(error_text or "").strip())
+    lowered = normalized.lower()
+    if not normalized:
+        return "unknown_failure", "Unknown failure", None
+    if "received sighup" in lowered:
+        return (
+            "received_sighup",
+            "received SIGHUP",
+            "A benchmark process terminated on SIGHUP. Inspect profiler subprocess ownership and benchmark lifecycle handling.",
+        )
+    if "[errno 5]" in lowered or "input/output error" in lowered:
+        return (
+            "errno5_input_output_error",
+            "[Errno 5] Input/output error",
+            "Input/output errors appearing after an earlier termination usually indicate a cascading process-lifecycle or descriptor cleanup failure.",
+        )
+    if "timeout" in lowered:
+        return (
+            "timeout",
+            "timeout",
+            "The benchmark or profiler timed out. Inspect timeout controls, launch replay count, and child-process liveness.",
+        )
+    if "unsupported" in lowered:
+        return (
+            "unsupported_capability",
+            "unsupported capability",
+            "This looks capability-gated. Validate the required hardware/software support before treating it as a benchmark regression.",
+        )
+    compact = re.sub(r"0x[0-9a-f]+", "<hex>", lowered)
+    compact = re.sub(r"\b\d+\b", "<num>", compact)
+    compact = re.sub(r"/\\S+", "<path>", compact)
+    compact = compact[:160]
+    return (f"raw_{_slugify_issue_component(compact)}", normalized[:160], None)
+
+
+def _issue_groups(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    reported_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict) and str(row.get("issue_id") or "").strip().startswith("reported_")
+        and str(row.get("status") or "").strip() != "resolved"
+    ]
+    grouped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for row in reported_rows:
+        stage = str(row.get("stage") or "unknown").strip() or "unknown"
+        benchmark_status = str(row.get("benchmark_status") or row.get("status") or "unknown").strip() or "unknown"
+        signature_key, signature_label, hint = _issue_signature(_issue_error_text(row))
+        key = (stage, benchmark_status, signature_key)
+        bucket = str(row.get("bucket") or "").strip() or None
+        reported_at = str(row.get("reported_at") or "").strip() or None
+        entry = grouped.setdefault(
+            key,
+            {
+                "group_id": f"group_{_slugify_issue_component(stage)}_{_slugify_issue_component(signature_key)}",
+                "stage": stage,
+                "bucket": bucket,
+                "benchmark_status": benchmark_status,
+                "signature_key": signature_key,
+                "signature": signature_label,
+                "root_cause_hint": hint,
+                "count": 0,
+                "issue_ids": [],
+                "sample_targets": [],
+                "first_reported_at": reported_at,
+                "last_reported_at": reported_at,
+            },
+        )
+        entry["count"] += 1
+        entry["issue_ids"].append(row.get("issue_id"))
+        target = str(row.get("target") or "").strip()
+        if target and target not in entry["sample_targets"] and len(entry["sample_targets"]) < 5:
+            entry["sample_targets"].append(target)
+        if reported_at:
+            if not entry.get("first_reported_at") or reported_at < str(entry.get("first_reported_at")):
+                entry["first_reported_at"] = reported_at
+            if not entry.get("last_reported_at") or reported_at > str(entry.get("last_reported_at")):
+                entry["last_reported_at"] = reported_at
+
+    groups = sorted(
+        grouped.values(),
+        key=lambda item: (
+            str(item.get("stage") or ""),
+            -int(item.get("count") or 0),
+            str(item.get("signature_key") or ""),
+        ),
+    )
+    groups_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    for group in groups:
+        groups_by_stage.setdefault(str(group.get("stage") or "unknown"), []).append(group)
+    for stage_groups in groups_by_stage.values():
+        has_signal_group = any(str(group.get("signature_key") or "") == "received_sighup" for group in stage_groups)
+        if not has_signal_group:
+            continue
+        for group in stage_groups:
+            if str(group.get("signature_key") or "") != "errno5_input_output_error":
+                continue
+            group["root_cause_hint"] = (
+                "This I/O error cluster follows a signal-terminated benchmark in the same stage. Treat it as a likely cascade, not hundreds of independent regressions."
+            )
+            group["cascade_from"] = "received_sighup"
+    return groups
 
 
 def _render_issue_evidence(row: Dict[str, Any]) -> str:
@@ -1481,9 +1599,29 @@ def _render_active_issue_ledger_markdown(ledger: Dict[str, Any]) -> str:
         f"- Resolved: `{summary.get('resolved_count', 0)}`",
         f"- Unresolved: `{summary.get('unresolved_count', 0)}`",
         "",
+    ]
+    groups = list(ledger.get("issue_groups") or [])
+    if groups:
+        lines.extend(
+            [
+                "## Incident Groups",
+                "",
+                "| Group | Stage | Count | Signature | Hint |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for group in groups:
+            lines.append(
+                f"| `{group.get('group_id', '')}` | `{group.get('stage', '')}` | `{group.get('count', 0)}` | "
+                f"{group.get('signature', '')} | {group.get('root_cause_hint', '') or '-'} |"
+            )
+        lines.append("")
+    lines.extend(
+        [
         "| Issue | Stage | Status | Symptom | Root cause | Evidence |",
         "| --- | --- | --- | --- | --- | --- |",
-    ]
+        ]
+    )
     for row in ledger.get("rows") or []:
         lines.append(
             f"| `{row.get('issue_id', '')}` | `{row.get('stage', '')}` | `{row.get('status', '')}` | "
@@ -1555,6 +1693,7 @@ def _sync_active_issue_ledger(
         auto_rows_by_id[issue_id] = row
     rows = manual_rows + [auto_rows_by_id[key] for key in sorted(auto_rows_by_id)]
     resolved_count = sum(1 for row in rows if str(row.get("status") or "").strip() == "resolved")
+    issue_groups = _issue_groups(rows)
     ledger_payload = {
         "schema_version": "1.0",
         "preferred_collection_key": "rows",
@@ -1562,10 +1701,13 @@ def _sync_active_issue_ledger(
         "summary": {
             "run_id": run_id,
             "issue_count": len(rows),
+            "reported_issue_count": sum(1 for row in rows if str(row.get("issue_id") or "").strip().startswith("reported_")),
             "resolved_count": resolved_count,
             "unresolved_count": len(rows) - resolved_count,
+            "issue_group_count": len(issue_groups),
         },
         "rows": rows,
+        "issue_groups": issue_groups,
     }
     _write_json(active_issue_json, ledger_payload)
     active_issue_md.write_text(_render_active_issue_ledger_markdown(ledger_payload), encoding="utf-8")
@@ -1576,6 +1718,7 @@ def _sync_active_issue_ledger(
         "historical_failure_ledger_md": str(historical_issue_md) if historical_issue_md.exists() else None,
         "summary": dict(ledger_payload["summary"]),
         "rows": rows,
+        "issue_groups": issue_groups,
     }
 
 
@@ -1898,6 +2041,7 @@ def inspect_benchmark_e2e_sweep_run(
             },
             "stages": stage_snapshots,
             "aggregate_failures": aggregate_failures,
+            "issue_groups": ledgers.get("issue_groups") or [],
             "recent_events": recent_events,
             "ledgers": ledgers,
             "actions": {
@@ -1958,6 +2102,15 @@ def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
             + f"resolved={ledger_summary.get('resolved_count')} "
             + f"unresolved={ledger_summary.get('unresolved_count')}"
         )
+    issue_groups = list(status.get("issue_groups") or [])
+    if issue_groups:
+        lines.append(f"issue_groups={len(issue_groups)}")
+        preview = "; ".join(
+            f"{entry.get('stage')}:{entry.get('signature')} x{entry.get('count')}"
+            for entry in issue_groups[:3]
+        )
+        if preview:
+            lines.append(f"issue_group_preview={preview}")
     if ledgers.get("active_issue_ledger_json"):
         lines.append(f"active_issue_ledger={ledgers.get('active_issue_ledger_json')}")
     notes = list(status.get("notes") or [])

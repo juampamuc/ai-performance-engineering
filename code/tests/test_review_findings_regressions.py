@@ -197,7 +197,7 @@ def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -
     assert "chapter-native exemplars" in readme_text
     assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp`" in readme_text
     assert "custom-versus-library comparison target" in readme_text
-    assert "informational control surface" in readme_text
+    assert "supplementary control benchmark with a local contract" in readme_text
     assert "matmul_tiled_fast" in readme_text
     assert "historical baseline/optimized filenames" not in readme_text
     assert "tcgen05-versus-cuBLAS bridge control" in baseline_tcgen05_text
@@ -205,38 +205,57 @@ def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -
     assert "Custom tcgen05 kernel side of the comparison pair." in optimized_tcgen05_text
 
 
-def test_ch08_tcgen05_custom_vs_cublas_is_informational() -> None:
-    assert "tcgen05_custom_vs_cublas" in INFORMATIONAL_BENCHMARKS["ch08"]
+def test_ch08_tcgen05_custom_vs_cublas_is_not_informational() -> None:
+    assert "tcgen05_custom_vs_cublas" not in INFORMATIONAL_BENCHMARKS.get("ch08", set())
 
 
-def test_ch06_launch_bounds_pair_is_informational_small_effect_case() -> None:
+def test_ch06_launch_bounds_pair_uses_local_contract_small_effect_case() -> None:
     readme_text = _read("ch06/README.md")
+    baseline_text = _read("ch06/baseline_launch_bounds.py")
+    optimized_text = _read("ch06/optimized_launch_bounds.py")
 
-    assert "launch_bounds" in INFORMATIONAL_BENCHMARKS["ch06"]
-    assert "launch_bounds_cuda" in INFORMATIONAL_BENCHMARKS["ch06"]
+    assert "launch_bounds" not in INFORMATIONAL_BENCHMARKS.get("ch06", set())
+    assert "launch_bounds_cuda" not in INFORMATIONAL_BENCHMARKS.get("ch06", set())
     assert "small-effect teaching cases" in readme_text
-    assert "informational surfaces" in readme_text
+    assert "local expectation-backed contracts" in readme_text
+    assert "self.kernel_launches_per_timed_call = 96" in baseline_text
+    assert "self.kernel_launches_per_timed_call = 96" in optimized_text
 
 
-def test_occupancy_tuning_low_warp_reference_schedule_is_informational() -> None:
+def test_ch04_gradient_fusion_batches_reductions_per_timed_call() -> None:
+    common_text = _read("ch04/gradient_fusion_common.py")
+
+    assert "reduction_repeats: int = 16" in common_text
+    assert "requests_per_iteration=float(self.reduction_repeats)" in common_text
+    assert "tokens_per_iteration=float(total_bytes * self.reduction_repeats)" in common_text
+    assert "for _ in range(self.reduction_repeats):" in common_text
+    assert "accum.add_(self.fused_tensor.sum())" in common_text
+    assert "accum.add_(tensor.sum())" in common_text
+
+
+def test_ch08_tiling_bridge_control_batches_enough_inner_iterations() -> None:
+    tiling_base = _read("ch08/tiling_benchmark_base.py")
+
+    assert "inner_iterations: int = 12" in tiling_base
+
+
+def test_occupancy_tuning_low_warp_reference_schedule_uses_local_contract() -> None:
     readme_text = _read("labs/occupancy_tuning/README.md")
     schedule_text = _read("labs/occupancy_tuning/triton_matmul_schedules.py")
 
-    assert "proton_matmul_bm64_bn64_bk32_nw2" in INFORMATIONAL_BENCHMARKS["occupancy_tuning"]
+    assert "proton_matmul_bm64_bn64_bk32_nw2" not in INFORMATIONAL_BENCHMARKS.get("occupancy_tuning", set())
     assert "verifying Proton vs Nsight agreement" in schedule_text
-    assert "informational control surface" in readme_text
+    assert "supplementary local-contract schedule benchmark" in readme_text
     assert "canonical speed claims stay on" in readme_text
 
 
-def test_nvfp4_group_gemm_case012_are_informational_small_effect_controls() -> None:
+def test_nvfp4_group_gemm_case012_are_local_contract_small_effect_controls() -> None:
     readme_text = _read("labs/nvfp4_group_gemm/README.md")
 
-    assert {
-        "nvfp4_group_gemm_case0",
-        "nvfp4_group_gemm_case1",
-        "nvfp4_group_gemm_case2",
-    }.issubset(INFORMATIONAL_BENCHMARKS["nvfp4_group_gemm"])
-    assert "informational control surface" in readme_text
+    assert "nvfp4_group_gemm_case0" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "nvfp4_group_gemm_case1" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "nvfp4_group_gemm_case2" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "local-contract speed benchmarks" in readme_text
     assert "older strict all-case snapshots" in readme_text
     assert "case3 route" in readme_text
 
@@ -633,13 +652,13 @@ def test_portable_rerun_ignores_informational_targets_for_expectation_queueing()
     assert _is_informational_benchmark("ch05", {"example": "ai"}) is True
     assert _is_informational_benchmark("ch12", {"example": "cuda_graphs_conditional"}) is True
     assert _is_informational_benchmark("ch20", {"example": "pipeline_sequential"}) is True
-    assert _is_informational_benchmark("labs_decode_optimization", {"example": "decode_pinned"}) is True
-    assert _is_informational_benchmark("labs_fullstack_cluster", {"example": "cluster_gemm_tcgen05"}) is True
-    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case0"}) is True
-    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case1"}) is True
-    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case2"}) is True
-    assert _is_informational_benchmark("labs_persistent_decode", {"example": "nvlink_offload"}) is True
-    assert _is_informational_benchmark("labs_persistent_decode", {"example": "paged_kv_offload"}) is True
+    assert _is_informational_benchmark("labs_decode_optimization", {"example": "decode_pinned"}) is False
+    assert _is_informational_benchmark("labs_fullstack_cluster", {"example": "cluster_gemm_tcgen05"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case0"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case1"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case2"}) is False
+    assert _is_informational_benchmark("labs_persistent_decode", {"example": "nvlink_offload"}) is False
+    assert _is_informational_benchmark("labs_persistent_decode", {"example": "paged_kv_offload"}) is False
     assert _is_informational_benchmark("ch13", {"example": "kv_cache_naive"}) is False
 
 
@@ -954,8 +973,8 @@ def test_ch18_and_fullstack_pairs_keep_semantics_fixed() -> None:
     assert "k_slice = self.model.k_cache[:, start:end]" in optimized_flexdecode
     assert 'route_mode="uniform"' in moe_common
     assert 'route_mode="topology_aware" if optimized else "uniform"' not in moe_common
-    assert "cluster_gemm_tcgen05" in INFORMATIONAL_BENCHMARKS.get("fullstack_cluster", set())
-    assert "supplementary informational control surface" in fullstack_readme
+    assert "cluster_gemm_tcgen05" not in INFORMATIONAL_BENCHMARKS.get("fullstack_cluster", set())
+    assert "supplementary control benchmark with a local contract" in fullstack_readme
     assert "canonical speed claim stays on `cluster_gemm`" in fullstack_readme
 
 
@@ -1017,27 +1036,31 @@ def test_persistent_decode_keeps_canonical_iteration_parity_and_marks_cuda_varia
     assert "iterations=5" in cuda_source
     assert "use_subprocess=True" in cuda_source
     assert "persistent_decode_cuda" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
-    assert "nvlink_offload" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
-    assert "paged_kv_offload" in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
+    assert "nvlink_offload" not in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
+    assert "paged_kv_offload" not in INFORMATIONAL_BENCHMARKS.get("persistent_decode", set())
 
 
-def test_decode_optimization_keeps_decode_streams_canonical_and_marks_decode_pinned_informational() -> None:
+def test_decode_optimization_keeps_decode_streams_canonical_and_marks_decode_pinned_local_contract() -> None:
     baseline_source = _read("labs/decode_optimization/baseline_decode.py")
+    pinned_baseline = _read("labs/decode_optimization/baseline_decode_pinned.py")
     pinned_source = _read("labs/decode_optimization/optimized_decode_pinned.py")
     streams_baseline = _read("labs/decode_optimization/baseline_decode_streams.py")
     streams_optimized = _read("labs/decode_optimization/optimized_decode_streams.py")
     readme_text = _read("labs/decode_optimization/README.md")
 
-    assert "decode_pinned" in INFORMATIONAL_BENCHMARKS.get("decode_optimization", set())
+    assert "decode_pinned" not in INFORMATIONAL_BENCHMARKS.get("decode_optimization", set())
     assert "host_payload_mb=512" not in baseline_source
-    assert "host_payload_mb=512" not in pinned_source
+    assert "host_payload_mb=512" in pinned_baseline
+    assert "use_pinned_host=False" in pinned_baseline
+    assert "host_payload_mb=512" in pinned_source
+    assert "use_pinned_host=True" in pinned_source
     assert "host_payload_mb=512" in streams_baseline
     assert "host_payload_mb=512" in streams_optimized
     assert "decode_pinned" in readme_text
-    assert "informational control surface" in readme_text
+    assert "supplementary local-contract speed benchmark" in readme_text
     assert "decode_streams" in readme_text
     assert "large host payload" in readme_text
-    assert "informational control surfaces" in readme_text
+    assert "non-headline benchmarks" in readme_text
 
 
 def test_ch20_bf16_mlp_no_longer_claims_fused_ops() -> None:

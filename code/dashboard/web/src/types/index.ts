@@ -269,6 +269,21 @@ export interface BenchmarkE2EStatusStage {
   failed_benchmarks?: Array<Record<string, unknown>>;
 }
 
+export interface BenchmarkE2EIssueGroup {
+  group_id: string;
+  stage: string;
+  bucket?: string | null;
+  benchmark_status?: string | null;
+  signature: string;
+  signature_key?: string | null;
+  root_cause_hint?: string | null;
+  count: number;
+  sample_targets?: string[];
+  first_reported_at?: string | null;
+  last_reported_at?: string | null;
+  cascade_from?: string | null;
+}
+
 export interface BenchmarkE2EStatusSnapshot {
   success: boolean;
   error?: string;
@@ -304,6 +319,7 @@ export interface BenchmarkE2EStatusSnapshot {
     child_progress?: Record<string, unknown> | null;
     child_artifacts?: Record<string, string | null> | null;
     recent_child_events?: Array<Record<string, unknown>>;
+    reported_failures?: Array<Record<string, unknown>>;
   };
   liveness?: {
     orchestrator_pid?: number | null;
@@ -320,6 +336,7 @@ export interface BenchmarkE2EStatusSnapshot {
     last_action?: Record<string, unknown> | null;
   } | null;
   stages?: BenchmarkE2EStatusStage[];
+  issue_groups?: BenchmarkE2EIssueGroup[];
   recent_events?: Array<Record<string, unknown>>;
   ledgers?: Record<string, string | null>;
   actions?: {

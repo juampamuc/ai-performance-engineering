@@ -21,11 +21,11 @@ Fresh portable B200 reruns on this host kept cases 0-2 in the small-effect band:
 
 | Target | Baseline | Optimized | Measured delta | Contract |
 | --- | ---: | ---: | ---: | --- |
-| `nvfp4_group_gemm_case0` | `2.408 ms` | `2.377 ms` | `1.01x` | informational control surface |
-| `nvfp4_group_gemm_case1` | `2.079 ms` | `2.021 ms` | `1.03x` | informational control surface |
-| `nvfp4_group_gemm_case2` | `0.615 ms` | `0.594 ms` | `1.04x` | informational control surface |
+| `nvfp4_group_gemm_case0` | `2.408 ms` | `2.377 ms` | `1.01x` | local-contract speed benchmark |
+| `nvfp4_group_gemm_case1` | `2.079 ms` | `2.021 ms` | `1.03x` | local-contract speed benchmark |
+| `nvfp4_group_gemm_case2` | `0.615 ms` | `0.594 ms` | `1.04x` | local-contract speed benchmark |
 
-The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for these three harness targets on this host. Treat `case0`, `case1`, and `case2` as supplementary informational control surfaces; keep canonical speed claims on the still-winning case routes and on the stricter ABAB/router tuning workflow.
+The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for these three harness targets on this host. Treat `case0`, `case1`, and `case2` as supplementary local-contract speed benchmarks; keep canonical speed claims on the still-winning case routes and on the stricter ABAB/router tuning workflow.
 
 ## Profiler Evidence
 ```bash
@@ -65,9 +65,9 @@ python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile minimal
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/nvfp4_group_gemm:nvfp4_group_gemm_case3 --profile minimal` should keep the promoted case3 route verification-clean.
-- `nvfp4_group_gemm_case0`, `nvfp4_group_gemm_case1`, and `nvfp4_group_gemm_case2` remain informational control surfaces; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.
+- `nvfp4_group_gemm_case0`, `nvfp4_group_gemm_case1`, and `nvfp4_group_gemm_case2` remain supplementary local-contract speed benchmarks; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.
 - Default changes should still be gated by the stricter ABAB/verify process documented in the codebase notes, not by a single benchmark run.
 
 ## Notes
 - This lab is intentionally stricter than a normal benchmark pair because grouped-GEMM route tuning is unusually noise-prone.
-- The benchmark harness now treats `case0`, `case1`, and `case2` as informational control surfaces on this host-aligned repo surface, because fresh portable B200 reruns only reproduced 1.01-1.04x gains while preserving clean verification and profiler coverage.
+- The benchmark harness now treats `case0`, `case1`, and `case2` as real local-contract speed benchmarks on this host-aligned repo surface, because fresh portable B200 reruns only reproduced 1.01-1.04x gains while preserving clean verification and profiler coverage.

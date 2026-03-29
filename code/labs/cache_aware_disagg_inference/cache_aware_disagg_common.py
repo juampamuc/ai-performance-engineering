@@ -450,6 +450,10 @@ class CacheAwareDisaggBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=4, warmup=5, measurement_timeout_seconds=900)
 
+    def get_optimization_goal(self) -> str:
+        """Single-GPU cache-aware disaggregation is judged here as a locality control surface."""
+        return "control"
+
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 

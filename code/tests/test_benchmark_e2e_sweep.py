@@ -1916,17 +1916,125 @@ def test_inspect_benchmark_e2e_sweep_run_syncs_active_issue_ledger_from_live_fai
     assert synced_ledger["schema_version"] == "1.0"
     assert synced_ledger["preferred_collection_key"] == "rows"
     assert synced_ledger["collection_aliases"] == {"issues": "rows"}
-    assert synced_ledger["summary"] == {
-        "run_id": run_id,
-        "issue_count": 2,
-        "resolved_count": 1,
-        "unresolved_count": 1,
-    }
+    assert synced_ledger["summary"]["run_id"] == run_id
+    assert synced_ledger["summary"]["issue_count"] == 2
+    assert synced_ledger["summary"]["resolved_count"] == 1
+    assert synced_ledger["summary"]["unresolved_count"] == 1
+    assert synced_ledger["summary"]["reported_issue_count"] == 1
+    assert synced_ledger["summary"]["issue_group_count"] == 1
     issue_ids = [row["issue_id"] for row in synced_ledger["rows"]]
     assert "tier1_goalaware_regression_summary" in issue_ids
     assert "reported_full_sweep_single_gpu_ch13_memory_profiling" in issue_ids
+    assert synced_ledger["summary"]["issue_group_count"] == 1
+    assert synced_ledger["issue_groups"][0]["signature"] == "Best speedup 1.00x below required 1.05x threshold for speed-goal benchmark"
     markdown = (run_dir / "active_issue_ledger.md").read_text(encoding="utf-8")
     assert "ch13:memory_profiling" in markdown
+
+
+def test_inspect_benchmark_e2e_sweep_run_preserves_local_no_speedup_threshold_from_child_events(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_id = "e2e_local_threshold_issue_sync"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    child_run_id = f"{run_id}__full_sweep__single"
+    child_paths = e2e_sweep._benchmark_run_event_paths(
+        child_run_id,
+        repo_root=tmp_path,
+        artifacts_dir=str(artifacts_dir),
+    )
+    child_paths["events"].parent.mkdir(parents=True, exist_ok=True)
+    child_paths["events"].write_text(
+        json.dumps(
+            {
+                "event_type": "example_end",
+                "timestamp": "2026-03-27T16:20:34.180782",
+                "run_id": child_run_id,
+                "chapter": "ch06",
+                "example": "launch_bounds",
+                "status": "failed_no_speedup",
+                "best_speedup": 1.006,
+                "best_memory_savings_pct": 0.0,
+                "optimization_goal": "speed",
+                "error": "Best speedup 1.006x below required 1.007x threshold for speed-goal benchmark",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    child_paths["output_json"].parent.mkdir(parents=True, exist_ok=True)
+    child_paths["output_json"].write_text(json.dumps({"results": []}), encoding="utf-8")
+
+    stage_payload = [
+        {
+            "name": "full_sweep",
+            "enabled": True,
+            "run_id": f"{run_id}__full_sweep",
+            "status": "running",
+            "attempts": [
+                {
+                    "run_id": child_run_id,
+                    "bucket": "single_gpu",
+                    "status": "running",
+                    "active_unit": "ch06",
+                    "completed_units": [],
+                }
+            ],
+        }
+    ]
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "running",
+        "overall_status": "running",
+        "updated_at": "2026-03-27T16:00:00Z",
+        "resume_available": True,
+        "stages": stage_payload,
+        "contract": {"run_full_sweep": True, "full_sweep_suite_timeout": 0},
+    }
+    checkpoint_payload = dict(summary_payload)
+    checkpoint_payload["orchestrator_pid"] = 123
+    progress_payload = {
+        "run_id": run_id,
+        "current": {
+            "timestamp": "2026-03-27T16:21:00+00:00",
+            "step": "full_sweep/single_gpu:ch06:launch_bounds",
+            "step_detail": "timing (optimized)",
+            "percent_complete": 48.0,
+            "metrics": {
+                "run_state": "running",
+                "overall_status": "running",
+                "current_stage": "full_sweep",
+                "current_stage_run_id": child_run_id,
+                "current_bucket": "single_gpu",
+                "orchestrator_pid": 123,
+                "stages": stage_payload,
+            },
+        },
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(checkpoint_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(json.dumps(progress_payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: int(pid or 0) == 123)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(
+        run_id=run_id,
+        repo_root=tmp_path,
+        artifacts_dir=str(artifacts_dir),
+        recent_events_limit=5,
+    )
+
+    assert status["current"]["reported_failures"][0]["target"] == "ch06:launch_bounds"
+    synced_ledger = json.loads((run_dir / "active_issue_ledger.json").read_text(encoding="utf-8"))
+    assert synced_ledger["issue_groups"][0]["signature"] == (
+        "Best speedup 1.006x below required 1.007x threshold for speed-goal benchmark"
+    )
+    row = next(item for item in synced_ledger["rows"] if item["issue_id"] == "reported_full_sweep_single_gpu_ch06_launch_bounds")
+    assert row["symptom"].endswith(
+        "Best speedup 1.006x below required 1.007x threshold for speed-goal benchmark"
+    )
 
 
 def test_inspect_benchmark_e2e_sweep_run_detects_stale_running_and_builds_resume_command(tmp_path: Path, monkeypatch) -> None:
@@ -2130,10 +2238,12 @@ def test_inspect_benchmark_e2e_sweep_run_preserves_terminal_full_sweep_failures_
     assert status["ledgers"]["summary"]["issue_count"] == 3
     assert status["ledgers"]["summary"]["resolved_count"] == 1
     assert status["ledgers"]["summary"]["unresolved_count"] == 2
+    assert status["issue_groups"]
 
     rendered = e2e_sweep.render_benchmark_e2e_status_text(status)
     assert "reported_failures=2" in rendered
     assert "active_issue_counts=issues=3 resolved=1 unresolved=2" in rendered
+    assert "issue_groups=" in rendered
     assert "ch06:launch_bounds[failed_no_speedup]" in rendered
     assert "ch13:regional_compile[failed_no_speedup]" in rendered
 
@@ -2256,6 +2366,83 @@ def test_inspect_benchmark_e2e_sweep_run_preserves_resolved_reported_issue_rows(
     assert status["current"]["reported_failures"] == []
     rendered = e2e_sweep.render_benchmark_e2e_status_text(status)
     assert "reported_failures=" not in rendered
+
+
+def test_inspect_benchmark_e2e_sweep_run_groups_cascade_failures(tmp_path: Path, monkeypatch) -> None:
+    run_id = "e2e_grouped_cascade"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "completed",
+        "overall_status": "failed",
+        "updated_at": "2026-03-28T05:30:00Z",
+        "resume_available": False,
+        "stages": [
+            {
+                "name": "full_sweep",
+                "enabled": True,
+                "run_id": f"{run_id}__full_sweep",
+                "status": "failed",
+                "attempts": [
+                    {
+                        "run_id": f"{run_id}__full_sweep__single",
+                        "bucket": "single_gpu",
+                        "status": "failed",
+                        "benchmark_summary": {
+                            "failed_benchmarks": [
+                                {
+                                    "target": "ch07:matmul_tiled",
+                                    "status": "failed_error",
+                                    "error": "Baseline execution failed: received SIGHUP",
+                                },
+                                {
+                                    "target": "ch07:memory_access",
+                                    "status": "failed_error",
+                                    "error": "Baseline execution failed: [Errno 5] Input/output error",
+                                },
+                            ],
+                            "skipped_benchmarks": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "current": {
+                    "timestamp": "2026-03-28T05:30:00+00:00",
+                    "metrics": {
+                        "run_state": "completed",
+                        "overall_status": "failed",
+                        "stages": summary_payload["stages"],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=tmp_path)
+
+    groups = status["issue_groups"]
+    assert len(groups) == 2
+    signatures = {group["signature_key"] for group in groups}
+    assert "received_sighup" in signatures
+    assert "errno5_input_output_error" in signatures
+    errno_group = next(group for group in groups if group["signature_key"] == "errno5_input_output_error")
+    assert errno_group["cascade_from"] == "received_sighup"
+    rendered = e2e_sweep.render_benchmark_e2e_status_text(status)
+    assert "issue_group_preview=" in rendered
 
 
 def test_watch_benchmark_e2e_sweep_run_launches_detached_watcher(monkeypatch, tmp_path: Path) -> None:

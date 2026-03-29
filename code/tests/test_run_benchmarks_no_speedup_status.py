@@ -12,6 +12,8 @@ def test_should_fail_no_speedup_only_for_speed_goal_below_threshold() -> None:
     assert _should_fail_no_speedup({"optimization_goal": "speed", "best_speedup": 1.04}) is True
     assert _should_fail_no_speedup({"optimization_goal": "speed", "best_speedup": 1.05}) is False
     assert _should_fail_no_speedup({"optimization_goal": "memory", "best_speedup": 1.00}) is False
+    assert _should_fail_no_speedup({"optimization_goal": "control", "best_speedup": 1.00}) is False
+    assert _should_fail_no_speedup({"optimization_goal": "tradeoff", "best_speedup": 0.98}) is False
 
 
 def test_generate_markdown_report_surfaces_failed_no_speedup(tmp_path: Path) -> None:
@@ -28,8 +30,15 @@ def test_generate_markdown_report_surfaces_failed_no_speedup(tmp_path: Path) -> 
         "baseline_time_ms": 10.0,
         "best_speedup": 1.02,
         "optimization_goal": "speed",
+        "minimum_required_speedup": 1.03,
         "status": "failed_no_speedup",
-        "error": _format_failed_no_speedup({"best_speedup": 1.02, "optimization_goal": "speed"}),
+        "error": _format_failed_no_speedup(
+            {
+                "best_speedup": 1.02,
+                "optimization_goal": "speed",
+                "minimum_required_speedup": 1.03,
+            }
+        ),
         "optimizations": [
             {
                 "file": "optimized_example.py",
@@ -70,8 +79,8 @@ def test_generate_markdown_report_surfaces_failed_no_speedup(tmp_path: Path) -> 
     generate_markdown_report(results, output_md, bench_root=bench_root)
 
     report_text = output_md.read_text(encoding="utf-8")
-    assert "No speedup (<1.05x, speed goal): 1" in report_text
-    assert "No speedup: Best speedup 1.02x below required 1.05x threshold for speed-goal benchmark" in report_text
+    assert "No speedup (below required speed-goal contract): 1" in report_text
+    assert "No speedup: Best speedup 1.02x below required 1.03x threshold for speed-goal benchmark" in report_text
 
 
 def test_collect_all_skipped_optimization_reason_normalizes_skip_prefixes() -> None:

@@ -788,11 +788,7 @@ def get_benchmark():
 
 def test_is_informational_benchmark_supports_lab_scope_aliases() -> None:
     informative_paths = [
-        Path("labs/decode_optimization/optimized_decode_pinned.py").resolve(),
         Path("labs/persistent_decode/optimized_persistent_decode_cuda.py").resolve(),
-        Path("labs/persistent_decode/optimized_nvlink_offload.py").resolve(),
-        Path("labs/persistent_decode/optimized_paged_kv_offload.py").resolve(),
-        Path("labs/fullstack_cluster/optimized_cluster_gemm_tcgen05.py").resolve(),
     ]
 
     for path in informative_paths:

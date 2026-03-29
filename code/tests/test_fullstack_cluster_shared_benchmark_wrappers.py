@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -107,6 +108,72 @@ def test_moe_hybrid_ep_entrypoint_routes_optimized_flag_and_remainder() -> None:
         optimized=True,
         argv=["--skip-preflight", "--iters", "3"],
     )
+
+
+def test_moe_hybrid_ep_run_cli_discards_single_gpu_warmup_steps() -> None:
+    from labs.fullstack_cluster import moe_hybrid_ep_common as common
+
+    topology = SimpleNamespace(rank=0, world_size=1)
+    observed_history = []
+
+    class FakeTrainer:
+        def __init__(self, args, topo, *, optimized):
+            self.calls = 0
+
+        def run_step(self):
+            self.calls += 1
+            return common.StepArtifacts(
+                metrics={"moe.step.total_ms": float(self.calls)},
+                loss=float(self.calls),
+            )
+
+    def fake_summary(**kwargs):
+        observed_history.extend(step.metrics["moe.step.total_ms"] for step in kwargs["step_history"])
+        return {"moe.step.total_ms": observed_history[-1]}
+
+    with (
+        mock.patch.object(common, "init_topology", return_value=topology),
+        mock.patch.object(common, "HybridEPTrainer", FakeTrainer),
+        mock.patch.object(common, "summarize_and_write_report", side_effect=fake_summary),
+        mock.patch.object(common, "shutdown_topology"),
+    ):
+        result = common.run_cli(optimized=False, argv=["--skip-preflight", "--iters", "3"])
+
+    assert observed_history == [6.0, 7.0, 8.0]
+    assert result == {"moe.step.total_ms": 8.0}
+
+
+def test_moe_hybrid_ep_run_cli_discards_multigpu_warmup_steps() -> None:
+    from labs.fullstack_cluster import moe_hybrid_ep_common as common
+
+    topology = SimpleNamespace(rank=0, world_size=2)
+    observed_history = []
+
+    class FakeTrainer:
+        def __init__(self, args, topo, *, optimized):
+            self.calls = 0
+
+        def run_step(self):
+            self.calls += 1
+            return common.StepArtifacts(
+                metrics={"moe.step.total_ms": float(self.calls)},
+                loss=float(self.calls),
+            )
+
+    def fake_summary(**kwargs):
+        observed_history.extend(step.metrics["moe.step.total_ms"] for step in kwargs["step_history"])
+        return {"moe.step.total_ms": observed_history[-1]}
+
+    with (
+        mock.patch.object(common, "init_topology", return_value=topology),
+        mock.patch.object(common, "HybridEPTrainer", FakeTrainer),
+        mock.patch.object(common, "summarize_and_write_report", side_effect=fake_summary),
+        mock.patch.object(common, "shutdown_topology"),
+    ):
+        result = common.run_cli(optimized=True, argv=["--skip-preflight", "--iters", "2"])
+
+    assert observed_history == [3.0, 4.0]
+    assert result == {"moe.step.total_ms": 4.0}
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for benchmark wrappers")

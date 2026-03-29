@@ -1,4 +1,4 @@
-"""Optimized: Pinned host memory without stream or compiler changes."""
+"""Baseline for pinned-host decode: pageable staging on the transfer-heavy workload."""
 
 from __future__ import annotations
 
@@ -6,12 +6,7 @@ from labs.decode_optimization.decode_common import DecodeBenchmark, DecodeConfig
 
 
 def get_benchmark() -> DecodeBenchmark:
-    """Pinned-memory-only decode variant.
-
-    Keep the workload identical to `baseline_decode_pinned.py` and change only
-    the host allocation strategy so this target isolates pageable vs pinned
-    staging on a transfer-heavy workload.
-    """
+    """Pageable-host decode variant for the pinned-memory control pair."""
     cfg = DecodeConfig(
         batch_size=64,
         prompt_tokens=2048,
@@ -19,11 +14,12 @@ def get_benchmark() -> DecodeBenchmark:
         prefetch_batches=2,
         host_payload_mb=512,
         hidden_size=256,
-        use_pinned_host=True,
+        use_pinned_host=False,
         use_copy_stream=False,
         use_compute_stream=False,
+        use_cuda_graphs=False,
         use_torch_compile=False,
-        label="optimized_decode_pinned",
+        label="baseline_decode_pinned",
         iterations=12,
         warmup=15,
     )

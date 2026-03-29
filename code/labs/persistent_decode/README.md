@@ -26,7 +26,7 @@ Representative validated results from `artifacts/runs/20260302_full_strict_all_s
 
 The decode win is a launch-overhead story. The prefill win is a staging/data-movement story. This lab is more useful when you keep those two categories separate.
 
-The direct transport swaps `nvlink_offload` and `paged_kv_offload` remain informational control surfaces. The canonical KV-offload overlap claim stays on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics.
+Fresh portable reruns from `artifacts/runs/20260329_truth_nvlink_offload_postfix/`, `artifacts/runs/20260329_truth_nvlink_offload_contract_postfix/`, and `artifacts/runs/20260329_truth_paged_kv_offload_postfix/` measured `nvlink_offload` at `1.25x` and then `0.99x`, while `paged_kv_offload` held at `1.74x` on this host. Treat `nvlink_offload` as a supplementary transport-control benchmark on single-GPU `b200`, not as a truthful speed gate. Keep `paged_kv_offload` as a real speed benchmark, and keep the canonical KV-offload overlap claim on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics.
 
 ## Profiler Evidence
 Use deep-dive runs when you want to see launch count and staging behavior instead of only the wall-clock delta:
@@ -69,7 +69,7 @@ python -m cli.aisp bench run --targets labs/persistent_decode --profile minimal
 - Use `--target-extra-arg labs/persistent_decode:<workload>="--flag value"` to sweep schedule knobs.
 - Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.
 - Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
-- `nvlink_offload` and `paged_kv_offload` are informational control surfaces; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.
+- `nvlink_offload` is a single-GPU transport-control benchmark on `b200`; `paged_kv_offload` remains a real speed benchmark; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/persistent_decode --profile minimal` compares all persistent/TMA variants in one sweep.

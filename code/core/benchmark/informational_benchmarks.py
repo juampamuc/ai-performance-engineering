@@ -8,10 +8,6 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     "ch04": {"dataparallel_basic"},
     # Ch5: overlap/control demo remains useful, but no longer carries a canonical speed claim.
     "ch05": {"ai"},
-    # Ch6: launch-bounds examples are small-effect teaching cases, not canonical speed claims.
-    "ch06": {"launch_bounds", "launch_bounds_cuda"},
-    # Ch8: custom-vs-library tcgen05 control pair is a narrative/control surface, not a headline speed claim.
-    "ch08": {"tcgen05_custom_vs_cublas"},
     # Ch12: Graph CUDA demos show graph capture patterns.
     "ch12": {"graph_cuda", "cuda_graphs_conditional"},
     # Ch13: compound optimization, exploratory KV-cache, and torchao FP8 recipe demos stay noncanonical.
@@ -38,31 +34,11 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     "ch20": {"pipeline_sequential"},
     # Labs: Dynamic router demos show routing patterns.
     "dynamic_router": {"dynamic_router", "router_vectorized"},
-    # Labs: standalone pinned-host decode is a stepping-stone/control variant; the canonical
-    # host-overhead claim stays on decode_streams where the benchmark actually carries a large
-    # staged payload through the host-transfer path.
-    "decode_optimization": {"decode_pinned"},
-    # Labs: Full-stack tcgen05 follow-up is useful for profiling, but the canonical speed claim
-    # remains on the coarse cluster_gemm path where the end-to-end win is material.
-    "fullstack_cluster": {"cluster_gemm_tcgen05"},
-    # Labs: the low-warp occupancy schedule is a useful Proton-vs-Nsight reference, but the
-    # canonical speed claims stay on the main proton_matmul target and the larger winning tiles.
-    "occupancy_tuning": {"proton_matmul_bm64_bn64_bk32_nw2"},
     # Labs: Persistent decode transport/control demos stay informational; canonical wins come from
-    # the graph-backed decode path, TMA prefill, and the explicit paged-KV prefetch overlap pair.
+    # the graph-backed decode CUDA variant and KV-locality microbench.
     "persistent_decode": {
         "kv_locality_microbench",
         "persistent_decode_cuda",
-        "nvlink_offload",
-        "paged_kv_offload",
-    },
-    # Labs: grouped-GEMM case0-2 remain useful routing/control references, but on the current
-    # virtualized B200 host they only show small deltas; keep canonical speed claims on case3
-    # and the stricter ABAB/router tooling instead of sweep-gating these three surfaces.
-    "nvfp4_group_gemm": {
-        "nvfp4_group_gemm_case0",
-        "nvfp4_group_gemm_case1",
-        "nvfp4_group_gemm_case2",
     },
 }
 

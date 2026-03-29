@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,9 @@ from labs.cache_aware_disagg_inference.cache_aware_disagg_multigpu_common import
     CacheAwareDisaggMultiGPUConfig,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LAB_DIR = REPO_ROOT / "labs" / "cache_aware_disagg_inference"
+
 
 def _load_module(module_path: Path):
     spec = importlib.util.spec_from_file_location(module_path.stem, module_path)
@@ -25,6 +29,19 @@ def _load_module(module_path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_cache_aware_disagg_single_gpu_surface_is_locality_control_contract() -> None:
+    bench = CacheAwareDisaggBenchmark(
+        optimized=True,
+        label="optimized_cache_aware_disagg_test",
+    )
+    payload = json.loads((LAB_DIR / "expectations_b200.json").read_text(encoding="utf-8"))
+    entry = payload["examples"]["cache_aware_disagg"]
+
+    assert bench.get_optimization_goal() == "control"
+    assert entry["metadata"]["optimization_goal"] == "control"
+    assert "minimum_required_speedup" not in entry["metadata"]
 
 
 @pytest.mark.parametrize(

@@ -1041,6 +1041,29 @@ def _coerce_positive_float(value: Any) -> Optional[float]:
 _MIN_SPEEDUP_FOR_SUCCESS = 1.05
 
 
+def _format_speedup_ratio(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    rounded_two = round(value, 2)
+    if abs(value - rounded_two) >= 1e-3:
+        return f"{value:.3f}x"
+    return f"{value:.2f}x"
+
+
+def _resolve_local_contract_from_expectation(
+    expectation_entry: Optional[ExpectationEntry],
+) -> tuple[Optional[str], Optional[float]]:
+    if expectation_entry is None:
+        return None, None
+
+    goal_raw = str(expectation_entry.optimization_goal or "").strip().lower()
+    optimization_goal = goal_raw or None
+
+    minimum_required_speedup = _coerce_positive_float(expectation_entry.minimum_required_speedup)
+
+    return optimization_goal, minimum_required_speedup
+
+
 def _resolve_min_speedup_for_success(result_entry: Dict[str, Any]) -> float:
     configured = _coerce_finite_float(result_entry.get("minimum_required_speedup"))
     if configured is None or configured <= 0:
@@ -1060,11 +1083,11 @@ def _should_fail_no_speedup(result_entry: Dict[str, Any]) -> bool:
 
 def _format_failed_no_speedup(result_entry: Dict[str, Any]) -> str:
     best_speedup = _coerce_finite_float(result_entry.get("best_speedup"))
-    rendered_speedup = f"{best_speedup:.2f}x" if best_speedup is not None else "n/a"
+    rendered_speedup = _format_speedup_ratio(best_speedup)
     required_speedup = _resolve_min_speedup_for_success(result_entry)
     return (
         f"Best speedup {rendered_speedup} below required "
-        f"{required_speedup:.2f}x threshold for speed-goal benchmark"
+        f"{_format_speedup_ratio(required_speedup)} threshold for speed-goal benchmark"
     )
 
 
@@ -5323,6 +5346,13 @@ def _test_chapter_impl(
                 'status': 'failed_error',
                 'error': None,
             }
+            example_key = expectation_example_key(example_name, example_type)
+            local_expectation = expectations_store.get_entry(example_key)
+            expectation_goal, expectation_min_speedup = _resolve_local_contract_from_expectation(local_expectation)
+            if expectation_goal:
+                result_entry['optimization_goal'] = expectation_goal
+            if expectation_min_speedup is not None:
+                result_entry['minimum_required_speedup'] = expectation_min_speedup
 
             baseline_signature = None
             baseline_equivalence = None
@@ -6110,10 +6140,15 @@ def _test_chapter_impl(
                 try:
                     if optimized_benchmark is not None:
                         opt_goal = optimized_benchmark.get_optimization_goal()
-                        result_entry['optimization_goal'] = opt_goal
+                        if not expectation_goal:
+                            result_entry['optimization_goal'] = opt_goal
                         min_speedup = optimized_benchmark.get_min_speedup_for_success()
                         min_speedup_f = _coerce_finite_float(min_speedup)
-                        if min_speedup_f is not None and min_speedup_f > 0:
+                        if (
+                            expectation_min_speedup is None
+                            and min_speedup_f is not None
+                            and min_speedup_f > 0
+                        ):
                             result_entry['minimum_required_speedup'] = min_speedup_f
                 except AttributeError:
                     pass  # Old benchmarks without get_optimization_goal()
@@ -7462,6 +7497,7 @@ def _test_chapter_impl(
                         best_optimization_name=best_opt.get("technique") or best_opt.get("file"),
                         best_optimization_file=best_opt.get("file"),
                         best_optimization_technique=best_opt.get("technique"),
+                        minimum_required_speedup=_coerce_positive_float(result_entry.get("minimum_required_speedup")),
                     )
                     update_result = None
                     if expectation_validation_enabled:
@@ -7673,9 +7709,18 @@ def _test_chapter_impl(
                 'baseline_profiler_statuses': {},
                 'optimizations': [],
                 'best_speedup': 1.0,
+                'optimization_goal': 'speed',
+                'minimum_required_speedup': None,
                 'status': 'failed_error',
                 'error': None,
             }
+            example_key = expectation_example_key(example_name, result_entry["type"])
+            local_expectation = expectations_store.get_entry(example_key)
+            expectation_goal, expectation_min_speedup = _resolve_local_contract_from_expectation(local_expectation)
+            if expectation_goal:
+                result_entry["optimization_goal"] = expectation_goal
+            if expectation_min_speedup is not None:
+                result_entry["minimum_required_speedup"] = expectation_min_speedup
 
             # Find baseline executable
             baseline_executable = find_cuda_executable(baseline_cu_path, chapter_dir)
@@ -8952,6 +8997,7 @@ def _test_chapter_impl(
                         best_optimization_name=best_opt.get("technique") or best_opt.get("file"),
                         best_optimization_file=best_opt.get("file"),
                         best_optimization_technique=best_opt.get("technique"),
+                        minimum_required_speedup=_coerce_positive_float(result_entry.get("minimum_required_speedup")),
                     )
                     update_result = None
                     if expectation_validation_enabled:
@@ -11231,7 +11277,7 @@ def generate_markdown_report(
         f.write(f"  - Errors: {total_failed_errors}\n")
         f.write(f"  - Verification: {total_failed_verification}\n")
         f.write(f"  - Regressions: {total_regressions}\n")
-        f.write(f"  - No speedup (<{_MIN_SPEEDUP_FOR_SUCCESS:.2f}x, speed goal): {total_failed_no_speedup}\n")
+        f.write(f"  - No speedup (below required speed-goal contract): {total_failed_no_speedup}\n")
         f.write(f"  - Generic: {total_failed_generic}\n")
         f.write(f"  - Other failed_*: {total_failed_other}\n")
         f.write(f"- **Informational (not benchmarked):** {total_informational}\n")

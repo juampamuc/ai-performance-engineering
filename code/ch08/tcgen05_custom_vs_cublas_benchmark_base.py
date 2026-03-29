@@ -116,3 +116,7 @@ class Tcgen05CustomVsCublasBase(VerificationPayloadMixin, BaseBenchmark):
             "story.chapter_native_exemplar": 0.0,
             "story.bridge_to_ch09": 1.0,
         }
+
+    def get_optimization_goal(self) -> str:
+        """Keep the bridge-control pair runnable without headline speed gating."""
+        return "control"

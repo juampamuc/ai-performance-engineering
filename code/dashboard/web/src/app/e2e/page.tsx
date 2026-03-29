@@ -6,7 +6,7 @@ import { Activity, Clock3, RefreshCw, Route, ShieldCheck, TerminalSquare } from 
 import { DashboardShell } from '@/components/DashboardShell';
 import { StatsCard } from '@/components/StatsCard';
 import { getBenchmarkE2eStatus } from '@/lib/api';
-import type { BenchmarkE2EStatusSnapshot, BenchmarkE2EStatusStage } from '@/types';
+import type { BenchmarkE2EIssueGroup, BenchmarkE2EStatusSnapshot, BenchmarkE2EStatusStage } from '@/types';
 
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -80,6 +80,18 @@ function StageRow({ stage }: { stage: BenchmarkE2EStatusStage }) {
   );
 }
 
+function IssueGroupRow({ group }: { group: BenchmarkE2EIssueGroup }) {
+  return (
+    <tr className="border-b border-white/5 text-sm text-white/75">
+      <td className="px-5 py-3 align-top text-white">{group.stage}</td>
+      <td className="px-5 py-3 align-top">{group.count}</td>
+      <td className="px-5 py-3 align-top">{group.signature}</td>
+      <td className="px-5 py-3 align-top text-white/60">{group.sample_targets?.join(', ') || '-'}</td>
+      <td className="px-5 py-3 align-top text-white/55">{group.root_cause_hint || '-'}</td>
+    </tr>
+  );
+}
+
 function E2EPageContent() {
   const searchParams = useSearchParams();
   const runId = searchParams?.get('run_id') || undefined;
@@ -125,6 +137,7 @@ function E2EPageContent() {
   };
 
   const stageRows = useMemo(() => status?.stages || [], [status?.stages]);
+  const issueGroups = useMemo(() => status?.issue_groups || [], [status?.issue_groups]);
   const recentEvents = useMemo(() => status?.recent_events || [], [status?.recent_events]);
   const notes = status?.notes || [];
   const progressSource = status?.progress_source;
@@ -308,6 +321,33 @@ function E2EPageContent() {
               </div>
             </div>
           </div>
+
+          {issueGroups.length > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="text-lg font-semibold text-white">Grouped Incidents</h2>
+                <span className="badge badge-warning">{issueGroups.length} groups</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="text-left text-xs uppercase tracking-wide text-white/40">
+                    <tr>
+                      <th className="px-5 py-3">Stage</th>
+                      <th className="px-5 py-3">Count</th>
+                      <th className="px-5 py-3">Signature</th>
+                      <th className="px-5 py-3">Sample Targets</th>
+                      <th className="px-5 py-3">Hint</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {issueGroups.map((group) => (
+                      <IssueGroupRow key={group.group_id} group={group} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="card">
             <div className="card-header">

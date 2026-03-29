@@ -31,7 +31,7 @@ Representative strict result from `artifacts/runs/20260302_full_strict_chapter_l
 This is the useful shape of the lab: some decode optimizations are huge, some are modest, and the lab keeps them separated instead of averaging them into a fake single story.
 
 ## Control Surfaces
-Treat `decode_pinned` as a supplementary informational control surface. More broadly, the standalone pinned-memory stepping stones remain informational control surfaces; the lab's canonical host-overhead benchmark stays on `decode_streams`, where the workload explicitly stages a large host payload and turns the transfer path into a measurable part of the story.
+Treat `decode_pinned` as a supplementary local-contract speed benchmark. The pair now uses a dedicated pageable-vs-pinned baseline on the same transfer-heavy workload (`host_payload_mb=512`, no stream overlap) so the pinned-memory comparison is measurable on its own. More broadly, the standalone pinned-memory stepping stones remain non-headline benchmarks, while the lab's canonical host-overhead benchmark stays on `decode_streams`, where the workload keeps that same large staged payload and adds copy/compute overlap.
 
 ## Profiler Evidence
 ```bash
@@ -58,7 +58,7 @@ python -m cli.aisp demos labs-decode-multigpu --nproc-per-node 4 -- --iters 4 --
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `baseline_decode.py`, `optimized_decode_pinned.py`, `optimized_decode_streams.py`, `optimized_decode_compile.py`, `optimized_decode_graph.py`, `optimized_decode_graph_full.py`, `optimized_decode_ultimate.py` | Serving-path decode variants that isolate host, stream, compile, and graph effects. |
+| `baseline_decode.py`, `baseline_decode_pinned.py`, `optimized_decode_pinned.py`, `optimized_decode_streams.py`, `optimized_decode_compile.py`, `optimized_decode_graph.py`, `optimized_decode_graph_full.py`, `optimized_decode_ultimate.py` | Serving-path decode variants that isolate host, stream, compile, and graph effects. |
 | `baseline_decode_hf_cache.py`, `optimized_decode_hf_cache.py` | Real HuggingFace decoder-loop comparison: dynamic cache + per-step EOS sync vs static cache + compiled decode + batched EOS polling. |
 | `baseline_decode_fp8.py`, `optimized_decode_fp8.py`, `baseline_decode_fp4.py`, `optimized_decode_fp4.py` | Prefill-focused low-precision decode comparisons on hardware that supports them, including the intentional BF16/nn.Linear versus FP8/Transformer Engine TELinear path. |
 | `baseline_decode_warp_specialized.py`, `optimized_decode_warp_specialized.py` | Warp-specialized decode path plus its eager correctness reference. |
@@ -84,7 +84,7 @@ python -m cli.aisp bench run --targets labs/decode_optimization --profile minima
 
 ## Notes
 - All targets emit TTFT, TPOT mean, decode time, total time, and tokens/sec in `custom_metrics` for easy diffing.
-- `decode_pinned` is an informational stepping-stone target; use `decode_streams` when you want the lab's canonical pinned-host/host-transfer speed claim.
+- `decode_pinned` is a supplementary local-contract stepping-stone target that now isolates pageable vs pinned staging on the same large host payload; use `decode_streams` when you want the lab's canonical pinned-host plus overlap speed claim.
 - FP4 requires NVFP4-capable Blackwell hardware; unsupported platforms fail fast.
 - The HF cache pair reproduces the main idea from Chaim Rand's token-generation optimization write-up while keeping the harness contract intact.
 - `decode_fp8` is intentionally a BF16/`nn.Linear` baseline versus FP8/Transformer Engine `TELinear`, because Transformer Engine is the supported FP8 linear path in this lab.

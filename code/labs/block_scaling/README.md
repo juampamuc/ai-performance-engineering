@@ -161,7 +161,10 @@ The repo harness and the standalone microbenchmark answer slightly different que
 On this B200, the harness run:
 - `python -m cli.aisp bench run -t labs/block_scaling:block_scaling -p none --iterations 10 --warmup 5 --timeout-seconds 900 --single-gpu`
 - reported `0.198 ms` baseline, `0.113 ms` optimized, and `1.76x` speedup
-- updated `labs/block_scaling/expectations_b200.json` from `1.669x` to `1.762x`
+- keeps the headline harness story at roughly `1.76x`, while the local gating floor is `1.75x`
+- treats the older `1.784x` single-run best as historical context, not as the current tier1 gate
+
+Three clean `--profile minimal --single-gpu --validity-profile portable` reruns on this host landed at `1.7590x`, `1.7562x`, and `1.7659x`, so the lab now records that repeated-harness band truthfully instead of implicitly gating on the stale single-run peak.
 
 ## Notes
 - The optimized path requires a Blackwell-class GPU (`sm100+`). The software baseline still requires CUDA because the lab is meant to be compared on the same device.
