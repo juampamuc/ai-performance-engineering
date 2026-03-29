@@ -666,6 +666,7 @@ def test_run_benchmark_e2e_sweep_writes_progress_and_checkpoint_before_stage_inv
     def _fake_tier1(**kwargs):
         run_dir = e2e_sweep.e2e_run_dir("e2e_checkpoint", tmp_path)
         observed["progress"] = json.loads((run_dir / "progress.json").read_text(encoding="utf-8"))
+        observed["summary"] = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
         observed["checkpoint"] = json.loads((run_dir / "checkpoint.json").read_text(encoding="utf-8"))
         return {
             "execution": {"run_id": kwargs["run_id"], "total_failed": 0},
@@ -691,9 +692,15 @@ def test_run_benchmark_e2e_sweep_writes_progress_and_checkpoint_before_stage_inv
     assert observed["progress"]["run_id"] == "e2e_checkpoint"
     assert observed["progress"]["current"]["metrics"]["run_state"] == "running"
     assert observed["progress"]["current"]["metrics"]["overall_status"] == "running"
+    assert observed["summary"]["run_state"] == "running"
+    assert observed["summary"]["overall_status"] == "running"
+    assert observed["summary"]["current_stage"] == "tier1"
+    assert observed["summary"]["current_stage_run_id"] == "e2e_checkpoint__tier1"
     assert observed["checkpoint"]["run_id"] == "e2e_checkpoint"
     assert observed["checkpoint"]["run_state"] == "running"
     assert observed["checkpoint"]["overall_status"] == "running"
+    assert observed["checkpoint"]["current_stage"] == "tier1"
+    assert observed["checkpoint"]["current_stage_run_id"] == "e2e_checkpoint__tier1"
     assert observed["checkpoint"]["stages"][0]["name"] == "tier1"
     assert observed["checkpoint"]["stages"][0]["status"] == "running"
 

@@ -3083,6 +3083,9 @@ def _build_checkpoint_payload(
     crash: Optional[Dict[str, Any]],
     orchestrator_pid: Optional[int],
     watcher: Optional[Dict[str, Any]],
+    current_stage: Optional[str],
+    current_stage_run_id: Optional[str],
+    current_bucket: Optional[str],
 ) -> Dict[str, Any]:
     status_actions = build_benchmark_e2e_status_actions(run_id)
     ledger_refs = _existing_ledger_refs(run_dir)
@@ -3094,6 +3097,9 @@ def _build_checkpoint_payload(
         "updated_at": updated_at,
         "run_state": run_state,
         "overall_status": overall_status,
+        "current_stage": current_stage,
+        "current_stage_run_id": current_stage_run_id,
+        "current_bucket": current_bucket,
         "success": success,
         "resume_available": resume_available,
         "error": error,
@@ -3133,6 +3139,9 @@ def _build_summary_payload(
     crash: Optional[Dict[str, Any]],
     orchestrator_pid: Optional[int],
     watcher: Optional[Dict[str, Any]],
+    current_stage: Optional[str],
+    current_stage_run_id: Optional[str],
+    current_bucket: Optional[str],
 ) -> Dict[str, Any]:
     status_actions = build_benchmark_e2e_status_actions(run_id)
     ledger_refs = _existing_ledger_refs(run_dir)
@@ -3142,6 +3151,9 @@ def _build_summary_payload(
         "run_dir": str(run_dir),
         "run_state": run_state,
         "overall_status": overall_status,
+        "current_stage": current_stage,
+        "current_stage_run_id": current_stage_run_id,
+        "current_bucket": current_bucket,
         "generated_at": generated_at,
         "updated_at": updated_at,
         "resume_available": resume_available,
@@ -3590,6 +3602,9 @@ def run_benchmark_e2e_sweep(
             crash=crash,
             orchestrator_pid=os.getpid(),
             watcher=watcher,
+            current_stage=current_stage_name or _current_stage_name(stages),
+            current_stage_run_id=current_stage_event_run_id,
+            current_bucket=current_bucket,
         )
         checkpoint_payload = _build_checkpoint_payload(
             run_id=resolved_run_id,
@@ -3611,6 +3626,9 @@ def run_benchmark_e2e_sweep(
             crash=crash,
             orchestrator_pid=os.getpid(),
             watcher=watcher,
+            current_stage=current_stage_name or _current_stage_name(stages),
+            current_stage_run_id=current_stage_event_run_id,
+            current_bucket=current_bucket,
         )
         if not dry_run:
             run_dir.mkdir(parents=True, exist_ok=True)
