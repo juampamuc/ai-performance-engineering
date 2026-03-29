@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
+import uuid
 
 PROGRESS_SCHEMA_VERSION = "1.0"
 
@@ -89,7 +91,13 @@ class ProgressRecorder:
         self._write_payload(payload)
 
     def _write_payload(self, payload: Dict[str, Any]) -> None:
-        tmp_path = self.progress_path.with_suffix(self.progress_path.suffix + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-        tmp_path.replace(self.progress_path)
+        tmp_path = self.progress_path.with_name(
+            f"{self.progress_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+            tmp_path.replace(self.progress_path)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()

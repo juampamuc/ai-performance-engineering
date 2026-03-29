@@ -28,6 +28,47 @@ def test_progress_recorder_writes_payload(tmp_path: Path) -> None:
     assert data["current"]["run_id"] == "run_001"
 
 
+def test_progress_recorder_uses_unique_temp_files_for_shared_progress_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    progress_path = tmp_path / "progress" / "run_progress.json"
+    recorder_a = ProgressRecorder(run_id="run_shared", progress_path=progress_path)
+    recorder_b = ProgressRecorder(run_id="run_shared", progress_path=progress_path)
+
+    replace_calls: list[tuple[str, str]] = []
+    original_replace = Path.replace
+
+    def _record_replace(self: Path, target: Path) -> Path:
+        replace_calls.append((self.name, target.name))
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _record_replace)
+
+    recorder_a.emit(
+        ProgressEvent(
+            phase="baseline_timing",
+            phase_index=1,
+            total_phases=2,
+            step="ch01:demo_a",
+        )
+    )
+    recorder_b.emit(
+        ProgressEvent(
+            phase="optimized_timing",
+            phase_index=2,
+            total_phases=2,
+            step="ch01:demo_b",
+        )
+    )
+
+    assert len(replace_calls) == 2
+    assert replace_calls[0][0] != replace_calls[1][0]
+    assert all(target_name == "run_progress.json" for _, target_name in replace_calls)
+    data = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert data["current"]["step"] == "ch01:demo_b"
+    assert not list(progress_path.parent.glob("*.tmp"))
+
+
 def test_progress_recorder_surfaces_existing_history_load_failures(tmp_path: Path) -> None:
     progress_path = tmp_path / "progress" / "run_progress.json"
     progress_path.parent.mkdir(parents=True, exist_ok=True)

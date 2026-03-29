@@ -161,8 +161,11 @@ function E2EPageContent() {
   const ledgerSummary = status?.ledgers?.summary;
   const reportedFailures = status?.current?.reported_failures || [];
   const latestTimestamp = progressSource?.progress_timestamp || '—';
+  const activeIssueCount = ledgerSummary?.active_issue_count ?? ledgerSummary?.issue_count ?? 0;
+  const activeUnresolvedCount = ledgerSummary?.active_unresolved_count ?? ledgerSummary?.unresolved_count ?? 0;
+  const historicalIssueCount = ledgerSummary?.historical_issue_count ?? 0;
   const issueSummary = ledgerSummary
-    ? `${ledgerSummary.unresolved_count ?? 0} open / ${ledgerSummary.resolved_count ?? 0} resolved`
+    ? `${activeUnresolvedCount} active / ${historicalIssueCount} historical`
     : '-';
 
   return (
@@ -205,10 +208,10 @@ function E2EPageContent() {
             />
             <StatsCard
               title="Incidents"
-              value={ledgerSummary?.issue_count ?? 0}
+              value={activeIssueCount}
               subtitle={issueSummary}
               icon={ShieldCheck}
-              variant={(ledgerSummary?.unresolved_count ?? 0) > 0 ? 'danger' : 'success'}
+              variant={activeUnresolvedCount > 0 ? 'danger' : historicalIssueCount > 0 ? 'warning' : 'success'}
             />
             <StatsCard
               title="Watcher"

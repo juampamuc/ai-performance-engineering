@@ -11,6 +11,9 @@ from core.harness.run_benchmarks import (
     build_expectation_metadata,
     expectation_example_key,
 )
+from labs.fullstack_cluster.optimized_cluster_gemm_tcgen05_cta2 import (
+    get_benchmark as get_fullstack_cluster_gemm_tcgen05_cta2_benchmark,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -191,3 +194,10 @@ def test_persistent_decode_nvlink_offload_is_control_contract_while_paged_offloa
     assert nvlink_entry.minimum_required_speedup is None
     assert paged_entry.optimization_goal == "speed"
     assert paged_entry.minimum_required_speedup is None
+
+
+def test_fullstack_cluster_tcgen05_cta2_stays_control_contract() -> None:
+    benchmark = get_fullstack_cluster_gemm_tcgen05_cta2_benchmark()
+
+    assert benchmark.get_optimization_goal() == "control"
+    assert benchmark.baseline_alias == "cluster_gemm_tcgen05"

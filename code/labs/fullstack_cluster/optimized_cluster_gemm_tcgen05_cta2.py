@@ -29,9 +29,12 @@ class OptimizedCapstoneGemmTCGen05CTA2Benchmark(CapstoneMatmulBenchmark):
         ensure_tcgen05_supported()
         super().setup()
 
+    def get_optimization_goal(self) -> str:
+        """This tcgen05 CTA-group follow-up stays runnable as a control benchmark."""
+        return "control"
+
 
 
 def get_benchmark() -> OptimizedCapstoneGemmTCGen05CTA2Benchmark:
     return OptimizedCapstoneGemmTCGen05CTA2Benchmark()
-
 

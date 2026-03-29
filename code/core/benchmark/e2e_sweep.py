@@ -1696,6 +1696,64 @@ def _issue_groups(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return groups
 
 
+def _issue_summary(
+    rows: List[Dict[str, Any]],
+    *,
+    run_id: str,
+    active_issue_ids: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    active_issue_ids = set(active_issue_ids or set())
+    resolved_count = sum(1 for row in rows if str(row.get("status") or "").strip() == "resolved")
+    unresolved_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict) and str(row.get("status") or "").strip() != "resolved"
+    ]
+    active_rows: List[Dict[str, Any]] = []
+    historical_rows: List[Dict[str, Any]] = []
+    for row in unresolved_rows:
+        issue_id = str(row.get("issue_id") or "").strip()
+        if issue_id.startswith("reported_"):
+            if issue_id in active_issue_ids:
+                active_rows.append(row)
+            else:
+                historical_rows.append(row)
+            continue
+        active_rows.append(row)
+
+    issue_groups = _issue_groups(rows)
+    active_issue_groups = _issue_groups(active_rows)
+    historical_issue_groups = _issue_groups(historical_rows)
+
+    return {
+        "summary": {
+            "run_id": run_id,
+            "issue_count": len(rows),
+            "reported_issue_count": sum(
+                1 for row in rows if str(row.get("issue_id") or "").strip().startswith("reported_")
+            ),
+            "resolved_count": resolved_count,
+            "unresolved_count": len(unresolved_rows),
+            "issue_group_count": len(issue_groups),
+            "active_issue_count": len(active_rows),
+            "active_unresolved_count": len(active_rows),
+            "active_reported_issue_count": sum(
+                1 for row in active_rows if str(row.get("issue_id") or "").strip().startswith("reported_")
+            ),
+            "active_issue_group_count": len(active_issue_groups),
+            "historical_issue_count": len(historical_rows),
+            "historical_unresolved_count": len(historical_rows),
+            "historical_reported_issue_count": sum(
+                1 for row in historical_rows if str(row.get("issue_id") or "").strip().startswith("reported_")
+            ),
+            "historical_issue_group_count": len(historical_issue_groups),
+        },
+        "issue_groups": issue_groups,
+        "active_issue_groups": active_issue_groups,
+        "historical_issue_groups": historical_issue_groups,
+    }
+
+
 def _render_issue_evidence(row: Dict[str, Any]) -> str:
     evidence: List[str] = []
     target = str(row.get("target") or "").strip()
@@ -1725,6 +1783,8 @@ def _render_active_issue_ledger_markdown(ledger: Dict[str, Any]) -> str:
         "",
         f"- E2E run: `{summary.get('run_id', '')}`",
         f"- Issue count: `{summary.get('issue_count', 0)}`",
+        f"- Active issue count: `{summary.get('active_issue_count', summary.get('issue_count', 0))}`",
+        f"- Historical unresolved count: `{summary.get('historical_issue_count', 0)}`",
         f"- Resolved: `{summary.get('resolved_count', 0)}`",
         f"- Unresolved: `{summary.get('unresolved_count', 0)}`",
         "",
@@ -1767,6 +1827,7 @@ def _sync_active_issue_ledger(
     status_paths: Dict[str, Any],
     aggregate_failures: List[Dict[str, Any]],
     reported_failures: List[Dict[str, Any]],
+    active_failures: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     active_issue_json = run_dir / "active_issue_ledger.json"
     active_issue_md = run_dir / "active_issue_ledger.md"
@@ -1821,22 +1882,24 @@ def _sync_active_issue_ledger(
             row = merged
         auto_rows_by_id[issue_id] = row
     rows = manual_rows + [auto_rows_by_id[key] for key in sorted(auto_rows_by_id)]
-    resolved_count = sum(1 for row in rows if str(row.get("status") or "").strip() == "resolved")
-    issue_groups = _issue_groups(rows)
+    active_issue_ids = {
+        _benchmark_failure_issue_id(
+            stage_name=str(failure.get("stage") or "unknown").strip() or "unknown",
+            bucket=str(failure.get("bucket") or "").strip() or None,
+            target=str(failure.get("target") or "<unknown>").strip() or "<unknown>",
+        )
+        for failure in list(active_failures or [])
+    }
+    issue_summary = _issue_summary(rows, run_id=run_id, active_issue_ids=active_issue_ids)
     ledger_payload = {
         "schema_version": "1.0",
         "preferred_collection_key": "rows",
         "collection_aliases": {"issues": "rows"},
-        "summary": {
-            "run_id": run_id,
-            "issue_count": len(rows),
-            "reported_issue_count": sum(1 for row in rows if str(row.get("issue_id") or "").strip().startswith("reported_")),
-            "resolved_count": resolved_count,
-            "unresolved_count": len(rows) - resolved_count,
-            "issue_group_count": len(issue_groups),
-        },
+        "summary": dict(issue_summary["summary"]),
         "rows": rows,
-        "issue_groups": issue_groups,
+        "issue_groups": list(issue_summary["issue_groups"]),
+        "active_issue_groups": list(issue_summary["active_issue_groups"]),
+        "historical_issue_groups": list(issue_summary["historical_issue_groups"]),
     }
     _write_json(active_issue_json, ledger_payload)
     active_issue_md.write_text(_render_active_issue_ledger_markdown(ledger_payload), encoding="utf-8")
@@ -1847,7 +1910,9 @@ def _sync_active_issue_ledger(
         "historical_failure_ledger_md": str(historical_issue_md) if historical_issue_md.exists() else None,
         "summary": dict(ledger_payload["summary"]),
         "rows": rows,
-        "issue_groups": issue_groups,
+        "issue_groups": list(ledger_payload["issue_groups"]),
+        "active_issue_groups": list(ledger_payload["active_issue_groups"]),
+        "historical_issue_groups": list(ledger_payload["historical_issue_groups"]),
     }
 
 
@@ -2059,8 +2124,23 @@ def inspect_benchmark_e2e_sweep_run(
         aggregate_failures.append(dict(entry))
         seen_failure_keys.add(key)
 
+    progress_source_path = None
+    if isinstance(child_artifacts, dict):
+        progress_source_path = child_artifacts.get("progress_path")
+    if not progress_source_path:
+        progress_source_path = str(progress_path)
+    child_progress_available = False
+    child_progress_candidate = child_artifacts.get("progress_path") if isinstance(child_artifacts, dict) else None
+    if isinstance(child_progress_candidate, str) and child_progress_candidate.strip():
+        child_progress_available = Path(child_progress_candidate).exists()
+    has_live_child_progress = bool(
+        str(run_state) == "running"
+        and current_child_run_id
+        and progress_timestamp
+        and (child_progress_available or recent_child_events)
+    )
     surfaced_failures = list(child_reported_failures or [])
-    if not surfaced_failures and not (str(run_state) == "running" and orchestrator_live):
+    if not surfaced_failures and not has_live_child_progress and not (str(run_state) == "running" and orchestrator_live):
         surfaced_failures = list(aggregate_failures)
 
     recent_events = _tail_records(events_path, limit=recent_events_limit)
@@ -2069,17 +2149,12 @@ def inspect_benchmark_e2e_sweep_run(
         contract=contract,
         python_executable=sys.executable,
     )
-    progress_source_path = None
-    if isinstance(child_artifacts, dict):
-        progress_source_path = child_artifacts.get("progress_path")
-    if not progress_source_path:
-        progress_source_path = str(progress_path)
     progress_source_kind = "checkpoint_summary"
     progress_source_label = "Checkpoint and summary"
     progress_source_reason = (
         "Run is terminal or does not currently expose fresher child progress, so checkpoint/summary are the active status records."
     )
-    if str(run_state) == "running" and current_child_run_id and progress_timestamp:
+    if has_live_child_progress:
         progress_source_kind = "live_child_progress"
         progress_source_label = "Live child progress"
         progress_source_reason = (
@@ -2122,6 +2197,7 @@ def inspect_benchmark_e2e_sweep_run(
         status_paths=status_paths,
         aggregate_failures=aggregate_failures,
         reported_failures=child_reported_failures,
+        active_failures=surfaced_failures,
     )
     resolved_reported_issue_ids = {
         str(row.get("issue_id") or "").strip()
@@ -2208,7 +2284,8 @@ def inspect_benchmark_e2e_sweep_run(
             },
             "stages": stage_snapshots,
             "aggregate_failures": aggregate_failures,
-            "issue_groups": ledgers.get("issue_groups") or [],
+            "issue_groups": ledgers.get("active_issue_groups") or [],
+            "historical_issue_groups": ledgers.get("historical_issue_groups") or [],
             "recent_events": recent_events,
             "ledgers": ledgers,
             "actions": {
@@ -2271,8 +2348,23 @@ def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
     ledgers = status.get("ledgers") or {}
     ledger_summary = dict(ledgers.get("summary") or {})
     if ledger_summary:
+        active_issue_count = ledger_summary.get("active_issue_count", ledger_summary.get("issue_count"))
+        active_unresolved_count = ledger_summary.get("active_unresolved_count", ledger_summary.get("unresolved_count"))
         lines.append(
             "active_issue_counts="
+            + f"issues={active_issue_count} "
+            + f"unresolved={active_unresolved_count}"
+        )
+        historical_issue_count = ledger_summary.get("historical_issue_count", 0)
+        historical_unresolved_count = ledger_summary.get("historical_unresolved_count", 0)
+        if historical_issue_count:
+            lines.append(
+                "historical_issue_counts="
+                + f"issues={historical_issue_count} "
+                + f"unresolved={historical_unresolved_count}"
+            )
+        lines.append(
+            "ledger_totals="
             + f"issues={ledger_summary.get('issue_count')} "
             + f"resolved={ledger_summary.get('resolved_count')} "
             + f"unresolved={ledger_summary.get('unresolved_count')}"
@@ -2286,6 +2378,15 @@ def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
         )
         if preview:
             lines.append(f"issue_group_preview={preview}")
+    historical_issue_groups = list(status.get("historical_issue_groups") or [])
+    if historical_issue_groups:
+        lines.append(f"historical_issue_groups={len(historical_issue_groups)}")
+        preview = "; ".join(
+            f"{entry.get('stage')}:{entry.get('signature')} x{entry.get('count')}"
+            for entry in historical_issue_groups[:3]
+        )
+        if preview:
+            lines.append(f"historical_issue_group_preview={preview}")
     if ledgers.get("active_issue_ledger_json"):
         lines.append(f"active_issue_ledger={ledgers.get('active_issue_ledger_json')}")
     notes = list(status.get("notes") or [])

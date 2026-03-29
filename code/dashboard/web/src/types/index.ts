@@ -341,6 +341,7 @@ export interface BenchmarkE2EStatusSnapshot {
   } | null;
   stages?: BenchmarkE2EStatusStage[];
   issue_groups?: BenchmarkE2EIssueGroup[];
+  historical_issue_groups?: BenchmarkE2EIssueGroup[];
   recent_events?: Array<Record<string, unknown>>;
   ledgers?: {
     summary?: {
@@ -349,6 +350,14 @@ export interface BenchmarkE2EStatusSnapshot {
       reported_issue_count?: number;
       resolved_count?: number;
       unresolved_count?: number;
+      active_issue_count?: number;
+      active_unresolved_count?: number;
+      active_reported_issue_count?: number;
+      active_issue_group_count?: number;
+      historical_issue_count?: number;
+      historical_unresolved_count?: number;
+      historical_reported_issue_count?: number;
+      historical_issue_group_count?: number;
       run_id?: string;
     };
     active_issue_ledger_json?: string | null;
