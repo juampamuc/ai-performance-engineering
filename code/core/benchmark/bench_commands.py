@@ -132,6 +132,27 @@ def _validate_output_format(fmt: str | None) -> str:
     return normalized
 
 
+def _tier1_result_failure_count(result: Dict[str, Any]) -> int:
+    summary_payload = result.get("summary")
+    if isinstance(summary_payload, dict):
+        summary_counts = summary_payload.get("summary")
+        if isinstance(summary_counts, dict):
+            try:
+                return int(summary_counts.get("failed", 0) or 0)
+            except (TypeError, ValueError):
+                pass
+    execution = result.get("execution")
+    if isinstance(execution, dict):
+        try:
+            return int(execution.get("total_failed", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(result.get("total_failed", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _validate_ncu_metric_set(metric_set: str) -> str:
     normalized = metric_set.strip().lower()
     valid = {"auto", "deep_dive", "roofline", "minimal"}
@@ -1396,7 +1417,7 @@ if TYPER_AVAILABLE:
                 indent=2,
             )
         )
-        if int(result["execution"].get("total_failed", 0) or 0) > 0:
+        if _tier1_result_failure_count(result) > 0:
             raise typer.Exit(code=1)
 
     @app.command("run-e2e")

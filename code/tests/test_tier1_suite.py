@@ -669,3 +669,35 @@ def test_run_tier1_passes_expectation_write_flags(tmp_path: Path, monkeypatch) -
     assert captured["accept_regressions"] is True
     assert captured["update_expectations"] is True
     assert captured["allow_mixed_provenance"] is True
+
+
+def test_run_tier1_cli_exits_nonzero_when_suite_summary_reports_failures(tmp_path: Path, monkeypatch) -> None:
+    def _fake_run_tier1_suite(**kwargs):
+        return {
+            "execution": {"run_id": "tier1_failed_smoke", "total_failed": 0},
+            "summary": {
+                "summary": {
+                    "failed": 1,
+                    "skipped": 0,
+                    "succeeded": 5,
+                }
+            },
+            "summary_path": tmp_path / "summary.json",
+            "regression_summary_path": tmp_path / "regressions.json",
+            "trend_snapshot_path": tmp_path / "trend.json",
+            "history_root": tmp_path / "history",
+        }
+
+    monkeypatch.setattr("core.benchmark.suites.tier1.run_tier1_suite", _fake_run_tier1_suite)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "run-tier1",
+        ],
+    )
+
+    assert result.exit_code == 1, result.stdout
+    assert '"run_id": "tier1_failed_smoke"' in result.stdout

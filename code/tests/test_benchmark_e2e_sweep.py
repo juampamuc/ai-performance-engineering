@@ -115,6 +115,120 @@ def test_run_benchmark_e2e_sweep_derives_stage_ids_and_skips_duplicate_fabric(tm
     assert Path(result["manifest_path"]).exists()
 
 
+def test_run_benchmark_e2e_sweep_detects_terminal_tier1_failure_from_nested_execution_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    summary_path = tmp_path / "tier1" / "summary.json"
+    regression_summary_path = tmp_path / "tier1" / "regression_summary.md"
+    trend_snapshot_path = tmp_path / "tier1" / "trend.json"
+    history_root = tmp_path / "history"
+    output_json = tmp_path / "tier1_run" / "results" / "benchmark_test_results.json"
+    for path in (summary_path, regression_summary_path, trend_snapshot_path, output_json):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    history_root.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "suite_name": "tier1",
+                "targets": [
+                    {
+                        "key": "block_scaling",
+                        "target": "labs/block_scaling:block_scaling",
+                        "status": "failed_no_speedup",
+                        "best_speedup": 1.749,
+                        "optimization_goal": "speed",
+                    }
+                ],
+                "summary": {"failed": 1, "skipped": 0, "succeeded": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    regression_summary_path.write_text("# regressions\n", encoding="utf-8")
+    trend_snapshot_path.write_text("{}", encoding="utf-8")
+    output_json.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-29T06:58:44Z",
+                "results": [
+                    {
+                        "chapter": "labs_block_scaling",
+                        "benchmarks": [
+                            {
+                                "example": "block_scaling",
+                                "status": "failed_no_speedup",
+                                "best_speedup": 1.749,
+                                "optimization_goal": "speed",
+                                "minimum_required_speedup": 1.75,
+                                "error": "Best speedup 1.749x below required 1.75x threshold for speed-goal benchmark",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(
+        e2e_sweep,
+        "_invoke_run_tier1_suite",
+        lambda **kwargs: {
+            "execution": {
+                "run_id": kwargs["run_id"],
+                "output_json": str(output_json),
+                "total_failed": 1,
+                "total_skipped": 0,
+            },
+            "summary": json.loads(summary_path.read_text(encoding="utf-8")),
+            "summary_path": str(summary_path),
+            "regression_summary_path": str(regression_summary_path),
+            "trend_snapshot_path": str(trend_snapshot_path),
+            "history_root": str(history_root),
+        },
+    )
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_tier1_nested_failure",
+        run_full_sweep=False,
+        run_cluster=False,
+        run_fabric=False,
+    )
+
+    tier1_stage = next(stage for stage in result["stages"] if stage["name"] == "tier1")
+    assert tier1_stage["status"] == "failed"
+    assert result["overall_status"] == "failed"
+    assert tier1_stage["attempts"][-1]["status"] == "failed"
+    assert tier1_stage["attempts"][-1]["benchmark_summary"]["failed_benchmarks"] == [
+        {
+            "target": "labs_block_scaling:block_scaling",
+            "status": "failed_no_speedup",
+            "error": "Best speedup 1.749x below required 1.75x threshold for speed-goal benchmark",
+            "best_speedup": 1.749,
+            "optimization_goal": "speed",
+            "minimum_required_speedup": 1.75,
+        }
+    ]
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id="e2e_tier1_nested_failure", repo_root=tmp_path)
+    aggregate_targets = {entry["target"] for entry in status["aggregate_failures"]}
+    assert aggregate_targets == {"labs_block_scaling:block_scaling"}
+    assert status["ledgers"]["summary"]["unresolved_count"] == 1
+
+
 def test_run_benchmark_e2e_sweep_marks_partial_when_multi_gpu_bucket_is_skipped(tmp_path: Path, monkeypatch) -> None:
     output_json = tmp_path / "single" / "results.json"
     output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -2246,6 +2360,134 @@ def test_inspect_benchmark_e2e_sweep_run_preserves_terminal_full_sweep_failures_
     assert "issue_groups=" in rendered
     assert "ch06:launch_bounds[failed_no_speedup]" in rendered
     assert "ch13:regional_compile[failed_no_speedup]" in rendered
+
+
+def test_inspect_benchmark_e2e_sweep_run_recovers_tier1_failures_from_nested_suite_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run_id = "e2e_completed_tier1_nested_failure"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    output_json = tmp_path / "tier1_run" / "results" / "benchmark_test_results.json"
+    summary_path = tmp_path / "history" / run_id / "summary.json"
+    regression_summary_path = tmp_path / "history" / run_id / "regression_summary.md"
+    trend_snapshot_path = tmp_path / "history" / run_id / "trend.json"
+    for path in (output_json, summary_path, regression_summary_path, trend_snapshot_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "chapter": "labs_block_scaling",
+                        "benchmarks": [
+                            {
+                                "example": "block_scaling",
+                                "status": "failed_no_speedup",
+                                "best_speedup": 1.7492851550300643,
+                                "best_memory_savings_pct": 0.0,
+                                "optimization_goal": "speed",
+                                "minimum_required_speedup": 1.75,
+                                "error": "Best speedup 1.75x below required 1.75x threshold for speed-goal benchmark",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary_path.write_text(
+        json.dumps(
+            {
+                "suite_name": "tier1",
+                "targets": [
+                    {
+                        "target": "labs/block_scaling:block_scaling",
+                        "status": "failed_no_speedup",
+                        "best_speedup": 1.7492851550300643,
+                        "best_memory_savings_pct": 0.0,
+                        "optimization_goal": "speed",
+                    }
+                ],
+                "summary": {"failed": 1, "skipped": 0, "succeeded": 5},
+            }
+        ),
+        encoding="utf-8",
+    )
+    regression_summary_path.write_text("# regressions\n", encoding="utf-8")
+    trend_snapshot_path.write_text("{}", encoding="utf-8")
+
+    stage_payload = [
+        {
+            "name": "tier1",
+            "enabled": True,
+            "run_id": f"{run_id}__tier1",
+            "status": "succeeded",
+            "attempts": [
+                {
+                    "run_id": f"{run_id}__tier1",
+                    "status": "succeeded",
+                    "result": {
+                        "execution": {
+                            "run_id": f"{run_id}__tier1",
+                            "output_json": str(output_json),
+                            "total_failed": 1,
+                            "total_skipped": 0,
+                        },
+                        "summary_path": str(summary_path),
+                        "regression_summary_path": str(regression_summary_path),
+                        "trend_snapshot_path": str(trend_snapshot_path),
+                    },
+                    "artifacts": {
+                        "summary_path": str(summary_path),
+                        "regression_summary_path": str(regression_summary_path),
+                        "trend_snapshot_path": str(trend_snapshot_path),
+                    },
+                }
+            ],
+        }
+    ]
+    summary_payload = {
+        "run_id": run_id,
+        "run_state": "completed",
+        "overall_status": "succeeded",
+        "updated_at": "2026-03-29T06:58:44Z",
+        "resume_available": False,
+        "stages": stage_payload,
+        "contract": {"run_tier1": True},
+    }
+    checkpoint_payload = dict(summary_payload)
+    checkpoint_payload["orchestrator_pid"] = 777
+    progress_payload = {
+        "run_id": run_id,
+        "current": {
+            "timestamp": "2026-03-29T06:58:44+00:00",
+            "metrics": {
+                "run_state": "completed",
+                "overall_status": "succeeded",
+                "orchestrator_pid": 777,
+                "stages": stage_payload,
+            },
+        },
+    }
+    (run_dir / "summary.json").write_text(json.dumps(summary_payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(checkpoint_payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(json.dumps(progress_payload), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=tmp_path)
+
+    assert {entry["target"] for entry in status["aggregate_failures"]} == {"labs_block_scaling:block_scaling"}
+    assert {entry["target"] for entry in status["current"]["reported_failures"]} == {"labs_block_scaling:block_scaling"}
+    assert status["stages"][0]["status"] == "failed"
+    assert status["stages"][0]["stored_status"] == "succeeded"
+    assert status["overall_status"] == "failed"
+    assert status["stored_overall_status"] == "succeeded"
+    assert status["ledgers"]["summary"]["unresolved_count"] == 1
 
 
 def test_inspect_benchmark_e2e_sweep_run_preserves_resolved_reported_issue_rows(

@@ -542,13 +542,21 @@ def _benchmark_stage_details_from_output(output_json_path: Optional[str]) -> Opt
                     or (benchmark or {}).get("failure_reason")
                     or "benchmark target failed"
                 )
-                failed_benchmarks.append(
-                    {
-                        "target": target,
-                        "status": status,
-                        "error": error_detail,
-                    }
-                )
+                failure_entry = {
+                    "target": target,
+                    "status": status,
+                    "error": error_detail,
+                }
+                for key in (
+                    "best_speedup",
+                    "best_memory_savings_pct",
+                    "optimization_goal",
+                    "minimum_required_speedup",
+                ):
+                    value = (benchmark or {}).get(key)
+                    if value is not None:
+                        failure_entry[key] = value
+                failed_benchmarks.append(failure_entry)
             elif status == "skipped":
                 skip_reason = str(
                     (benchmark or {}).get("error")
@@ -570,6 +578,82 @@ def _benchmark_stage_details_from_output(output_json_path: Optional[str]) -> Opt
     }
 
 
+def _benchmark_stage_details_from_suite_summary(summary_payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(summary_payload, dict):
+        return None
+    targets = summary_payload.get("targets")
+    if not isinstance(targets, list):
+        return None
+
+    status_counts: Dict[str, int] = {}
+    failed_benchmarks: List[Dict[str, Any]] = []
+    skipped_benchmarks: List[Dict[str, Any]] = []
+    for target_payload in targets:
+        if not isinstance(target_payload, dict):
+            continue
+        status = str(target_payload.get("status") or "unknown").strip() or "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        target = str(target_payload.get("target") or target_payload.get("key") or "<unknown>").strip() or "<unknown>"
+        if status.startswith("failed"):
+            failure_entry = {
+                "target": target,
+                "status": status,
+                "error": str(
+                    target_payload.get("error")
+                    or target_payload.get("failure_reason")
+                    or f"{target} reported {status}"
+                ),
+            }
+            for key in ("best_speedup", "best_memory_savings_pct", "optimization_goal"):
+                value = target_payload.get(key)
+                if value is not None:
+                    failure_entry[key] = value
+            failed_benchmarks.append(failure_entry)
+        elif status == "skipped":
+            skipped_benchmarks.append(
+                {
+                    "target": target,
+                    "status": status,
+                    "reason": str(
+                        target_payload.get("error")
+                        or target_payload.get("skip_reason")
+                        or f"{target} reported {status}"
+                    ),
+                }
+            )
+
+    return {
+        "status_counts": status_counts,
+        "failed_benchmarks": failed_benchmarks,
+        "skipped_benchmarks": skipped_benchmarks,
+    }
+
+
+def _benchmark_stage_details(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    execution = result.get("execution")
+    output_json_path = result.get("output_json")
+    if output_json_path is None and isinstance(execution, dict):
+        output_json_path = execution.get("output_json")
+    benchmark_details = _benchmark_stage_details_from_output(str(output_json_path) if output_json_path else None)
+    if benchmark_details is not None:
+        return benchmark_details
+
+    benchmark_details = _benchmark_stage_details_from_suite_summary(
+        result.get("summary") if isinstance(result.get("summary"), dict) else None
+    )
+    if benchmark_details is not None:
+        return benchmark_details
+
+    summary_path = result.get("summary_path")
+    if not _result_path_exists(summary_path):
+        return None
+    try:
+        summary_payload = json.loads(Path(str(summary_path)).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return _benchmark_stage_details_from_suite_summary(summary_payload if isinstance(summary_payload, dict) else None)
+
+
 def _benchmark_stage_status(
     result: Dict[str, Any],
     *,
@@ -585,7 +669,8 @@ def _benchmark_stage_status(
         issues.append(f"missing required artifacts: {', '.join(missing)}")
         return "failed", issues, None
 
-    benchmark_details = _benchmark_stage_details_from_output(result.get("output_json"))
+    benchmark_details = _benchmark_stage_details(result)
+    execution = result.get("execution") if isinstance(result.get("execution"), dict) else {}
     if benchmark_details is not None:
         total_failed = sum(
             count
@@ -596,6 +681,10 @@ def _benchmark_stage_status(
     else:
         total_failed = int(result.get("total_failed", 0) or 0)
         total_skipped = int(result.get("total_skipped", 0) or 0)
+        if total_failed == 0 and execution:
+            total_failed = int(execution.get("total_failed", 0) or 0)
+        if total_skipped == 0 and execution:
+            total_skipped = int(execution.get("total_skipped", 0) or 0)
 
     if total_failed > 0:
         failed_benchmarks = (benchmark_details or {}).get("failed_benchmarks") or []
@@ -1259,10 +1348,14 @@ def _stage_snapshot(stage: Dict[str, Any]) -> Dict[str, Any]:
     benchmark_summary = None
     if isinstance(latest_attempt, dict):
         benchmark_summary = latest_attempt.get("benchmark_summary")
+    if benchmark_summary is None and isinstance(latest_attempt, dict) and isinstance(latest_attempt.get("result"), dict):
+        benchmark_summary = _benchmark_stage_details(latest_attempt["result"])
     if benchmark_summary is None:
         benchmark_summary = stage.get("benchmark_summary")
     if benchmark_summary is None and isinstance(stage.get("result"), dict):
         benchmark_summary = stage["result"].get("benchmark_summary")
+    if benchmark_summary is None and isinstance(stage.get("result"), dict):
+        benchmark_summary = _benchmark_stage_details(stage["result"])
 
     def _collect_attempt_entries(summary_key: str) -> List[Dict[str, Any]]:
         latest_by_target_bucket: Dict[tuple[str, str], Dict[str, Any]] = {}
@@ -1334,6 +1427,33 @@ def _stage_snapshot(stage: Dict[str, Any]) -> Dict[str, Any]:
     elif isinstance(benchmark_summary, dict):
         payload["skipped_benchmarks"] = list(benchmark_summary.get("skipped_benchmarks") or [])
     return payload
+
+
+def _effective_stage_snapshot_status(snapshot: Dict[str, Any]) -> str:
+    stored_status = str(snapshot.get("status") or "unknown").strip() or "unknown"
+    if stored_status in {"running", "planned", "aborted", "skipped", "skipped_duplicate"}:
+        return stored_status
+    failed_benchmarks = list(snapshot.get("failed_benchmarks") or [])
+    if failed_benchmarks:
+        return "failed"
+    skipped_benchmarks = list(snapshot.get("skipped_benchmarks") or [])
+    if skipped_benchmarks:
+        return "partial"
+    return stored_status
+
+
+def _apply_effective_stage_snapshot_statuses(stage_snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    effective_snapshots: List[Dict[str, Any]] = []
+    for snapshot in stage_snapshots:
+        effective_status = _effective_stage_snapshot_status(snapshot)
+        if effective_status == snapshot.get("status"):
+            effective_snapshots.append(snapshot)
+            continue
+        updated = dict(snapshot)
+        updated["stored_status"] = snapshot.get("status")
+        updated["status"] = effective_status
+        effective_snapshots.append(updated)
+    return effective_snapshots
 
 
 def _tail_records(path: Path, *, limit: int) -> List[Dict[str, Any]]:
@@ -1884,7 +2004,9 @@ def inspect_benchmark_e2e_sweep_run(
     watcher_live = _pid_is_live(watcher_pid)
     actions = build_benchmark_e2e_status_actions(resolved_run_id, python_executable=sys.executable)
 
-    stage_snapshots = [_stage_snapshot(stage) for stage in stages if isinstance(stage, dict)]
+    stage_snapshots = _apply_effective_stage_snapshot_statuses(
+        [_stage_snapshot(stage) for stage in stages if isinstance(stage, dict)]
+    )
     aggregate_failures: List[Dict[str, Any]] = []
     for stage in stage_snapshots:
         for entry in stage.get("failed_benchmarks") or []:
@@ -1991,13 +2113,28 @@ def inspect_benchmark_e2e_sweep_run(
             not in resolved_reported_issue_ids
         ]
 
+    effective_overall_status = overall_status
+    if str(run_state) != "running":
+        corrected_stage_statuses = [
+            str(stage.get("status") or "").strip()
+            for stage in stage_snapshots
+            if isinstance(stage, dict)
+        ]
+        rolled_up_status = _roll_up_overall_status(corrected_stage_statuses)
+        if rolled_up_status and rolled_up_status != overall_status:
+            status_notes.append(
+                f"stored overall_status `{overall_status}` corrected to `{rolled_up_status}` from stage benchmark summaries"
+            )
+            effective_overall_status = rolled_up_status
+
     return _json_safe(
         {
             "success": True,
             "run_id": resolved_run_id,
             "run_dir": str(run_dir),
             "run_state": run_state,
-            "overall_status": overall_status,
+            "overall_status": effective_overall_status,
+            "stored_overall_status": overall_status,
             "inferred_state": inferred_state,
             "resume_available": resume_available,
             "notes": status_notes,
@@ -2064,6 +2201,9 @@ def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
         f"state={status.get('inferred_state')} run_state={status.get('run_state')} overall_status={status.get('overall_status')}",
         f"orchestrator_pid={liveness.get('orchestrator_pid')} live={liveness.get('orchestrator_live')}",
     ]
+    stored_overall_status = status.get("stored_overall_status")
+    if stored_overall_status and stored_overall_status != status.get("overall_status"):
+        lines.append(f"stored_overall_status={stored_overall_status}")
     progress_source = status.get("progress_source") or {}
     if progress_source.get("kind"):
         lines.append(

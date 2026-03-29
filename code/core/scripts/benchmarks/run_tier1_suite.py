@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 
+from core.benchmark.bench_commands import _tier1_result_failure_count
 from core.benchmark.suites.tier1 import default_tier1_config_path, run_tier1_suite
 
 
@@ -52,7 +53,7 @@ def main() -> int:
             indent=2,
         )
     )
-    return 1 if int(result["execution"].get("total_failed", 0) or 0) > 0 else 0
+    return 1 if _tier1_result_failure_count(result) > 0 else 0
 
 
 if __name__ == "__main__":
