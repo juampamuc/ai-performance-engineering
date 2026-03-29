@@ -35,6 +35,20 @@ function formatEventLabel(event: Record<string, unknown>): string {
   return 'event';
 }
 
+function statusVariant(value: string | null | undefined): 'default' | 'success' | 'warning' | 'danger' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'completed' || normalized === 'succeeded' || normalized === 'success') {
+    return 'success';
+  }
+  if (normalized.includes('aborted') || normalized === 'failed' || normalized === 'error') {
+    return 'danger';
+  }
+  if (normalized.includes('stale') || normalized === 'partial' || normalized === 'warning') {
+    return 'warning';
+  }
+  return 'default';
+}
+
 function E2EStatusSkeleton() {
   return (
     <div className="space-y-6">
@@ -144,7 +158,12 @@ function E2EPageContent() {
   const current = status?.current;
   const watcher = status?.watcher;
   const actions = status?.actions;
+  const ledgerSummary = status?.ledgers?.summary;
+  const reportedFailures = status?.current?.reported_failures || [];
   const latestTimestamp = progressSource?.progress_timestamp || '—';
+  const issueSummary = ledgerSummary
+    ? `${ledgerSummary.unresolved_count ?? 0} open / ${ledgerSummary.resolved_count ?? 0} resolved`
+    : '-';
 
   return (
     <DashboardShell
@@ -176,7 +195,7 @@ function E2EPageContent() {
               value={status?.inferred_state || '-'}
               subtitle={`overall=${status?.overall_status || '-'}`}
               icon={Activity}
-              variant={status?.inferred_state === 'completed' ? 'success' : 'default'}
+              variant={statusVariant(status?.inferred_state)}
             />
             <StatsCard
               title="Current Progress"
@@ -185,18 +204,20 @@ function E2EPageContent() {
               icon={Route}
             />
             <StatsCard
+              title="Incidents"
+              value={ledgerSummary?.issue_count ?? 0}
+              subtitle={issueSummary}
+              icon={ShieldCheck}
+              variant={(ledgerSummary?.unresolved_count ?? 0) > 0 ? 'danger' : 'success'}
+            />
+            <StatsCard
               title="Watcher"
               value={watcher?.watch_state || 'not armed'}
               subtitle={`auto-resume=${watcher?.auto_resume_count ?? 0}`}
               icon={ShieldCheck}
               variant={watcher?.watch_state === 'watching' ? 'success' : 'warning'}
             />
-            <StatsCard
-              title="Current Timestamp"
-              value={String(latestTimestamp)}
-              subtitle={formatSeconds(current?.elapsed_seconds)}
-              icon={Clock3}
-            />
+            <StatsCard title="Current Timestamp" value={String(latestTimestamp)} subtitle={formatSeconds(current?.elapsed_seconds)} icon={Clock3} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -224,6 +245,24 @@ function E2EPageContent() {
                   <div>
                     <div className="text-xs uppercase text-white/40 mb-1">Checkpoint Lag</div>
                     <div>{formatSeconds(progressSource?.checkpoint_progress_lag_seconds)}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-xs uppercase text-white/40 mb-1">Effective Overall</div>
+                    <div>{status?.overall_status || '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-white/40 mb-1">Stored Overall</div>
+                    <div>{status?.stored_overall_status || status?.overall_status || '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-white/40 mb-1">Effective Resume</div>
+                    <div>{String(status?.resume_available ?? '-')}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-white/40 mb-1">Stored Resume</div>
+                    <div>{String(status?.stored_resume_available ?? status?.resume_available ?? '-')}</div>
                   </div>
                 </div>
                 {notes.length > 0 && (
@@ -321,6 +360,28 @@ function E2EPageContent() {
               </div>
             </div>
           </div>
+
+          {reportedFailures.length > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="text-lg font-semibold text-white">Reported Failures</h2>
+                <span className="badge badge-warning">{reportedFailures.length}</span>
+              </div>
+              <div className="card-body space-y-3 text-sm text-white/70">
+                {reportedFailures.map((entry, index) => (
+                  <div key={`${String(entry.target || 'failure')}-${index}`} className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-white">{String(entry.target || '-')}</div>
+                      <div className="text-xs uppercase text-white/40">{String(entry.status || '-')}</div>
+                    </div>
+                    <div className="mt-1 text-xs text-white/55">
+                      {String(entry.error || entry.symptom || entry.source || 'No extra detail')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {issueGroups.length > 0 && (
             <div className="card">

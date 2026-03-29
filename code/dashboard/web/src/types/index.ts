@@ -291,8 +291,10 @@ export interface BenchmarkE2EStatusSnapshot {
   run_dir?: string;
   run_state?: string;
   overall_status?: string;
+  stored_overall_status?: string;
   inferred_state?: string;
   resume_available?: boolean;
+  stored_resume_available?: boolean;
   notes?: string[];
   progress_source?: {
     kind?: string;
@@ -338,7 +340,20 @@ export interface BenchmarkE2EStatusSnapshot {
   stages?: BenchmarkE2EStatusStage[];
   issue_groups?: BenchmarkE2EIssueGroup[];
   recent_events?: Array<Record<string, unknown>>;
-  ledgers?: Record<string, string | null>;
+  ledgers?: {
+    summary?: {
+      issue_count?: number;
+      issue_group_count?: number;
+      reported_issue_count?: number;
+      resolved_count?: number;
+      unresolved_count?: number;
+      run_id?: string;
+    };
+    active_issue_ledger_json?: string | null;
+    active_issue_ledger_md?: string | null;
+    historical_failure_ledger_json?: string | null;
+    historical_failure_ledger_md?: string | null;
+  };
   actions?: {
     status_command_shell?: string;
     watch_command_shell?: string;
