@@ -2172,7 +2172,7 @@ def test_inspect_benchmark_e2e_sweep_run_detects_stale_running_and_builds_resume
         "run_state": "running",
         "overall_status": "running",
         "updated_at": "2026-03-27T16:00:00Z",
-        "resume_available": True,
+        "resume_available": False,
         "contract": contract,
         "stages": [],
         "orchestrator_pid": 999,
@@ -2206,6 +2206,8 @@ def test_inspect_benchmark_e2e_sweep_run_detects_stale_running_and_builds_resume
     assert "--resume" in status["actions"]["resume_command"]
     assert "--full-sweep-suite-timeout" in status["actions"]["resume_command"]
     assert status["resume_available"] is True
+    assert status["stored_resume_available"] is False
+    assert "stored resume_available was false; corrected to true for stale running package" in status["notes"]
 
 
 def test_inspect_benchmark_e2e_sweep_run_preserves_terminal_full_sweep_failures_from_all_attempts(

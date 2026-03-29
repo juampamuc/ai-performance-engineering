@@ -1927,7 +1927,8 @@ def inspect_benchmark_e2e_sweep_run(
         or summary.get("overall_status")
         or "unknown"
     )
-    resume_available = bool(checkpoint.get("resume_available", summary.get("resume_available", False)))
+    stored_resume_available = bool(checkpoint.get("resume_available", summary.get("resume_available", False)))
+    resume_available = stored_resume_available
     orchestrator_pid = metrics.get("orchestrator_pid")
     if orchestrator_pid is None:
         orchestrator_pid = checkpoint.get("orchestrator_pid", summary.get("orchestrator_pid"))
@@ -1956,6 +1957,14 @@ def inspect_benchmark_e2e_sweep_run(
     elif str(run_state) == "running":
         inferred_state = "running_stale"
         status_notes.append("run is marked running but the orchestrator pid is not live")
+        if not resume_available:
+            # A stale running package with persisted state is manually resumable even if the
+            # original checkpoint never flipped resume_available before the orchestrator died.
+            resume_available = summary_path.exists() or checkpoint_path.exists()
+            if resume_available:
+                status_notes.append(
+                    "stored resume_available was false; corrected to true for stale running package"
+                )
     elif str(run_state) == "aborted":
         inferred_state = "aborted_terminal"
     else:
@@ -2135,6 +2144,7 @@ def inspect_benchmark_e2e_sweep_run(
             "run_state": run_state,
             "overall_status": effective_overall_status,
             "stored_overall_status": overall_status,
+            "stored_resume_available": stored_resume_available,
             "inferred_state": inferred_state,
             "resume_available": resume_available,
             "notes": status_notes,
@@ -2204,6 +2214,9 @@ def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
     stored_overall_status = status.get("stored_overall_status")
     if stored_overall_status and stored_overall_status != status.get("overall_status"):
         lines.append(f"stored_overall_status={stored_overall_status}")
+    stored_resume_available = status.get("stored_resume_available")
+    if stored_resume_available is not None and stored_resume_available != status.get("resume_available"):
+        lines.append(f"stored_resume_available={stored_resume_available}")
     progress_source = status.get("progress_source") or {}
     if progress_source.get("kind"):
         lines.append(
