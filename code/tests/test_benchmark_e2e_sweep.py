@@ -798,6 +798,57 @@ def test_run_benchmark_e2e_sweep_persists_aborted_state_on_sighup(
     assert tier1_stage["attempts"][-1]["status"] == "aborted"
 
 
+def test_run_benchmark_e2e_sweep_sigterm_abort_bypasses_inner_exception_handlers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(e2e_sweep, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        e2e_sweep,
+        "discover_benchmark_e2e_inventory",
+        lambda _root=None: {"counts": {"total": 0, "single_gpu": 0, "multi_gpu": 0}, "single_gpu": [], "multi_gpu": [], "targets": []},
+    )
+    monkeypatch.setattr(e2e_sweep, "detect_expectation_key", lambda: "test_gpu")
+    monkeypatch.setattr(
+        e2e_sweep,
+        "detect_execution_environment",
+        lambda: SimpleNamespace(kind="bare_metal", virtualized=False, dmi_product_name="test-box"),
+    )
+    monkeypatch.setattr(e2e_sweep, "_benchmark_queue_lock", lambda *args, **kwargs: contextlib.nullcontext())
+
+    def _raise_term_inside_inner_exception_handler(**_kwargs):
+        try:
+            signal.raise_signal(signal.SIGTERM)
+        except Exception as exc:  # pragma: no cover - regression guard
+            return {"swallowed": str(exc)}
+        raise AssertionError("SIGTERM handler should have aborted execution")
+
+    monkeypatch.setattr(e2e_sweep, "_invoke_run_tier1_suite", _raise_term_inside_inner_exception_handler)
+
+    result = e2e_sweep.run_benchmark_e2e_sweep(
+        run_id="e2e_sigterm_abort",
+        run_full_sweep=False,
+        run_cluster=False,
+        run_fabric=False,
+        auto_resume=False,
+    )
+
+    run_dir = e2e_sweep.e2e_run_dir("e2e_sigterm_abort", tmp_path)
+    summary_payload = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    checkpoint_payload = json.loads((run_dir / "checkpoint.json").read_text(encoding="utf-8"))
+
+    assert result["run_state"] == "aborted"
+    assert result["overall_status"] == "aborted"
+    assert result["resume_available"] is True
+    assert "received SIGTERM" in result["error"]
+    assert result["crash"]["signal"] == "SIGTERM"
+    assert summary_payload["run_state"] == "aborted"
+    assert checkpoint_payload["run_state"] == "aborted"
+    tier1_stage = next(stage for stage in summary_payload["stages"] if stage["name"] == "tier1")
+    assert tier1_stage["status"] == "aborted"
+    assert tier1_stage["attempts"][-1]["status"] == "aborted"
+
+
 def test_run_benchmark_e2e_sweep_resume_requires_explicit_run_id() -> None:
     result = e2e_sweep.run_benchmark_e2e_sweep(
         resume=True,

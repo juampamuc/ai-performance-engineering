@@ -40,6 +40,15 @@ _E2E_WATCHER_MAX_AUTO_RESUMES = 3
 _E2E_WATCHER_SUPERVISED_ENV = "AISP_E2E_WATCHER_SUPERVISED"
 
 
+class _E2EAbort(BaseException):
+    """Control-flow abort for the top-level e2e orchestrator.
+
+    This intentionally subclasses BaseException so nested benchmark/harness
+    code that uses broad ``except Exception`` cleanup paths cannot accidentally
+    convert a process-level abort signal into an ordinary benchmark failure.
+    """
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -3843,9 +3852,6 @@ def run_benchmark_e2e_sweep(
                 already_running=bool(watcher_info.get("already_running", False)),
             )
         _persist_state()
-
-    class _E2EAbort(RuntimeError):
-        pass
 
     previous_handlers: Dict[int, Any] = {}
     abort_signal: Dict[str, Optional[str]] = {"signal": None}
