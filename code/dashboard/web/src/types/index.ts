@@ -332,6 +332,8 @@ export interface BenchmarkE2EStatusSnapshot {
   watcher?: {
     watcher_pid?: number | null;
     watch_state?: string | null;
+    stored_watch_state?: string | null;
+    watcher_live?: boolean;
     poll_interval_seconds?: number | null;
     max_auto_resumes?: number | null;
     auto_resume_count?: number | null;

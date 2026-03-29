@@ -213,7 +213,13 @@ function E2EPageContent() {
             <StatsCard
               title="Watcher"
               value={watcher?.watch_state || 'not armed'}
-              subtitle={`auto-resume=${watcher?.auto_resume_count ?? 0}`}
+              subtitle={`auto-resume=${watcher?.auto_resume_count ?? 0}${
+                watcher?.watcher_live === false ? ' | dead' : ''
+              }${
+                watcher?.stored_watch_state && watcher.stored_watch_state !== watcher.watch_state
+                  ? ` | stored=${watcher.stored_watch_state}`
+                  : ''
+              }`}
               icon={ShieldCheck}
               variant={watcher?.watch_state === 'watching' ? 'success' : 'warning'}
             />

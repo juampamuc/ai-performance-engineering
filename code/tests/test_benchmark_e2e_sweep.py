@@ -1969,6 +1969,61 @@ def test_inspect_benchmark_e2e_sweep_run_detects_live_progress_and_child_events(
     assert status["actions"]["dashboard_path"].endswith(f"/e2e?run_id={run_id}")
 
 
+def test_inspect_benchmark_e2e_sweep_run_downgrades_stale_active_watcher_state(tmp_path: Path, monkeypatch) -> None:
+    run_id = "e2e_dead_watcher_state"
+    run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_id": run_id,
+        "run_state": "aborted",
+        "overall_status": "aborted",
+        "updated_at": "2026-03-29T15:48:37Z",
+        "resume_available": True,
+        "contract": {"auto_resume": True},
+        "stages": [],
+        "orchestrator_pid": 999,
+    }
+    (run_dir / "summary.json").write_text(json.dumps(payload), encoding="utf-8")
+    (run_dir / "checkpoint.json").write_text(json.dumps(payload), encoding="utf-8")
+    (run_dir / "progress.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "current": {
+                    "timestamp": "2026-03-29T15:48:37+00:00",
+                    "metrics": {
+                        "run_state": "aborted",
+                        "overall_status": "aborted",
+                        "orchestrator_pid": 999,
+                        "stages": [],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+    e2e_sweep.e2e_watcher_status_path(run_dir).write_text(
+        json.dumps({"watcher_pid": 456, "watch_state": "resuming", "auto_resume_count": 1}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(e2e_sweep, "_pid_is_live", lambda pid: False)
+
+    status = e2e_sweep.inspect_benchmark_e2e_sweep_run(run_id=run_id, repo_root=tmp_path)
+    rendered = e2e_sweep.render_benchmark_e2e_status_text(status)
+
+    assert status["watcher"]["stored_watch_state"] == "resuming"
+    assert status["watcher"]["watch_state"] == "stale_dead"
+    assert status["watcher"]["watcher_live"] is False
+    assert (
+        "stored watcher watch_state `resuming` corrected to `stale_dead` because the watcher pid is not live"
+        in status["notes"]
+    )
+    assert "watcher_state=stale_dead" in rendered
+    assert "stored_watcher_state=resuming" in rendered
+
+
 def test_inspect_benchmark_e2e_sweep_run_syncs_active_issue_ledger_from_live_failures(tmp_path: Path, monkeypatch) -> None:
     run_id = "e2e_live_issue_sync"
     run_dir = e2e_sweep.e2e_run_dir(run_id, tmp_path)

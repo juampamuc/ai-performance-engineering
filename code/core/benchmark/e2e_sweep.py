@@ -2017,9 +2017,20 @@ def inspect_benchmark_e2e_sweep_run(
                 "progress_path": str(child_progress),
             }
 
-    watcher = _watcher_summary(run_dir) or {}
+    watcher = dict(_watcher_summary(run_dir) or {})
     watcher_pid = watcher.get("watcher_pid")
     watcher_live = _pid_is_live(watcher_pid)
+    stored_watch_state = watcher.get("watch_state")
+    effective_watch_state = stored_watch_state
+    if not watcher_live and str(stored_watch_state or "").strip() in {"watching", "resuming", "launched"}:
+        effective_watch_state = "stale_dead"
+        status_notes.append(
+            f"stored watcher watch_state `{stored_watch_state}` corrected to `stale_dead` because the watcher pid is not live"
+        )
+    if watcher:
+        watcher["stored_watch_state"] = stored_watch_state
+        watcher["watch_state"] = effective_watch_state
+        watcher["watcher_live"] = watcher_live
     actions = build_benchmark_e2e_status_actions(resolved_run_id, python_executable=sys.executable)
 
     stage_snapshots = _apply_effective_stage_snapshot_statuses(
@@ -2246,6 +2257,8 @@ def render_benchmark_e2e_status_text(status: Dict[str, Any]) -> str:
             f"watcher_pid={watcher.get('watcher_pid')} watcher_state={watcher.get('watch_state')} "
             f"auto_resume_count={watcher.get('auto_resume_count')}"
         )
+        if watcher.get("stored_watch_state") and watcher.get("stored_watch_state") != watcher.get("watch_state"):
+            lines.append(f"stored_watcher_state={watcher.get('stored_watch_state')}")
     reported_failures = list(current.get("reported_failures") or [])
     if reported_failures:
         lines.append(f"reported_failures={len(reported_failures)}")
