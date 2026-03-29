@@ -102,7 +102,13 @@ def _entry_targets(chapter: str, example: str, example_type: str) -> Set[str]:
 
 
 def _expectation_example_key(example: str, example_type: str) -> str:
-    return example if example_type == "python" else f"{example}_{example_type}"
+    example_type_norm = (example_type or "python").strip().lower()
+    if example_type_norm == "python":
+        return example
+    suffix = f"_{example_type_norm}"
+    if example.lower().endswith(suffix):
+        return example
+    return f"{example}_{example_type_norm}"
 
 
 def _prepare_entry(entry_dict: Dict, *, validity_profile: Optional[str]) -> ExpectationEntry:

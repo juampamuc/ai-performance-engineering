@@ -2,11 +2,14 @@ import json
 from pathlib import Path
 
 from core.benchmark.expectations import ExpectationEntry, RunProvenance
+from core.analysis.refresh_expectations_from_run import _expectation_example_key as refresh_expectation_example_key
+from core.benchmark.bench_commands import _expectation_example_key as bench_command_expectation_example_key
 from core.harness.run_benchmarks import (
     _format_failed_no_speedup,
     _resolve_local_contract_from_expectation,
     _should_fail_no_speedup,
     build_expectation_metadata,
+    expectation_example_key,
 )
 
 
@@ -148,6 +151,35 @@ def test_block_scaling_expectation_uses_explicit_local_floor_below_historical_be
 
     assert entry.minimum_required_speedup == 1.75
     assert entry.best_speedup > entry.minimum_required_speedup
+
+
+def test_small_effect_b200_examples_keep_explicit_local_speed_floors() -> None:
+    ch06_payload = json.loads((REPO_ROOT / "ch06" / "expectations_b200.json").read_text(encoding="utf-8"))
+    launch_bounds = ExpectationEntry.from_dict(ch06_payload["examples"]["launch_bounds"])
+    launch_bounds_cuda = ExpectationEntry.from_dict(ch06_payload["examples"]["launch_bounds_cuda"])
+
+    assert launch_bounds.minimum_required_speedup == 1.005
+    assert launch_bounds.best_speedup > launch_bounds.minimum_required_speedup
+    assert launch_bounds_cuda.minimum_required_speedup == 1.005
+    assert launch_bounds_cuda.best_speedup > launch_bounds_cuda.minimum_required_speedup
+
+
+def test_model_compile_reduced_precision_b200_uses_explicit_local_floor() -> None:
+    payload = json.loads((REPO_ROOT / "ch14" / "expectations_b200.json").read_text(encoding="utf-8"))
+    entry = ExpectationEntry.from_dict(payload["examples"]["model_compile_reduced_precision"])
+
+    assert entry.minimum_required_speedup == 1.01
+    assert entry.best_speedup > entry.minimum_required_speedup
+
+
+def test_expectation_example_key_keeps_cuda_examples_with_cuda_suffix_stable() -> None:
+    for helper in (
+        expectation_example_key,
+        bench_command_expectation_example_key,
+        refresh_expectation_example_key,
+    ):
+        assert helper("launch_bounds_cuda", "cuda") == "launch_bounds_cuda"
+        assert helper("double_buffered_pipeline", "cuda") == "double_buffered_pipeline_cuda"
 
 
 def test_persistent_decode_nvlink_offload_is_control_contract_while_paged_offload_stays_speed() -> None:

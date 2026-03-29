@@ -510,7 +510,7 @@
         "best_optimization_speedup": 1.0118293883440659,
         "best_optimization_technique": "optimized_launch_bounds",
         "best_optimization_time_ms": 30.52737922668457,
-        "minimum_required_speedup": 1.0072203407016258,
+        "minimum_required_speedup": 1.005,
         "optimization_goal": "speed"
       },
       "metrics": {
@@ -568,6 +568,7 @@
         "best_optimization_speedup": 1.0060856252185795,
         "best_optimization_technique": "optimized_launch_bounds_cuda",
         "best_optimization_time_ms": 0.3179624,
+        "minimum_required_speedup": 1.005,
         "optimization_goal": "speed"
       },
       "metrics": {

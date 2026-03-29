@@ -751,6 +751,9 @@ def expectation_example_key(example_name: str, bench_type: str) -> str:
     bench_type = (bench_type or "python").lower()
     if bench_type == "python":
         return example_name
+    suffix = f"_{bench_type}"
+    if example_name.lower().endswith(suffix):
+        return example_name
     return f"{example_name}_{bench_type}"
 
 

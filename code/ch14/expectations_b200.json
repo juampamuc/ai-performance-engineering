@@ -343,6 +343,7 @@
         "best_optimization_speedup": 1.013917663308301,
         "best_optimization_technique": "optimized_model_compile_reduced_precision",
         "best_optimization_time_ms": 7.679273788745586,
+        "minimum_required_speedup": 1.01,
         "optimization_goal": "speed"
       },
       "metrics": {

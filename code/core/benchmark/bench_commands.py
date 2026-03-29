@@ -279,6 +279,9 @@ def _expectation_example_key(example_name: str, bench_type: str) -> str:
     bench_type_norm = (bench_type or "python").strip().lower()
     if bench_type_norm == "python":
         return example_name
+    suffix = f"_{bench_type_norm}"
+    if example_name.lower().endswith(suffix):
+        return example_name
     return f"{example_name}_{bench_type_norm}"
 
 
