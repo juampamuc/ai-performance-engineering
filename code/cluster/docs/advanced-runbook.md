@@ -132,6 +132,8 @@ python -m cli.aisp cluster common-eval \
 Expected artifact:
 - `cluster/runs/<run_id>/structured/<run_id>_multinode_readiness.json`
 
+For the current core serving lane, pair that readiness gate with the canonical 2-node inference contract in `cluster/docs/canonical_2node_inference_surface.md`. That document freezes the current vLLM-based 2-node surface, required artifact bundle, and the exact handoff commands used to unblock downstream optimization work.
+
 Fail fast conditions:
 - missing labels
 - empty hosts/labels

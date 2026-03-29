@@ -34,6 +34,11 @@ Presets:
 - `fabric-systems`: `modern-llm` plus the fabric capability matrix, verification ladder, AI-correlation artifact, and fabric scorecard. This preset defaults to capability-aware partial completion instead of strict canonical completeness gating.
 - `multinode-readiness`: checks contract and environment only; no workloads.
 
+Canonical 2-node serving lane:
+- use `multinode-readiness` first as the dry-run/preflight gate for the exact host, label, and interface contract
+- then use `modern-llm` on exactly 2 hosts to capture the canonical multinode vLLM + communication evidence bundle
+- operator contract, example spec files, and required artifacts live in `cluster/docs/canonical_2node_inference_surface.md`
+
 Dedicated fabric entrypoint:
 
 ```bash
@@ -133,6 +138,45 @@ That writes:
 
 Use `modern-llm` only after readiness is green.
 Use `fabric-systems` or `cluster fabric-eval` when the primary goal is NVLink, InfiniBand, or Spectrum-X characterization rather than generic system bring-up.
+
+## Canonical 2-Node Inference Surface
+Use this when the question is specifically "is the core 2-node inference lane healthy, comparable, and ready for baseline-vs-optimization work?"
+
+- Contract doc: `cluster/docs/canonical_2node_inference_surface.md`
+- Workload spec example: `templates/canonical_2node_inference_workload_spec.yaml`
+- BenchmarkRun example: `templates/canonical_2node_inference_benchmark_run.yaml`
+
+The canonical flow intentionally reuses the existing surfaces instead of adding a new launcher:
+
+```bash
+python -m cli.aisp cluster common-eval \
+  --preset multinode-readiness \
+  --run-id <run_id> \
+  --hosts <leader,worker> \
+  --labels <leader_label,worker_label> \
+  --ssh-user <user> \
+  --oob-if <iface> \
+  --socket-ifname <iface>
+```
+
+Then, after readiness is green:
+
+```bash
+python -m cli.aisp cluster common-eval \
+  --preset modern-llm \
+  --run-id <run_id> \
+  --hosts <leader,worker> \
+  --labels <leader_label,worker_label> \
+  --ssh-user <user> \
+  --ssh-key <path> \
+  --oob-if <iface> \
+  --socket-ifname <iface> \
+  --primary-label <leader_label> \
+  --extra-arg --gpu-hourly-cost-usd \
+  --extra-arg <usd_per_gpu_hour> \
+  --extra-arg --vllm-multinode-image \
+  --extra-arg <repo@sha256:...>
+```
 
 ## Optional Export
 `python -m cli.aisp cluster build-canonical-package ...` is optional. Most users can ignore it. It only exists to export already-produced runs into a clean shareable bundle after collection/promotion are already done.

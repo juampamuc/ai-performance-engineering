@@ -216,6 +216,7 @@ Use the declarative spec to choose the right execution path instead of inventing
 | Common cluster evaluation | `python -m cli.aisp cluster common-eval --preset common-answer-fast` |
 | Full modern LLM cluster evaluation | `python -m cli.aisp cluster common-eval --preset modern-llm` |
 | Multi-node contract validation before workloads | `python -m cli.aisp cluster common-eval --preset multinode-readiness` |
+| Canonical 2-node inference serving lane | `cluster/docs/canonical_2node_inference_surface.md` + `python -m cli.aisp cluster common-eval --preset multinode-readiness` followed by `--preset modern-llm` |
 
 ## Kubernetes Service Design
 The declarative service design requested in the benchmark methodology lives in [`cluster/docs/kubernetes_benchmark_service.md`](../cluster/docs/kubernetes_benchmark_service.md).

@@ -1,0 +1,154 @@
+# Canonical 2-node inference workload example for the current serving lane.
+
+run_metadata:
+  benchmark_layer: component
+  benchmark_grade: publication
+  use_case: release_gate
+  owner: performance-engineering
+  ticket_or_epic: FLU-128
+
+comparison_axis:
+  variable_under_test: runtime_version
+  control: baseline
+  candidate: candidate
+  constants_locked:
+    - model
+    - sequence_length_mix
+    - precision
+    - batching_policy
+    - concurrency_model
+    - runtime_image_digest
+    - visible_gpu_shape
+    - oob_if
+    - socket_ifname
+
+workload:
+  type: inference
+  name: canonical_2node_vllm_gpt_oss_120b
+  model:
+    name: openai/gpt-oss-120b
+    parameter_count_b: 120
+    precision: bf16
+    weights_source: openai/gpt-oss-120b
+  input_distribution:
+    sequence_length_mix:
+      p50: 1024
+      p95: 1024
+      max: 1024
+    prompt_tokens:
+      p50: 1024
+      p95: 1024
+      max: 1024
+    completion_tokens:
+      p50: 1024
+      p95: 1024
+      max: 1024
+  batching_policy:
+    mode: continuous
+    max_batch_size: null
+    max_num_seqs: 1024
+    max_tokens_in_batch: null
+  concurrency_model:
+    mode: closed_loop
+    values: [64]
+  serving_contract:
+    stack_under_test: vllm
+    protocol: openai_compatible_http
+    deployment_model: multinode_service
+    fairness_constraints:
+      protocol_fixed_across_candidates: true
+      deployment_model_fixed_across_candidates: true
+      api_behavior_fixed_across_candidates: true
+  quality_constraints:
+    correctness_suite: []
+    max_accuracy_delta_pct: 0.0
+    allowed_quality_exceptions: []
+
+execution:
+  image: vllm/vllm-openai:cu130-nightly@sha256:<pin-before-canonical-run>
+  runtime_versions:
+    driver: record in `*_meta.json`
+    cuda: cu130
+    nccl: record in `*_meta.json`
+    pytorch: record in `*_meta.json`
+    runtime_or_server: vllm
+  hardware_tier:
+    gpu_model: homogeneous across both nodes
+    gpu_count: null
+    cpu_model: record in `*_meta.json`
+    ram_gb: null
+    network_fabric: explicit `--oob-if` / `--socket-ifname` binding required
+    storage_tier: local scratch or equivalent stable path
+  topology:
+    gpu_to_gpu: capture in `*_meta.json`
+    gpu_to_nic_affinity: capture in `*_meta.json`
+    numa_layout: capture in `*_meta.json`
+    pcie_layout: capture in `*_meta.json`
+  scheduler_path:
+    platform: bare_metal
+    queue_or_scheduler: direct_cli
+    placement_policy: fixed_topology
+    control_plane_path: aisp cluster common-eval -> run_cluster_eval_suite.sh -> run_vllm_serve_multinode_container.sh
+
+measurement_policy:
+  trials: 3
+  warmup_trials: 1
+  report_statistics:
+    - median
+    - mean
+    - stddev
+    - p95
+    - p99
+    - cv_pct
+  outlier_policy:
+    method: tukey_iqr_and_mad
+    keep_raw_samples: true
+    auto_flag_only: true
+    discard_requires_written_reason: true
+  confidence_policy:
+    method: bootstrap_95_ci
+    min_effect_size_pct: 5.0
+  environment_controls:
+    gpu_clocks_locked: true
+    app_clocks_recorded: true
+    topology_recorded: true
+    background_load_recorded: true
+
+metrics:
+  primary: tokens_per_second
+  secondary:
+    - ttft_ms
+    - p99_latency_ms
+    - cost_per_request_usd
+    - cost_per_token_usd
+
+diagnosis_policy:
+  bottleneck_classes:
+    - compute_bound
+    - comm_bound
+    - input_bound
+    - control_plane_bound
+  required_signals:
+    - model_server_metrics
+    - gpu_counters
+    - nccl_traces
+    - storage_or_network_probes
+    - scheduler_timing
+  distributed:
+    rank_level_visibility: true
+    isolate_suspected_straggler_node: true
+    cordon_on_repeated_failure: false
+
+artifacts:
+  artifact_root: cluster/runs/<run_id>
+  raw_artifacts_immutable: true
+  require_manifest: true
+  require_profiler_artifacts: false
+  require_sha256: true
+  provenance_signing:
+    required: true
+    status: gap_in_current_repo
+  publication_packet:
+    include_methodology_writeup: true
+    include_comparison_report: true
+    include_audit_ledger: true

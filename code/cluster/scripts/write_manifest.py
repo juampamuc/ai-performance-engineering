@@ -100,6 +100,7 @@ def _collect_legacy_paths(cluster_root: Path, run_id: str, include_figures: bool
 def _artifact_role_for(rel_path: str) -> str | None:
     name = Path(rel_path).name
     role_patterns = [
+        ("preflight_services", "_preflight_services.json"),
         ("fabric_command_catalog", "_fabric_command_catalog.json"),
         ("fabric_capability_matrix", "_fabric_capability_matrix.json"),
         ("fabric_verification", "_fabric_verification.json"),
@@ -114,6 +115,13 @@ def _artifact_role_for(rel_path: str) -> str | None:
         ("nccl_alltoall", "_alltoall_nccl_alltoall.json"),
         ("vllm_request_rate_sweep", "_vllm_serve_request_rate_sweep.csv"),
         ("vllm_concurrency_sweep", "_vllm_serve_sweep.csv"),
+        ("vllm_multinode_serve", "_vllm_multinode_serve.json"),
+        ("vllm_multinode_serve", "_vllm_multinode_serve.csv"),
+        ("vllm_multinode_serve", "_vllm_multinode_serve.jsonl"),
+        ("vllm_multinode_slo_goodput", "_vllm_multinode_slo_goodput.json"),
+        ("vllm_multinode_slo_goodput", "_vllm_multinode_slo_goodput.csv"),
+        ("vllm_multinode_clock_lock", "_vllm_multinode_leader_clock_lock.json"),
+        ("vllm_multinode_clock_lock", "_vllm_multinode_worker_clock_lock.json"),
         ("gemm_sanity", "_gemm_gpu_sanity.csv"),
         ("fio", "_fio.json"),
         ("nvbandwidth", "_nvbandwidth.json"),

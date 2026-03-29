@@ -19,6 +19,15 @@ def test_benchmark_run_template_is_valid() -> None:
     assert errors == []
 
 
+def test_canonical_2node_inference_benchmark_run_is_valid() -> None:
+    path = Path("templates/canonical_2node_inference_benchmark_run.yaml")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    errors = validate_benchmark_run_document(document)
+
+    assert errors == []
+
+
 def test_publication_grade_requires_signed_provenance() -> None:
     document = copy.deepcopy(_load_template())
     document["spec"]["provenance"]["signing"]["required"] = False
