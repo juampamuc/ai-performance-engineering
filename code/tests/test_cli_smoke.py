@@ -189,6 +189,45 @@ def test_cluster_common_eval_multinode_readiness_writes_real_manifest():
         shutil.rmtree(run_dir, ignore_errors=True)
 
 
+def test_cluster_common_eval_two_node_readiness_dry_run_succeeds_without_workloads():
+    run_id = f"test_cli_2node_ready_{uuid4().hex[:8]}"
+    run_dir = REPO_ROOT / "cluster" / "runs" / run_id
+    try:
+        result = _run_cli(
+            [
+                "cluster",
+                "common-eval",
+                "--preset",
+                "multinode-readiness",
+                "--run-id",
+                run_id,
+                "--hosts",
+                "node-a,node-b",
+                "--labels",
+                "node-a,node-b",
+                "--ssh-user",
+                "tester",
+                "--oob-if",
+                "bond0",
+                "--socket-ifname",
+                "bond0",
+            ],
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["success"] is True
+        readiness_path = run_dir / "structured" / f"{run_id}_multinode_readiness.json"
+        assert readiness_path.exists()
+        readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+        assert readiness["status"] == "ok"
+        assert readiness["inputs"]["hosts"] == ["node-a", "node-b"]
+        assert readiness["inputs"]["oob_if"] == "bond0"
+        assert readiness["inputs"]["socket_ifname"] == "bond0"
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
 def test_cluster_watch_promote_reports_missing_run_dir_via_real_cli():
     result = _run_cli(["cluster", "watch-promote", "--run-id", "does-not-exist", "--pid", "999999"])
     assert result.returncode == 0, result.stderr

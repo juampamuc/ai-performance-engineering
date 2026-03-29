@@ -1247,18 +1247,20 @@ for i in "${!HOST_ARR[@]}"; do
   fi
 done
 if [[ -n "$LABELS" ]]; then
-  declare -A SEEN_LABELS=()
   for i in "${!LABEL_ARR[@]}"; do
     LABEL_ARR[$i]="$(echo "${LABEL_ARR[$i]}" | xargs)"
     if [[ -z "${LABEL_ARR[$i]}" ]]; then
       echo "ERROR: --labels contains an empty label entry" >&2
       exit 2
     fi
-    if [[ -n "${SEEN_LABELS[${LABEL_ARR[$i]}]:-}" ]]; then
-      echo "ERROR: --labels entries must be unique; duplicate '${LABEL_ARR[$i]}'" >&2
-      exit 2
+    if (( i > 0 )); then
+      for ((j=0; j<i; j++)); do
+        if [[ "${LABEL_ARR[$j]}" == "${LABEL_ARR[$i]}" ]]; then
+          echo "ERROR: --labels entries must be unique; duplicate '${LABEL_ARR[$i]}'" >&2
+          exit 2
+        fi
+      done
     fi
-    SEEN_LABELS["${LABEL_ARR[$i]}"]=1
   done
 fi
 

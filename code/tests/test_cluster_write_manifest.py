@@ -116,3 +116,44 @@ def test_build_manifest_payload_marks_fabric_run_partial(tmp_path: Path) -> None
     assert "fabric completeness is partial for one or more families" in payload["issues"]
     assert payload["fabric"]["scorecard_status"] == "partial"
     assert payload["fabric"]["degraded_families"] == ["infiniband"]
+
+
+def test_build_manifest_payload_classifies_multinode_vllm_artifacts(tmp_path: Path) -> None:
+    cluster_root = tmp_path / "cluster"
+    run_id = "2026-03-29_2node_demo"
+    run_dir = cluster_root / "runs" / run_id
+
+    _write_json(run_dir / "structured" / f"{run_id}_preflight_services.json", {"status": "ok"})
+    _write_json(run_dir / "structured" / f"{run_id}_suite_steps.json", [{"name": "manifest_refresh", "exit_code": 0}])
+    _write_json(run_dir / "structured" / f"{run_id}_leader_vllm_multinode_serve.json", {"status": "ok"})
+    (run_dir / "structured" / f"{run_id}_leader_vllm_multinode_serve.csv").write_text("metric,value\n", encoding="utf-8")
+    (run_dir / "structured" / f"{run_id}_leader_vllm_multinode_serve.jsonl").write_text("{}\n", encoding="utf-8")
+    _write_json(run_dir / "structured" / f"{run_id}_leader_vllm_multinode_slo_goodput.json", {"status": "ok"})
+    (run_dir / "structured" / f"{run_id}_leader_vllm_multinode_slo_goodput.csv").write_text("metric,value\n", encoding="utf-8")
+    _write_json(run_dir / "structured" / f"{run_id}_leader_vllm_multinode_leader_clock_lock.json", {"locked": True})
+    _write_json(run_dir / "structured" / f"{run_id}_worker_vllm_multinode_worker_clock_lock.json", {"locked": True})
+
+    payload, _ = write_manifest.build_manifest_payload(
+        cluster_root=cluster_root,
+        run_id=run_id,
+        run_dir=run_dir,
+        include_figures=False,
+        hosts=["leader", "worker"],
+        labels=["leader", "worker"],
+    )
+
+    artifact_roles = payload["artifact_roles"]
+    assert artifact_roles["preflight_services"] == [f"structured/{run_id}_preflight_services.json"]
+    assert sorted(artifact_roles["vllm_multinode_serve"]) == [
+        f"structured/{run_id}_leader_vllm_multinode_serve.csv",
+        f"structured/{run_id}_leader_vllm_multinode_serve.json",
+        f"structured/{run_id}_leader_vllm_multinode_serve.jsonl",
+    ]
+    assert sorted(artifact_roles["vllm_multinode_slo_goodput"]) == [
+        f"structured/{run_id}_leader_vllm_multinode_slo_goodput.csv",
+        f"structured/{run_id}_leader_vllm_multinode_slo_goodput.json",
+    ]
+    assert sorted(artifact_roles["vllm_multinode_clock_lock"]) == [
+        f"structured/{run_id}_leader_vllm_multinode_leader_clock_lock.json",
+        f"structured/{run_id}_worker_vllm_multinode_worker_clock_lock.json",
+    ]
