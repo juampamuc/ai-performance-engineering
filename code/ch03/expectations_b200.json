@@ -88,7 +88,7 @@
         "best_optimization_speedup": 1.8737633085531562,
         "best_optimization_technique": "optimized_gemm",
         "best_optimization_time_ms": 0.1775897890329361,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 212.125,

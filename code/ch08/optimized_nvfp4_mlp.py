@@ -32,6 +32,10 @@ class OptimizedChapter8NVFP4MLPBenchmark(NVFP4MLPBenchmark):
             "model.layers": float(self.config.num_layers),
         }
 
+    def get_optimization_goal(self) -> str:
+        """Keep the Chapter 8 NVFP4 bridge pair out of headline contract gating."""
+        return "control"
+
 
 def get_benchmark() -> BaseBenchmark:
     return OptimizedChapter8NVFP4MLPBenchmark()

@@ -235,7 +235,7 @@
         "best_optimization_speedup": 1.4387995406476186,
         "best_optimization_technique": "optimized_nvfp4_mlp",
         "best_optimization_time_ms": 0.5487515557971265,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 2277.28125,
@@ -428,7 +428,7 @@
         "best_optimization_speedup": 29.803286533161824,
         "best_optimization_technique": "optimized_thresholdtma",
         "best_optimization_time_ms": 2.2348991923862034,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 404.125,
@@ -479,7 +479,7 @@
         "best_optimization_speedup": 36.379046725923516,
         "best_optimization_technique": "optimized_thresholdtma",
         "best_optimization_time_ms": 0.13080533333333333,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_p75_ms": 4.7617,
@@ -513,7 +513,7 @@
         "best_optimization_speedup": 136.4256587961751,
         "best_optimization_technique": "optimized_tiling",
         "best_optimization_time_ms": 1.4682829034501228,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 340.125,
@@ -567,7 +567,7 @@
         "best_optimization_speedup": 1.1922830240184323,
         "best_optimization_technique": "optimized_tiling_tcgen05",
         "best_optimization_time_ms": 2.572640004910921,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 919.125,

@@ -39,3 +39,7 @@ class ThresholdBenchmarkBaseTMA(ThresholdBenchmarkBase):
             }
         )
         return metrics
+
+    def get_optimization_goal(self) -> str:
+        """Keep the TMA bridge pair runnable without headline speed gating."""
+        return "control"

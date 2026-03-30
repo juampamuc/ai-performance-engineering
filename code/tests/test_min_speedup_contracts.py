@@ -1,6 +1,11 @@
 import json
 from pathlib import Path
 
+from ch03.baseline_gemm import BaselineGemmBenchmark
+from ch08.baseline_nvfp4_mlp import BaselineChapter8NVFP4MLPBenchmark
+from ch08.baseline_thresholdtma import BaselineThresholdTMABenchmark
+from ch08.baseline_tiling import BaselineTilingBenchmark
+from ch08.baseline_tiling_tcgen05 import BaselineTilingBenchmarkTCGen05
 from core.benchmark.expectations import ExpectationEntry, RunProvenance
 from core.analysis.refresh_expectations_from_run import _expectation_example_key as refresh_expectation_example_key
 from core.benchmark.bench_commands import _expectation_example_key as bench_command_expectation_example_key
@@ -244,3 +249,45 @@ def test_nvfp4_group_gemm_shape_surface_uses_canonical_frontdoor_and_control_sha
     assert loser_two.minimum_required_speedup is None
     assert loser_three.optimization_goal == "control"
     assert loser_three.minimum_required_speedup is None
+
+
+def test_ch08_bridge_controls_keep_control_contracts() -> None:
+    expectation_paths = (
+        REPO_ROOT / "ch08" / "expectations_b200.json",
+        REPO_ROOT / "ch08" / "expectations_2x_b200.json",
+        REPO_ROOT / "ch08" / "expectations_4x_gb200.json",
+    )
+    expected_keys = {
+        "nvfp4_mlp",
+        "thresholdtma",
+        "thresholdtma_cuda",
+        "tiling",
+        "tiling_tcgen05",
+    }
+    for path in expectation_paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))["examples"]
+        present = sorted(expected_keys.intersection(payload.keys()))
+        assert present, path.name
+        for key in present:
+            entry = ExpectationEntry.from_dict(payload[key])
+            assert entry.optimization_goal == "control", (path.name, key)
+            assert entry.minimum_required_speedup is None, (path.name, key)
+
+    assert object.__new__(BaselineChapter8NVFP4MLPBenchmark).get_optimization_goal() == "control"
+    assert object.__new__(BaselineThresholdTMABenchmark).get_optimization_goal() == "control"
+    assert object.__new__(BaselineTilingBenchmark).get_optimization_goal() == "control"
+    assert object.__new__(BaselineTilingBenchmarkTCGen05).get_optimization_goal() == "control"
+
+
+def test_ch03_gemm_stays_control_contract() -> None:
+    expectation_paths = (
+        REPO_ROOT / "ch03" / "expectations_b200.json",
+        REPO_ROOT / "ch03" / "expectations_4x_gb200.json",
+    )
+    for path in expectation_paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))["examples"]
+        entry = ExpectationEntry.from_dict(payload["gemm"])
+        assert entry.optimization_goal == "control", path.name
+        assert entry.minimum_required_speedup is None, path.name
+
+    assert object.__new__(BaselineGemmBenchmark).get_optimization_goal() == "control"

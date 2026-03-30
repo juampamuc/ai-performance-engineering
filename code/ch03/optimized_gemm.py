@@ -136,6 +136,10 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         return metrics
 
+    def get_optimization_goal(self) -> str:
+        """Keep the host/runtime GEMM pair as a supplementary control workload."""
+        return "control"
+
     def validate_result(self) -> Optional[str]:
         if self.fn is None:
             return "Compiled function not initialized"

@@ -199,3 +199,7 @@ class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
             "story.chapter_native_exemplar": 0.0,
             "story.bridge_to_ch09": 1.0,
         }
+
+    def get_optimization_goal(self) -> str:
+        """Keep the Chapter 8 bridge-control tiling pairs out of speed gating."""
+        return "control"
