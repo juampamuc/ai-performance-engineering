@@ -1,4 +1,3 @@
-
 book/
 book-before/
 book-after/
@@ -23,6 +22,7 @@ third_party/te_sm100a_env.sh
 .plan-and-implement/
 .cursor/plans/
 .env
+.codex
 .cache/
 .env.local
 .env.bak
