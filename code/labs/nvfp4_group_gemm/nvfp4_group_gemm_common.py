@@ -1,10 +1,11 @@
-"""Harness-compliant benchmarks for the NVFP4 grouped GEMM competition workload.
+"""Harness-compliant benchmarks for the NVFP4 grouped GEMM shape suite.
 
 This lab intentionally uses the same benchmark shapes as:
 `gpu-mode/reference-kernels/problems/nvidia/nvfp4_group_gemm/task.yml`.
 
 We keep all non-timed work (input generation, kernel compilation, metadata allocation)
-in setup() so the harness measures steady-state kernel runtime.
+in setup() so the harness measures steady-state kernel runtime. The public benchmark
+surface now uses shape-based target names instead of the older competition case IDs.
 """
 
 from __future__ import annotations
@@ -118,10 +119,11 @@ class GroupGemmCase:
         return [(int(self.m[i]), int(self.n[i]), int(self.k[i]), l) for i in range(self.g)]
 
 
-# Competition benchmark cases (order matches task.yml).
+# Benchmark shapes (order still matches task.yml even though the public targets are
+# now shape-named instead of case-named).
 COMPETITION_CASES: Tuple[GroupGemmCase, ...] = (
     GroupGemmCase(
-        name="case0_g8_n4096_k7168",
+        name="g8_n4096_k7168",
         m=(80, 176, 128, 72, 64, 248, 96, 160),
         n=(4096,) * 8,
         k=(7168,) * 8,
@@ -129,7 +131,7 @@ COMPETITION_CASES: Tuple[GroupGemmCase, ...] = (
         seed=1111,
     ),
     GroupGemmCase(
-        name="case1_g8_n7168_k2048",
+        name="g8_n7168_k2048",
         m=(40, 76, 168, 72, 164, 148, 196, 160),
         n=(7168,) * 8,
         k=(2048,) * 8,
@@ -137,7 +139,7 @@ COMPETITION_CASES: Tuple[GroupGemmCase, ...] = (
         seed=1111,
     ),
     GroupGemmCase(
-        name="case2_g2_n3072_k4096",
+        name="g2_n3072_k4096",
         m=(192, 320),
         n=(3072,) * 2,
         k=(4096,) * 2,
@@ -145,7 +147,7 @@ COMPETITION_CASES: Tuple[GroupGemmCase, ...] = (
         seed=1111,
     ),
     GroupGemmCase(
-        name="case3_g2_n4096_k1536",
+        name="g2_n4096_k1536",
         m=(128, 384),
         n=(4096,) * 2,
         k=(1536,) * 2,

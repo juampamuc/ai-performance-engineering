@@ -214,3 +214,33 @@ def test_occupancy_tuning_low_warp_schedule_stays_control_contract() -> None:
     assert entry.optimization_goal == "control"
     assert entry.minimum_required_speedup is None
     assert benchmark.get_optimization_goal() == "control"
+
+
+def test_nvfp4_group_gemm_shape_surface_uses_canonical_frontdoor_and_control_shapes() -> None:
+    payload = json.loads((REPO_ROOT / "labs" / "nvfp4_group_gemm" / "expectations_b200.json").read_text(encoding="utf-8"))
+
+    assert "nvfp4_group_gemm_case0" not in payload["examples"]
+    assert "nvfp4_group_gemm_case1" not in payload["examples"]
+    assert "nvfp4_group_gemm_case2" not in payload["examples"]
+    assert "nvfp4_group_gemm_case3" not in payload["examples"]
+
+    canonical = ExpectationEntry.from_dict(payload["examples"]["nvfp4_group_gemm"])
+    winner = ExpectationEntry.from_dict(payload["examples"]["nvfp4_group_gemm_g2_n3072_k4096"])
+    loser_one = ExpectationEntry.from_dict(payload["examples"]["nvfp4_group_gemm_g8_n4096_k7168"])
+    loser_two = ExpectationEntry.from_dict(payload["examples"]["nvfp4_group_gemm_g8_n7168_k2048"])
+    loser_three = ExpectationEntry.from_dict(payload["examples"]["nvfp4_group_gemm_g2_n4096_k1536"])
+
+    assert canonical.optimization_goal == "speed"
+    assert canonical.minimum_required_speedup == 1.005
+    assert canonical.best_speedup > canonical.minimum_required_speedup
+
+    assert winner.optimization_goal == "speed"
+    assert winner.minimum_required_speedup == 1.005
+    assert winner.best_speedup > winner.minimum_required_speedup
+
+    assert loser_one.optimization_goal == "control"
+    assert loser_one.minimum_required_speedup is None
+    assert loser_two.optimization_goal == "control"
+    assert loser_two.minimum_required_speedup is None
+    assert loser_three.optimization_goal == "control"
+    assert loser_three.minimum_required_speedup is None

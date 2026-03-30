@@ -1,14 +1,14 @@
-"""Baseline NVFP4 grouped GEMM (competition case 2, custom CUDA tcgen05 kernel).
+"""Canonical baseline NVFP4 grouped GEMM (promoted g2_n3072_k4096 shape).
 
-This baseline keeps the conservative kernel routing (no cluster/cta_group::2, UnrollN=1),
-but runs with the fast runtime path (fused inputs + iter-graph replay) by default.
+This front-door target intentionally points at the currently promoted grouped-GEMM
+shape so the public benchmark surface has one canonical speed target in addition to
+the explicit shape-specific companions.
 """
 
 from __future__ import annotations
 
 import os
 
-# Keep baseline behavior stable by default, but allow explicit overrides for experiments.
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_UNROLL_N", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_CLUSTER_DIM_X", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_ENABLE_EXPERIMENTAL_CTA2", "0")
@@ -41,8 +41,6 @@ def get_benchmark() -> BaseBenchmark:
         prepare=prepare_custom_cuda,
         inputs_per_iteration=15,
         capture_iter_graph=True,
-        name=f"nvfp4_group_gemm_{case.name}_baseline_custom_cuda",
+        name="nvfp4_group_gemm_baseline_custom_cuda",
     )
     return attach_benchmark_metadata(bench, __file__)
-
-

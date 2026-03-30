@@ -249,15 +249,17 @@ def test_occupancy_tuning_low_warp_reference_schedule_uses_local_contract() -> N
     assert "canonical speed claims stay on" in readme_text
 
 
-def test_nvfp4_group_gemm_case012_are_local_contract_small_effect_controls() -> None:
+def test_nvfp4_group_gemm_shape_surface_uses_frontdoor_and_control_companions() -> None:
     readme_text = _read("labs/nvfp4_group_gemm/README.md")
 
-    assert "nvfp4_group_gemm_case0" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
-    assert "nvfp4_group_gemm_case1" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
-    assert "nvfp4_group_gemm_case2" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
-    assert "local-contract speed benchmarks" in readme_text
+    assert "nvfp4_group_gemm" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "nvfp4_group_gemm_g8_n7168_k2048" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "nvfp4_group_gemm_g2_n3072_k4096" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "nvfp4_group_gemm_g2_n4096_k1536" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
+    assert "canonical local-contract speed benchmark" in readme_text
+    assert "supplementary control benchmark" in readme_text
     assert "older strict all-case snapshots" in readme_text
-    assert "case3 route" in readme_text
+    assert "former competition `caseN` numbering is retired" in readme_text
 
 
 def test_ch10_double_buffered_pipeline_baseline_is_book_aligned_naive_gemm() -> None:
@@ -654,9 +656,10 @@ def test_portable_rerun_ignores_informational_targets_for_expectation_queueing()
     assert _is_informational_benchmark("ch20", {"example": "pipeline_sequential"}) is True
     assert _is_informational_benchmark("labs_decode_optimization", {"example": "decode_pinned"}) is False
     assert _is_informational_benchmark("labs_fullstack_cluster", {"example": "cluster_gemm_tcgen05"}) is False
-    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case0"}) is False
-    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case1"}) is False
-    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_case2"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_g8_n7168_k2048"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_g2_n3072_k4096"}) is False
+    assert _is_informational_benchmark("labs_nvfp4_group_gemm", {"example": "nvfp4_group_gemm_g2_n4096_k1536"}) is False
     assert _is_informational_benchmark("labs_persistent_decode", {"example": "nvlink_offload"}) is False
     assert _is_informational_benchmark("labs_persistent_decode", {"example": "paged_kv_offload"}) is False
     assert _is_informational_benchmark("ch13", {"example": "kv_cache_naive"}) is False

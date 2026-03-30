@@ -1,4 +1,4 @@
-"""Baseline NVFP4 grouped GEMM (competition case 1, custom CUDA tcgen05 kernel).
+"""Baseline NVFP4 grouped GEMM (g8_n7168_k2048, custom CUDA tcgen05 kernel).
 
 This baseline keeps the conservative kernel routing (no cluster/cta_group::2, UnrollN=1),
 but runs with the fast runtime path (fused inputs + iter-graph replay) by default.
@@ -44,5 +44,4 @@ def get_benchmark() -> BaseBenchmark:
         name=f"nvfp4_group_gemm_{case.name}_baseline_custom_cuda",
     )
     return attach_benchmark_metadata(bench, __file__)
-
 

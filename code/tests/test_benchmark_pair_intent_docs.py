@@ -115,15 +115,31 @@ def test_ch15_readme_calls_single_gpu_pair_a_control_handoff() -> None:
     assert "baseline_disaggregated_inference.py" not in readme_text
 
 
-def test_nvfp4_group_gemm_readme_marks_case012_informational_and_case3_canonical() -> None:
+def test_nvfp4_group_gemm_readme_uses_shape_names_and_frontdoor() -> None:
     readme_text = (REPO_ROOT / "labs" / "nvfp4_group_gemm" / "README.md").read_text(encoding="utf-8")
+    names = {example_name for _, _, example_name in discover_benchmarks(REPO_ROOT / "labs" / "nvfp4_group_gemm")}
 
-    assert "nvfp4_group_gemm_case0" in readme_text
-    assert "nvfp4_group_gemm_case1" in readme_text
-    assert "nvfp4_group_gemm_case2" in readme_text
-    assert "local-contract speed benchmark" in readme_text
-    assert "case3 route verification-clean" in readme_text
-    assert "older strict all-case snapshots" in readme_text
+    assert "nvfp4_group_gemm" in readme_text
+    assert "nvfp4_group_gemm_g8_n4096_k7168" in readme_text
+    assert "nvfp4_group_gemm_g8_n7168_k2048" in readme_text
+    assert "nvfp4_group_gemm_g2_n3072_k4096" in readme_text
+    assert "nvfp4_group_gemm_g2_n4096_k1536" in readme_text
+    assert "former competition `caseN` numbering is retired" in readme_text
+    assert "supplementary control benchmark" in readme_text
+    assert "canonical local-contract speed benchmark" in readme_text
+    assert "nvfp4_group_gemm_case0" not in readme_text
+    assert "nvfp4_group_gemm_case1" not in readme_text
+    assert "nvfp4_group_gemm_case2" not in readme_text
+    assert "nvfp4_group_gemm_case3" not in readme_text
+    assert "nvfp4_group_gemm" in names
+    assert "nvfp4_group_gemm_g8_n4096_k7168" in names
+    assert "nvfp4_group_gemm_g8_n7168_k2048" in names
+    assert "nvfp4_group_gemm_g2_n3072_k4096" in names
+    assert "nvfp4_group_gemm_g2_n4096_k1536" in names
+    assert "nvfp4_group_gemm_case0" not in names
+    assert "nvfp4_group_gemm_case1" not in names
+    assert "nvfp4_group_gemm_case2" not in names
+    assert "nvfp4_group_gemm_case3" not in names
 
 
 def test_ch17_inference_full_docs_mark_control_pair_not_disagg_exemplar() -> None:

@@ -1,4 +1,4 @@
-"""Optimized NVFP4 grouped GEMM (competition case 2, custom CUDA path).
+"""Optimized NVFP4 grouped GEMM (g2_n4096_k1536, custom CUDA path).
 
 This is the integration point for the from-scratch Blackwell kernel work.
 """
@@ -25,7 +25,6 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_CTA_ORDER", "tm_major")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_CLUSTER_DIM_X", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_ENABLE_TMA_MULTICAST", "0")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_TMA_L2_PROMOTION", "3")
-# Case2-specific kernel specialization: remove UnrollN tail checks in-kernel.
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_ASSUME_NO_N_TAIL", "1")
 
 os.environ.setdefault(
@@ -46,7 +45,7 @@ from labs.nvfp4_group_gemm.nvfp4_group_gemm_common import (
 
 
 def get_benchmark() -> BaseBenchmark:
-    case = COMPETITION_CASES[2]
+    case = COMPETITION_CASES[3]
     bench = NVFP4GroupGemmBenchmark(
         case=case,
         custom_kernel=custom_kernel_custom_cuda,
@@ -56,5 +55,4 @@ def get_benchmark() -> BaseBenchmark:
         name=f"nvfp4_group_gemm_{case.name}_optimized_custom_cuda",
     )
     return attach_benchmark_metadata(bench, __file__)
-
 

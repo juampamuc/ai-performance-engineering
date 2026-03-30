@@ -5409,22 +5409,22 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
     title="Lab - NVFP4 Grouped GEMM",
     summary=dedent(
         """\
-        Explores grouped-GEMM routing and schedule variants across multiple cases so you can see where the grouped NVFP4 path is actually winning and where it is merely legal."""
+        Explores grouped-GEMM routing and schedule variants across multiple shapes so you can see where the grouped NVFP4 path is actually winning and where it is merely legal."""
     ),
     lead_sections=[
         MarkdownSection(
             "Problem",
             dedent(
                 """\
-                Grouped GEMM tuning is noisy and easy to overclaim. This lab keeps the case routing explicit and benchmarked so promotions are based on repeated verified wins instead of one-off lows."""
+                Grouped GEMM tuning is noisy and easy to overclaim. This lab keeps the shape routing explicit and benchmarked so promotions are based on repeated verified wins instead of one-off lows."""
             ),
         ),
         MarkdownSection(
             "Baseline Path",
             dedent(
                 """\
-                - per-case baseline grouped GEMM paths
-                - stable routing reference for cases 0-3
+                - canonical baseline front-door target for the promoted grouped shape
+                - shape-specific baseline companions for the other workload shapes
                 - useful for showing which grouped shapes are hard versus easy"""
             ),
         ),
@@ -5432,7 +5432,8 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
             "Optimized Path",
             dedent(
                 """\
-                - per-case tuned NVFP4 grouped GEMM variants
+                - canonical optimized front-door target for the promoted grouped shape
+                - shape-specific tuned NVFP4 grouped GEMM variants
                 - same grouped workloads, but explicit schedule/routing choices
                 - designed to keep promotions tied to repeated verify and ABAB checks"""
             ),
@@ -5441,15 +5442,17 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
             "Measured Delta",
             dedent(
                 """\
-                Fresh portable B200 reruns on this host kept cases 0-2 in the small-effect band:
+                Fresh portable B200 single-target reruns on this host showed one clear winner, two smaller positive companions, and one flat control shape:
 
                 | Target | Baseline | Optimized | Measured delta | Contract |
                 | --- | ---: | ---: | ---: | --- |
-                | `nvfp4_group_gemm_case0` | `2.408 ms` | `2.377 ms` | `1.01x` | informational control surface |
-                | `nvfp4_group_gemm_case1` | `2.079 ms` | `2.021 ms` | `1.03x` | informational control surface |
-                | `nvfp4_group_gemm_case2` | `0.615 ms` | `0.594 ms` | `1.04x` | informational control surface |
+                | `nvfp4_group_gemm` | `0.614 ms` | `0.595 ms` | `1.03x` | canonical local-contract speed benchmark |
+                | `nvfp4_group_gemm_g2_n3072_k4096` | `0.615 ms` | `0.594 ms` | `1.04x` | promoted shape companion (same routed workload as the front-door target) |
+                | `nvfp4_group_gemm_g8_n7168_k2048` | `2.080 ms` | `2.019 ms` | `1.03x` | supplementary control benchmark |
+                | `nvfp4_group_gemm_g8_n4096_k7168` | `2.408 ms` | `2.379 ms` | `1.01x` | supplementary control benchmark |
+                | `nvfp4_group_gemm_g2_n4096_k1536` | `0.352 ms` | `0.352 ms` | `1.00x` | supplementary control benchmark |
 
-                The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for these three harness targets on this host. Treat `case0`, `case1`, and `case2` as supplementary informational control surfaces; keep canonical speed claims on the still-winning case routes and on the stricter ABAB/router tuning workflow."""
+                The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for this harness surface on this host. The former competition `caseN` numbering is retired from the public benchmark targets; the canonical front-door target now points at the isolated single-target winner `g2_n3072_k4096`."""
             ),
         ),
         MarkdownSection(
@@ -5475,23 +5478,24 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
         ),
     ],
     goals=[
-        "Keep grouped-GEMM tuning grounded in repeated verified case-by-case evidence.",
-        "Keep `case0`, `case1`, and `case2` visible as routing controls without forcing them to carry the lab's canonical speed claim on every host.",
-        "Separate exploration scripts from the regression-tracked benchmark defaults.",
+        "Keep grouped-GEMM tuning grounded in repeated verified shape-by-shape evidence.",
+        "Keep non-winning shapes visible as supplementary control benchmarks without forcing them to carry the lab's canonical speed claim on every host.",
+        "Retire the old competition `caseN` labels from the public harness surface.",
     ],
     contents=[
-        ("`baseline_nvfp4_group_gemm_case0.py` ... `baseline_nvfp4_group_gemm_case3.py`", "Per-case baseline grouped-GEMM entrypoints."),
-        ("`optimized_nvfp4_group_gemm_case0*.py` ... `optimized_nvfp4_group_gemm_case3*.py`", "Per-case tuned grouped-GEMM variants."),
+        ("`baseline_nvfp4_group_gemm.py`, `optimized_nvfp4_group_gemm.py`", "Canonical front-door grouped-GEMM target for the promoted shape."),
+        ("`baseline_nvfp4_group_gemm_g*.py`, `optimized_nvfp4_group_gemm_g*.py`", "Shape-specific grouped-GEMM companions for the remaining workload shapes."),
         ("`WORKLOG.md`, `custom_cuda_submission.py`, `cutlass_extension.py`", "Tuning log and implementation plumbing for the promoted routes."),
     ],
     validation=[
-        "`python -m cli.aisp bench run --targets labs/nvfp4_group_gemm:nvfp4_group_gemm_case3 --profile minimal` should keep the promoted case3 route verification-clean.",
-        "`nvfp4_group_gemm_case0`, `nvfp4_group_gemm_case1`, and `nvfp4_group_gemm_case2` remain informational control surfaces; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.",
+        "`python -m cli.aisp bench run --targets labs/nvfp4_group_gemm:nvfp4_group_gemm --profile minimal` should keep the promoted `g2_n3072_k4096` route verification-clean.",
+        "`nvfp4_group_gemm_g8_n4096_k7168`, `nvfp4_group_gemm_g8_n7168_k2048`, and `nvfp4_group_gemm_g2_n4096_k1536` remain supplementary control benchmarks; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.",
+        "Old `caseN` target names should no longer appear in `python -m cli.aisp bench list-targets --chapter labs/nvfp4_group_gemm`.",
         "Default changes should still be gated by the stricter ABAB/verify process documented in the codebase notes, not by a single benchmark run.",
     ],
     notes=[
         "This lab is intentionally stricter than a normal benchmark pair because grouped-GEMM route tuning is unusually noise-prone.",
-        "The benchmark harness now treats `case0`, `case1`, and `case2` as informational control surfaces on this host-aligned repo surface, because fresh portable B200 reruns only reproduced 1.01-1.04x gains while preserving clean verification and profiler coverage.",
+        "The benchmark harness now exposes one canonical front-door speed target, the explicit promoted-shape companion, and three supplementary control shapes on this host-aligned repo surface, because fresh portable B200 single-target reruns showed `g2_n3072_k4096` as the clearest isolated winner.",
     ],
 )
 

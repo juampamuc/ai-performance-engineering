@@ -1,31 +1,24 @@
-"""Optimized NVFP4 grouped GEMM (competition case 0, custom CUDA path).
-
-This is the integration point for the from-scratch Blackwell kernel work.
-"""
+"""Canonical optimized NVFP4 grouped GEMM (promoted g2_n3072_k4096 shape)."""
 
 from __future__ import annotations
 
 import os
 
-# Tuning knobs for the custom CUDA extension (kept explicit so harness defaults stay unchanged).
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_BLOCK_M", "8")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_BLOCK_N", "32")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_KPACK_TILE", "64")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_UNROLL_N", "2")
 
-# Compile-time kernel knobs (require rebuild under a unique AISP_NVFP4_GROUP_GEMM_EXT_NAME).
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_WS_UNROLL2_MMA", "0")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_WS_TMA_PRODUCER", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_EPILOGUE_LD_X32", "1")
 
-# Runtime tuning knobs.
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_FUSE_INPUTS", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_FUSE_INPUTS_COMPRESS_LIST", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_CTA_ORDER", "tm_major")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_CLUSTER_DIM_X", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_ENABLE_TMA_MULTICAST", "0")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_TMA_L2_PROMOTION", "3")
-# Case0-specific kernel specialization: remove UnrollN tail checks in-kernel.
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_ASSUME_NO_N_TAIL", "1")
 
 os.environ.setdefault(
@@ -46,15 +39,13 @@ from labs.nvfp4_group_gemm.nvfp4_group_gemm_common import (
 
 
 def get_benchmark() -> BaseBenchmark:
-    case = COMPETITION_CASES[0]
+    case = COMPETITION_CASES[2]
     bench = NVFP4GroupGemmBenchmark(
         case=case,
         custom_kernel=custom_kernel_custom_cuda,
         prepare=prepare_custom_cuda,
         inputs_per_iteration=15,
         capture_iter_graph=True,
-        name=f"nvfp4_group_gemm_{case.name}_optimized_custom_cuda",
+        name="nvfp4_group_gemm_optimized_custom_cuda",
     )
     return attach_benchmark_metadata(bench, __file__)
-
-
