@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from core.benchmark.wrapper_utils import attach_benchmark_metadata
 from labs.persistent_decode.nvlink_offload_common import NvlinkOffloadBenchmark, OffloadConfig
 
 
@@ -19,6 +18,8 @@ def get_benchmark() -> NvlinkOffloadBenchmark:
         max_seq_len=4096,
         chunk_tokens=4096,
     )
-    return NvlinkOffloadBenchmark(cfg, label="nvlink_offload_baseline")
-
+    return attach_benchmark_metadata(
+        NvlinkOffloadBenchmark(cfg, label="nvlink_offload_baseline"),
+        __file__,
+    )
 

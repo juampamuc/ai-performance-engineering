@@ -245,7 +245,7 @@ def test_occupancy_tuning_low_warp_reference_schedule_uses_local_contract() -> N
 
     assert "proton_matmul_bm64_bn64_bk32_nw2" not in INFORMATIONAL_BENCHMARKS.get("occupancy_tuning", set())
     assert "verifying Proton vs Nsight agreement" in schedule_text
-    assert "supplementary local-contract schedule benchmark" in readme_text
+    assert "supplementary control schedule benchmark" in readme_text
     assert "canonical speed claims stay on" in readme_text
 
 

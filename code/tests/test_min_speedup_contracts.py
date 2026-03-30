@@ -14,6 +14,9 @@ from core.harness.run_benchmarks import (
 from labs.fullstack_cluster.optimized_cluster_gemm_tcgen05_cta2 import (
     get_benchmark as get_fullstack_cluster_gemm_tcgen05_cta2_benchmark,
 )
+from labs.occupancy_tuning.optimized_proton_matmul_bm64_bn64_bk32_nw2 import (
+    get_benchmark as get_low_warp_proton_benchmark,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -201,3 +204,13 @@ def test_fullstack_cluster_tcgen05_cta2_stays_control_contract() -> None:
 
     assert benchmark.get_optimization_goal() == "control"
     assert benchmark.baseline_alias == "cluster_gemm_tcgen05"
+
+
+def test_occupancy_tuning_low_warp_schedule_stays_control_contract() -> None:
+    payload = json.loads((REPO_ROOT / "labs" / "occupancy_tuning" / "expectations_b200.json").read_text(encoding="utf-8"))
+    entry = ExpectationEntry.from_dict(payload["examples"]["proton_matmul_bm64_bn64_bk32_nw2"])
+    benchmark = get_low_warp_proton_benchmark()
+
+    assert entry.optimization_goal == "control"
+    assert entry.minimum_required_speedup is None
+    assert benchmark.get_optimization_goal() == "control"

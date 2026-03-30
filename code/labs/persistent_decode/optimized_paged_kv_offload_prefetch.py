@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import torch
 
+from core.benchmark.wrapper_utils import attach_benchmark_metadata
 from labs.persistent_decode.paged_kv_offload_common import PagedKVConfig, PagedKVOffloadBenchmark
 
 
@@ -31,6 +32,8 @@ def get_benchmark() -> PagedKVOffloadBenchmark:
         use_direct_h2d=False,
         use_host_prefetch_thread=True,
     )
-    return PagedKVOffloadBenchmark(cfg, label="paged_kv_offload_prefetch_optimized")
-
+    return attach_benchmark_metadata(
+        PagedKVOffloadBenchmark(cfg, label="paged_kv_offload_prefetch_optimized"),
+        __file__,
+    )
 

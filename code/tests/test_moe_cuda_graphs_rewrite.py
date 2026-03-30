@@ -126,3 +126,35 @@ def test_graphable_moe_path_matches_level5_bmm_fused_outputs() -> None:
     actual = experts._forward_bmm_fused_graphable(x, expert_indices, expert_weights)
 
     assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+def test_grouped_moe_path_matches_naive_reference() -> None:
+    torch.manual_seed(0)
+    opts = MoEOptimizations(
+        use_batched=True,
+        use_fused=True,
+        use_mem_efficient=True,
+        use_grouped=True,
+    )
+    experts = MoEExperts(num_experts=4, hidden_size=4, intermediate_size=8, opts=opts)
+    x = torch.randn(3, 4)
+    expert_indices = torch.tensor([[0, 1], [2, 3], [1, 0]], dtype=torch.long)
+    expert_weights = torch.tensor([[0.6, 0.4], [0.3, 0.7], [0.5, 0.5]], dtype=torch.float32)
+
+    expected = experts.forward_naive(x, expert_indices, expert_weights, num_experts_per_tok=2)
+    actual = experts.forward_grouped(x, expert_indices, expert_weights)
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+def test_grouped_moe_path_uses_shared_bucket_helpers() -> None:
+    source = Path(__file__).resolve().parents[1] / "labs" / "moe_optimization_journey" / "moe_model.py"
+    text = source.read_text(encoding="utf-8")
+
+    grouped_section = text.split("def forward_grouped", maxsplit=1)[1].split(
+        "def forward_bmm_fused", maxsplit=1
+    )[0]
+
+    assert "bucket_grouped_tokens(" in grouped_section
+    assert "restore_grouped_tokens(" in grouped_section
+    assert "torch.argsort" not in grouped_section

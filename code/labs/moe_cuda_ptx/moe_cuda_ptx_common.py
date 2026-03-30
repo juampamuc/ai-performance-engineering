@@ -435,10 +435,9 @@ def run_layer_cuda(
         state.expert_weights,
         num_experts=workload.num_experts,
     )
+    # Keep the standalone quantization surface on `moe_quant` until the layer path
+    # has a real low-precision kernel that benefits from quantized activations.
     grouped_tokens = packed.packed_tokens
-    if workload.mode == "forward":
-        quantized = quantize_mxfp8_optimized(packed.packed_tokens, include_transpose=False)
-        grouped_tokens = dequantize_mxfp8(quantized.forward, dtype=packed.packed_tokens.dtype)
     sorted_outputs = grouped_ffn_cuda(
         grouped_tokens,
         packed,

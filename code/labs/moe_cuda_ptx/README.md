@@ -21,8 +21,8 @@ This lab keeps those surfaces separate while still providing an end-to-end singl
 ## Optimized Path
 - grouped expert execution on pre-packed token buckets
 - vectorized expert BMM path for forward and backward
-- MXFP8-style activation quantization surface for the packed expert tokens
-- end-to-end forward path that keeps routing visible in the timed region
+- MXFP8-style activation quantization surface benchmarked separately via `moe_quant`
+- end-to-end forward path that keeps routing visible in the timed region without a standalone quantize/dequantize round trip
 
 ## Targets
 | Target | Path |

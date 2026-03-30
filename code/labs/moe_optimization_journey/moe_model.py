@@ -19,8 +19,13 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, List, Callable, Dict
+from typing import Optional, Tuple, Callable, Dict
 from dataclasses import dataclass
+
+from ch19.mxfp8_moe_common import (
+    bucket_by_expert as bucket_grouped_tokens,
+    restore_bucketed as restore_grouped_tokens,
+)
 
 # Try to import Triton kernels
 try:
@@ -42,34 +47,6 @@ class MoEOptimizations:
     use_bmm_fused: bool = False     # Level 5: BMM fusion (vectorized scatter)
     use_cuda_graphs: bool = False   # Level 6: CUDA graph capture  
     use_compile: bool = False       # Level 7: torch.compile
-
-
-def bucket_by_expert(
-    tokens: torch.Tensor,
-    expert_indices: torch.Tensor,
-    num_experts: int,
-) -> Tuple[torch.Tensor, List[int], torch.Tensor, torch.Tensor]:
-    """Sort tokens by expert for contiguous memory access.
-    
-    From ch19/mxfp8_moe_common.py - this is how production MoE works!
-    """
-    flat_idx = expert_indices.view(-1)
-    sorted_order = torch.argsort(flat_idx, stable=True)
-    sorted_tokens = tokens.repeat_interleave(expert_indices.shape[1], dim=0)[sorted_order]
-    sorted_expert_ids = flat_idx[sorted_order]
-    counts = torch.bincount(sorted_expert_ids, minlength=num_experts).tolist()
-    return sorted_tokens, counts, sorted_order, sorted_expert_ids
-
-
-def restore_bucketed(
-    output: torch.Tensor,
-    sorted_order: torch.Tensor, 
-    batch_seq: int,
-    top_k: int,
-) -> torch.Tensor:
-    """Scatter sorted outputs back to original order."""
-    unsort = torch.argsort(sorted_order)
-    return output[unsort].view(batch_seq, top_k, -1)
 
 
 class MoEExperts(nn.Module):
@@ -359,36 +336,45 @@ class MoEExperts(nn.Module):
         """
         batch_seq, top_k = expert_indices.shape
         
-        # Sort by expert
-        sorted_tokens, counts, sorted_order, sorted_expert_ids = bucket_by_expert(
-            x, expert_indices, self.num_experts
+        # Reuse the shared ch19 bucketing helpers instead of the older global-sort
+        # path. That keeps the lab aligned with the production-style grouped-routing
+        # utilities it already documents, and avoids the current sort-heavy slowdown.
+        batch_seq, top_k = expert_indices.shape
+        repeated_tokens = x.repeat_interleave(top_k, dim=0)
+        flat_expert_ids = expert_indices.view(-1)
+        sorted_tokens, counts, bucket_indices, expert_order, _ = bucket_grouped_tokens(
+            repeated_tokens,
+            flat_expert_ids,
+            self.num_experts,
         )
-        sorted_weights = expert_weights.view(-1)[sorted_order]
-        
+        sorted_weights = expert_weights.view(-1).index_select(0, bucket_indices)
+
         # Per-expert GEMM on contiguous tokens
         output = torch.zeros(sorted_tokens.shape[0], self.hidden_size,
                            device=x.device, dtype=x.dtype)
-        
+
         offset = 0
-        for e in range(self.num_experts):
-            count = counts[e]
-            if count == 0:
-                continue
-            
+        for expert_id, count in zip(expert_order.tolist(), counts):
             tokens_e = sorted_tokens[offset:offset+count]
             weights_e = sorted_weights[offset:offset+count].unsqueeze(-1)
             
             # Contiguous GEMM for this expert
-            gate = F.silu(tokens_e @ self.w1_stacked[e])
-            up = tokens_e @ self.w3_stacked[e]
-            expert_out = (gate * up) @ self.w2_stacked[e]
+            gate = F.silu(tokens_e @ self.w1_stacked[expert_id])
+            up = tokens_e @ self.w3_stacked[expert_id]
+            expert_out = (gate * up) @ self.w2_stacked[expert_id]
             
             output[offset:offset+count] = expert_out * weights_e
             offset += count
         
         # Restore order
-        restored = restore_bucketed(output, sorted_order, batch_seq, top_k)
-        return restored.sum(dim=1)
+        restored = torch.empty(
+            batch_seq * top_k,
+            self.hidden_size,
+            device=x.device,
+            dtype=x.dtype,
+        )
+        restore_grouped_tokens(output, bucket_indices, batch_seq * top_k, out=restored)
+        return restored.view(batch_seq, top_k, -1).sum(dim=1)
     
     def forward_bmm_fused(
         self, x: torch.Tensor, expert_indices: torch.Tensor, expert_weights: torch.Tensor,

@@ -25,7 +25,10 @@ class OptimizedProtonMatmulLargeTile(TritonMatmulProtonBenchmark):
             warmup=5,
         )
 
+    def get_optimization_goal(self) -> str:
+        """Keep this low-warp schedule as a control/diagnostic benchmark."""
+        return "control"
+
 def get_benchmark() -> BaseBenchmark:
     return OptimizedProtonMatmulLargeTile()
-
 

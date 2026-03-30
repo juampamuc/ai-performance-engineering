@@ -11,7 +11,7 @@
         "best_optimization_speedup": 1.1997120897698712,
         "best_optimization_technique": "bm64_bn64_bk32_nw2",
         "best_optimization_time_ms": 0.1862237868309021,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 414.30029296875,
@@ -65,7 +65,7 @@
         "best_optimization_speedup": 1.0496197096581885,
         "best_optimization_technique": "optimized_proton_matmul_bm128_bn128_bk32_nw8",
         "best_optimization_time_ms": 0.20183714306248085,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 414.30029296875,
@@ -227,7 +227,7 @@
         "best_optimization_speedup": 1.191504595481718,
         "best_optimization_technique": "optimized_proton_matmul_bm64_bn64_bk32_nw2",
         "best_optimization_time_ms": 0.18491234980482874,
-        "optimization_goal": "speed"
+        "optimization_goal": "control"
       },
       "metrics": {
         "baseline_memory_mb": 414.30029296875,
