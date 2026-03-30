@@ -31,18 +31,18 @@ See [`docs/tier1_benchmark_suite.md`](docs/tier1_benchmark_suite.md) for the cur
 ## Current Representative Deltas
 These numbers are taken from the latest canonical tier-1 history summary rather than from hand-maintained README text.
 
-Source artifact: `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json`
+Source artifact: `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json`
 
-Representative suite speedup: `7.44x` geomean, `8.77x` median, `21.88x` arithmetic average.
+Representative suite speedup: `8.22x` geomean, `8.54x` median, `34.41x` arithmetic average.
 
 | Target | Baseline | Optimized | Measured delta | Artifact |
 | --- | ---: | ---: | ---: | --- |
-| `labs/block_scaling:block_scaling` | `0.198 ms` | `0.112 ms` | `1.76x` | `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json` |
-| `labs/flashattention4:flashattention4_alibi` | `5.026 ms` | `0.332 ms` | `15.12x` | `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json` |
-| `labs/persistent_decode:persistent_decode` | `1.450 ms` | `0.091 ms` | `15.98x` | `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json` |
-| `labs/kv_optimization:kv_standard` | `1609.658 ms` | `926.380 ms` | `1.74x` | `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json` |
-| `ch04:gradient_fusion` | `3.582 ms` | `0.038 ms` | `94.23x` | `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json` |
-| `labs/real_world_models:llama_3_1_8b` | `12.758 ms` | `5.260 ms` | `2.43x` | `artifacts/history/tier1/20260325_e2e_full_all__tier1/summary.json` |
+| `labs/block_scaling:block_scaling` | `0.197 ms` | `0.112 ms` | `1.76x` | `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json` |
+| `labs/flashattention4:flashattention4_alibi` | `5.637 ms` | `0.328 ms` | `17.20x` | `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json` |
+| `labs/persistent_decode:persistent_decode` | `1.322 ms` | `0.090 ms` | `14.65x` | `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json` |
+| `labs/kv_optimization:kv_standard` | `1613.038 ms` | `956.656 ms` | `1.69x` | `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json` |
+| `ch04:gradient_fusion` | `54.484 ms` | `0.323 ms` | `168.70x` | `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json` |
+| `labs/real_world_models:llama_3_1_8b` | `12.761 ms` | `5.242 ms` | `2.43x` | `artifacts/history/tier1/20260329_e2e_truthful_canonical_main_4a8c827a__tier1/summary.json` |
 
 ## Profiler Evidence
 When you want proof beyond wall-clock timing, use the same harness target with a profiling mode instead of a different script.
