@@ -1725,7 +1725,7 @@ def is_distributed_benchmark(file_path: Path) -> bool:
         content_lower = content.lower()
 
         # Some benchmarks use torchrun or distributed primitives as a 1-process
-        # control surface while explicitly declaring that multiple GPUs are not
+        # comparison surface while explicitly declaring that multiple GPUs are not
         # required. Respect that contract instead of skipping them up-front on
         # 1-GPU hosts.
         has_single_gpu_override = bool(

@@ -26,7 +26,7 @@ Representative validated results from `artifacts/runs/20260302_full_strict_all_s
 
 The decode win is a launch-overhead story. The prefill win is a staging/data-movement story. This lab is more useful when you keep those two categories separate.
 
-The direct transport swaps `nvlink_offload` and `paged_kv_offload` remain informational control surfaces. The canonical KV-offload overlap claim stays on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics.
+The direct transport swaps stay visible as a transport-comparison benchmark on `nvlink_offload` and as `paged_kv_offload` as a real speed benchmark with a small local contract. The canonical KV-offload overlap claim stays on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics.
 
 ## Profiler Evidence
 Use deep-dive runs when you want to see launch count and staging behavior instead of only the wall-clock delta:
@@ -79,4 +79,4 @@ python -m cli.aisp bench run --targets labs/persistent_decode --profile minimal
 ## Notes
 - Set `TORCH_COMPILE_MODE` or `TMA_TILE_SIZE` via env vars before invoking the harness to sweep tile sizes.
 - `tma_extension.py` caches builds under `~/.cache/torch_extensions`; clean the cache when switching CUDA versions.
-- `nvlink_offload` and `paged_kv_offload` are informational control surfaces; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.
+- `nvlink_offload` remains a transport-comparison benchmark and `paged_kv_offload` stays a real speed benchmark with a small local contract; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.

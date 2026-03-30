@@ -612,8 +612,8 @@ class ReportGenerator:
         
         for b in sorted(benchmarks, key=lambda x: -x.speedup)[:30]:
             display_name = b.name
-            if b.pair_role == "control" and b.chapter_alignment == "supplementary":
-                display_name = f"{display_name} [supplementary control]"
+            if b.pair_role == "comparison" and b.chapter_alignment == "supplementary":
+                display_name = f"{display_name} [supplementary comparison]"
             table_data.append([
                 display_name[:56],
                 f'{b.baseline_time_ms:.2f}',

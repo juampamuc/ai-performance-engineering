@@ -41,7 +41,7 @@ def get_benchmark() -> DecodeBenchmark:
         "chapter_native_exemplar": True,
         "comparison_axis": "bf16_vs_fp8_transformer_engine",
         "execution_pattern": "prefill_only_decode",
-        "control_reason": (
+        "comparison_reason": (
             "FP8 decode here intentionally uses Transformer Engine TELinear modules, "
             "so the comparison is BF16/nn.Linear versus FP8/TELinear by design."
         ),

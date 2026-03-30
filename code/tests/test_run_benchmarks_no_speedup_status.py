@@ -12,7 +12,7 @@ def test_should_fail_no_speedup_only_for_speed_goal_below_threshold() -> None:
     assert _should_fail_no_speedup({"optimization_goal": "speed", "best_speedup": 1.04}) is True
     assert _should_fail_no_speedup({"optimization_goal": "speed", "best_speedup": 1.05}) is False
     assert _should_fail_no_speedup({"optimization_goal": "memory", "best_speedup": 1.00}) is False
-    assert _should_fail_no_speedup({"optimization_goal": "control", "best_speedup": 1.00}) is False
+    assert _should_fail_no_speedup({"optimization_goal": "comparison", "best_speedup": 1.00}) is False
     assert _should_fail_no_speedup({"optimization_goal": "tradeoff", "best_speedup": 0.98}) is False
 
 

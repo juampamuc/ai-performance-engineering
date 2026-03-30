@@ -1,6 +1,6 @@
-"""Optimized control GEMM that removes launch fragmentation with `torch.compile`.
+"""Optimized comparison GEMM that removes launch fragmentation with `torch.compile`.
 
-This remains a Chapter 3 host/runtime control workload. The optimization is
+This remains a Chapter 3 host/runtime comparison workload. The optimization is
 that `torch.compile(mode="reduce-overhead")` lets the runtime amortize the
 fragmented launch pattern into one compiled GEMM path without changing the math.
 """
@@ -19,14 +19,14 @@ from core.harness.benchmark_harness import (
 
 
 class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Control workload with one compiled GEMM call."""
+    """Comparison workload with one compiled GEMM call."""
 
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "variant_role": "optimized",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": (
+        "comparison_reason": (
             "Quantifies Chapter 3 host/runtime launch overhead without claiming a "
             "NUMA-local math-kernel optimization."
         ),
@@ -128,7 +128,7 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         metrics.update(
             {
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
                 "launch.gemm_calls_per_iteration": 1.0,
                 "launch.block_k": float(self.k),
@@ -137,8 +137,8 @@ class OptimizedGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return metrics
 
     def get_optimization_goal(self) -> str:
-        """Keep the host/runtime GEMM pair as a supplementary control workload."""
-        return "control"
+        """Keep the host/runtime GEMM pair as a supplementary comparison workload."""
+        return "comparison"
 
     def validate_result(self) -> Optional[str]:
         if self.fn is None:

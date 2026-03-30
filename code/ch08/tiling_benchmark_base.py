@@ -13,7 +13,7 @@ from core.utils.extension_loader_template import load_cuda_extension
 
 
 class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
-    """Base class for the Chapter 8 matmul bridge-control tiling pairs."""
+    """Base class for the Chapter 8 matmul bridge-comparison tiling pairs."""
 
     extension_name = "ch08_tiling_kernels"
     kernel_source = Path(__file__).with_name("tiling_kernels.cu")
@@ -27,7 +27,7 @@ class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
     matrix_cols: int = 4096
     shared_dim: int = 4096
     # Keep enough repeated kernel work inside one timed call that the bridge
-    # control pair reflects the kernel delta instead of Python launch overhead.
+    # comparison pair reflects the kernel delta instead of Python launch overhead.
     inner_iterations: int = 12
 
     def __init__(self) -> None:
@@ -195,11 +195,11 @@ class TilingBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
             f"{self.nvtx_label}.flops": flops,
             f"{self.nvtx_label}.bytes_transferred": bytes_transferred,
             f"{self.nvtx_label}.arithmetic_intensity": flops / bytes_transferred if bytes_transferred > 0 else 0.0,
-            "story.control_pair": 1.0,
+            "story.comparison_pair": 1.0,
             "story.chapter_native_exemplar": 0.0,
             "story.bridge_to_ch09": 1.0,
         }
 
     def get_optimization_goal(self) -> str:
-        """Keep the Chapter 8 bridge-control tiling pairs out of speed gating."""
-        return "control"
+        """Keep the Chapter 8 bridge-comparison tiling pairs out of speed gating."""
+        return "comparison"

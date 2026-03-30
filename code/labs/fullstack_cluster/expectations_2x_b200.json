@@ -11,7 +11,7 @@
         "best_optimization_speedup": 6.42415895853634,
         "best_optimization_technique": "optimized_cluster_gemm",
         "best_optimization_time_ms": 2.8108586735195584,
-        "optimization_goal": "control"
+        "optimization_goal": "speed"
       },
       "metrics": {
         "baseline_memory_mb": 180.125,
@@ -65,7 +65,7 @@
         "best_optimization_speedup": 143.2899195278531,
         "best_optimization_technique": "optimized_cluster_gemm_tcgen05",
         "best_optimization_time_ms": 0.12577908183386582,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 180.125,

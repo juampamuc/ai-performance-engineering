@@ -59,7 +59,7 @@
         "best_optimization_speedup": 1.0124220995917377,
         "best_optimization_technique": "optimized_nvfp4_group_gemm_g8_n4096_k7168",
         "best_optimization_time_ms": 2.378557721773783,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 2444.544921875,
@@ -102,7 +102,7 @@
         "best_optimization_speedup": 1.0301330897704966,
         "best_optimization_technique": "optimized_nvfp4_group_gemm_g8_n7168_k2048",
         "best_optimization_time_ms": 2.0194367933273316,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 1404.40966796875,
@@ -189,7 +189,7 @@
         "best_optimization_speedup": 1.0025323955404213,
         "best_optimization_technique": "optimized_nvfp4_group_gemm_g2_n4096_k1536",
         "best_optimization_time_ms": 0.3515312524287255,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 326.19921875,

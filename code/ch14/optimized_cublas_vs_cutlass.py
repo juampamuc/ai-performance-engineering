@@ -14,14 +14,14 @@ from core.harness.benchmark_harness import (  # noqa: E402
 )
 
 class OptimizedCublasVsCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Supplementary control pair: explicit CUTLASS FP16 GEMM."""
+    """Supplementary comparison pair: explicit CUTLASS FP16 GEMM."""
 
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "variant_role": "optimized",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": (
+        "comparison_reason": (
             "Keeps the math fixed while comparing explicit vendor-library dispatch "
             "against explicit CUTLASS dispatch. This is not the chapter-native "
             "TorchInductor/Triton story."
@@ -127,7 +127,7 @@ class OptimizedCublasVsCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark)
         )
         metrics.update(
             {
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
                 "gemm.explicit_cublas": 0.0,
                 "gemm.explicit_cutlass": 1.0,

@@ -17,7 +17,7 @@ THRESHOLD_OUTER_SCALE = 1.25
 
 
 class ThresholdBenchmarkBase(VerificationPayloadMixin, BaseBenchmark):
-    rows: int = 1 << 26  # 64M elements to better amortize TMA setup on Blackwell bridge controls
+    rows: int = 1 << 26  # 64M elements to better amortize TMA setup on Blackwell bridge comparisons
     threshold: float = 2.5
     nvtx_label: str = "threshold"
     output_tolerance = (0.1, 1.0)

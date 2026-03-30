@@ -6,7 +6,7 @@ from labs.decode_optimization.decode_common import DecodeBenchmark, DecodeConfig
 
 
 def get_benchmark() -> DecodeBenchmark:
-    """Pageable-host decode variant for the pinned-memory control pair."""
+    """Pageable-host decode variant for the pinned-memory comparison pair."""
     cfg = DecodeConfig(
         batch_size=64,
         prompt_tokens=2048,

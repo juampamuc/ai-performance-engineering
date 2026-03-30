@@ -37,7 +37,7 @@
         "best_optimization_speedup": 1.0242924491107328,
         "best_optimization_technique": "optimized_fsdp2",
         "best_optimization_time_ms": 2622.9759454727173,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_p75_ms": 2686.6944551467896,

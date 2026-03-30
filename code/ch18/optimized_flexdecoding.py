@@ -21,7 +21,7 @@ class OptimizedFlexDecodingBenchmark(FlexDecodingHarness):
         "chapter_native_exemplar": True,
         "comparison_axis": "full_kv_mask_vs_windowed_kv_slice",
         "execution_pattern": "windowed_kv_slice_decode",
-        "control_reason": (
+        "comparison_reason": (
             "This chapter-native FlexDecoding path reduces decode work by slicing the "
             "KV cache to the active sliding window before attention."
         ),

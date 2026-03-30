@@ -32,7 +32,7 @@
         "best_optimization_speedup": 0.995800484284656,
         "best_optimization_technique": "optimized_cache_aware_disagg",
         "best_optimization_time_ms": 146.1588134765625,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 240.68359375,

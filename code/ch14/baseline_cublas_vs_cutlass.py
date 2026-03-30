@@ -15,14 +15,14 @@ from core.harness.benchmark_harness import (  # noqa: E402
 
 
 class BaselineCublasVsCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Supplementary control pair: explicit cuBLAS FP16 GEMM baseline."""
+    """Supplementary comparison pair: explicit cuBLAS FP16 GEMM baseline."""
 
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "variant_role": "baseline",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": (
+        "comparison_reason": (
             "Keeps the math fixed while comparing explicit vendor-library dispatch "
             "against explicit CUTLASS dispatch. This is not the chapter-native "
             "TorchInductor/Triton story."
@@ -126,7 +126,7 @@ class BaselineCublasVsCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         metrics.update(
             {
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
                 "gemm.explicit_cublas": 1.0,
                 "gemm.explicit_cutlass": 0.0,

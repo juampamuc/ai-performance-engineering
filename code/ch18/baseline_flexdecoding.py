@@ -209,7 +209,7 @@ class BaselineFlexDecodingBenchmark(FlexDecodingHarness):
         "chapter_native_exemplar": True,
         "comparison_axis": "full_kv_mask_vs_windowed_kv_slice",
         "execution_pattern": "masked_full_cache_decode",
-        "control_reason": (
+        "comparison_reason": (
             "This chapter-native FlexDecoding pair intentionally changes decode work: "
             "the baseline scores the full KV cache with a sliding-window mask, while "
             "the optimized path slices the cache to the active window before attention."

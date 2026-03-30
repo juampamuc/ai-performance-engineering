@@ -362,7 +362,7 @@ class BenchmarkResult(BaseModel):
     custom_metrics: Dict[str, float] = Field(default_factory=dict, description="Benchmark-specific custom metrics")
     story_metadata: Optional[Dict[str, Any]] = Field(
         None,
-        description="Non-numeric benchmark story metadata (control pair role, chapter alignment, exemplar status)",
+        description="Non-numeric benchmark story metadata (comparison pair role, chapter alignment, exemplar status)",
     )
     runtime_env: Dict[str, str] = Field(
         default_factory=dict,
@@ -404,7 +404,7 @@ class BenchmarkResult(BaseModel):
                     "scenario_total_phase_ms": 123.4
                 },
                 "story_metadata": {
-                    "pair_role": "control",
+                    "pair_role": "comparison",
                     "chapter_alignment": "supplementary",
                     "chapter_native_exemplar": False
                 },

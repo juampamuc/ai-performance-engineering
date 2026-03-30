@@ -44,10 +44,10 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Bench
 class _StoryMetadataSmokeBenchmark(BaseBenchmark):
     allow_cpu = True
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": "unit-test smoke benchmark",
+        "comparison_reason": "unit-test smoke benchmark",
     }
 
     def setup(self) -> None:
@@ -64,7 +64,7 @@ class _StoryMetadataSmokeBenchmark(BaseBenchmark):
         return BenchmarkConfig(iterations=1, warmup=5, validity_profile="portable")
 
 
-def test_ch03_gemm_reports_control_story_explicitly() -> None:
+def test_ch03_gemm_reports_comparison_story_explicitly() -> None:
     baseline = BaselineGemmBenchmark()
     optimized = OptimizedGemmBenchmark()
 
@@ -77,11 +77,11 @@ def test_ch03_gemm_reports_control_story_explicitly() -> None:
     assert optimized_metrics is not None
     assert baseline_story is not None
     assert optimized_story is not None
-    assert baseline_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.comparison_pair"] == 1.0
     assert baseline_metrics["story.chapter_native_exemplar"] == 0.0
     assert baseline_metrics["launch.gemm_calls_per_iteration"] == 8.0
     assert baseline_metrics["launch.block_k"] == 256.0
-    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["pair_role"] == "comparison"
     assert baseline_story["chapter_alignment"] == "supplementary"
     assert baseline_story["chapter_native_exemplar"] is False
     assert baseline_story["execution_pattern"] == "fragmented_gemm_launches"
@@ -91,11 +91,11 @@ def test_ch03_gemm_reports_control_story_explicitly() -> None:
         "pinned_prefetch_mlp",
         "double_buffered_batch_provisioning",
     ]
-    assert optimized_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.comparison_pair"] == 1.0
     assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
     assert optimized_metrics["launch.gemm_calls_per_iteration"] == 1.0
     assert optimized_metrics["launch.block_k"] == 2048.0
-    assert optimized_story["pair_role"] == "control"
+    assert optimized_story["pair_role"] == "comparison"
     assert optimized_story["chapter_alignment"] == "supplementary"
     assert optimized_story["chapter_native_exemplar"] is False
     assert optimized_story["execution_pattern"] == "single_compiled_gemm_launch"
@@ -120,7 +120,7 @@ def test_ch07_lookup_reports_layout_transform_explicitly() -> None:
     }
 
 
-def test_ch17_inference_control_reports_active_layer_delta() -> None:
+def test_ch17_inference_comparison_reports_active_layer_delta() -> None:
     baseline = BaselineInferenceFullBenchmark()
     optimized = OptimizedInferenceFullBenchmark()
 
@@ -136,20 +136,20 @@ def test_ch17_inference_control_reports_active_layer_delta() -> None:
     assert baseline_metrics["configured_layers"] == 24.0
     assert baseline_metrics["active_layers"] == 24.0
     assert baseline_metrics["identity_layers_skipped"] == 0.0
-    assert baseline_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.comparison_pair"] == 1.0
     assert baseline_metrics["story.chapter_native_exemplar"] == 0.0
-    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["pair_role"] == "comparison"
     assert baseline_story["chapter_alignment"] == "supplementary"
     assert baseline_story["chapter_native_exemplar"] is False
     assert baseline_story["execution_pattern"] == "full_depth_inference"
     assert optimized_metrics["configured_layers"] == 24.0
     assert optimized_metrics["active_layers"] == 6.0
     assert optimized_metrics["identity_layers_skipped"] == 18.0
-    assert optimized_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.comparison_pair"] == 1.0
     assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
 
 
-def test_ch08_bridge_controls_report_story_explicitly(
+def test_ch08_bridge_comparisons_report_story_explicitly(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(tiling_tcgen05_base, "_check_tcgen05_extension_available", lambda: (True, None))
@@ -170,7 +170,7 @@ def test_ch08_bridge_controls_report_story_explicitly(
     for bench in benches:
         metrics = bench.get_custom_metrics()
         assert metrics is not None
-        assert metrics["story.control_pair"] == 1.0
+        assert metrics["story.comparison_pair"] == 1.0
         assert metrics["story.chapter_native_exemplar"] == 0.0
 
 
@@ -186,7 +186,7 @@ def test_ch04_symmetric_memory_perf_story_metadata_marks_compound_optimized_path
     assert optimized_story["compound_optimization"] is True
 
 
-def test_ch04_pcie_staging_reports_control_story_explicitly() -> None:
+def test_ch04_pcie_staging_reports_comparison_story_explicitly() -> None:
     baseline = BaselinePcieStagingBenchmark()
     optimized = OptimizedPcieStagingBenchmark()
 
@@ -199,21 +199,21 @@ def test_ch04_pcie_staging_reports_control_story_explicitly() -> None:
     assert optimized_metrics is not None
     assert baseline_story is not None
     assert optimized_story is not None
-    assert baseline_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.comparison_pair"] == 1.0
     assert baseline_metrics["story.chapter_native_exemplar"] == 0.0
     assert baseline_metrics["transfer.type"] == 0.0
     assert baseline_metrics["pcie.host_buffer_pinned"] == 0.0
-    assert optimized_metrics["story.control_pair"] == 1.0
+    assert optimized_metrics["story.comparison_pair"] == 1.0
     assert optimized_metrics["story.chapter_native_exemplar"] == 0.0
     assert optimized_metrics["transfer.type"] == 0.0
     assert optimized_metrics["pcie.host_buffer_pinned"] == 1.0
-    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["pair_role"] == "comparison"
     assert baseline_story["chapter_alignment"] == "supplementary"
     assert optimized_story["chapter_alignment"] == "supplementary"
     assert optimized_story["optimization_mechanism"] == "pinned host buffer plus nonblocking copies"
 
 
-def test_ch15_single_gpu_kv_handoff_wrappers_expose_control_story_metadata() -> None:
+def test_ch15_single_gpu_kv_handoff_wrappers_expose_comparison_story_metadata() -> None:
     baseline = get_baseline_single_gpu_kv_handoff()
     optimized = get_optimized_single_gpu_kv_handoff()
 
@@ -226,14 +226,14 @@ def test_ch15_single_gpu_kv_handoff_wrappers_expose_control_story_metadata() -> 
     assert optimized_story is not None
     assert baseline_metrics is not None
     assert optimized_metrics is not None
-    assert baseline_story["pair_role"] == "control"
+    assert baseline_story["pair_role"] == "comparison"
     assert baseline_story["chapter_alignment"] == "supplementary"
     assert baseline_story["chapter_native_exemplar"] is False
-    assert optimized_story["pair_role"] == "control"
+    assert optimized_story["pair_role"] == "comparison"
     assert optimized_story["chapter_alignment"] == "supplementary"
     assert optimized_story["chapter_native_exemplar"] is False
-    assert baseline_metrics["story.control_pair"] == 1.0
-    assert optimized_metrics["story.control_pair"] == 1.0
+    assert baseline_metrics["story.comparison_pair"] == 1.0
+    assert optimized_metrics["story.comparison_pair"] == 1.0
     assert baseline_metrics["single_gpu_kv_handoff.host_staged_kv"] == 1.0
     assert optimized_metrics["single_gpu_kv_handoff.device_resident_kv"] == 1.0
 
@@ -299,7 +299,7 @@ def test_harness_result_carries_story_metadata() -> None:
     result = harness.benchmark(_StoryMetadataSmokeBenchmark())
 
     assert result.story_metadata is not None
-    assert result.story_metadata["pair_role"] == "control"
+    assert result.story_metadata["pair_role"] == "comparison"
     assert result.story_metadata["chapter_alignment"] == "supplementary"
     assert result.story_metadata["chapter_native_exemplar"] is False
 
@@ -317,10 +317,10 @@ def test_aggregated_data_surfaces_story_metadata_and_story_note(tmp_path: Path) 
                         "baseline_time_ms": 12.5,
                         "status": "succeeded",
                         "baseline_story_metadata": {
-                            "pair_role": "control",
+                            "pair_role": "comparison",
                             "chapter_alignment": "supplementary",
                             "chapter_native_exemplar": False,
-                            "control_reason": "Model-side work reduction control benchmark",
+                            "comparison_reason": "Model-side work reduction comparison benchmark",
                             "chapter_native_targets": [
                                 "prefill_decode_disagg_ttft",
                                 "prefill_decode_disagg_overlap",
@@ -335,7 +335,7 @@ def test_aggregated_data_surfaces_story_metadata_and_story_note(tmp_path: Path) 
                                 "speedup": 3.2,
                                 "status": "succeeded",
                                 "story_metadata": {
-                                    "pair_role": "control",
+                                    "pair_role": "comparison",
                                     "chapter_alignment": "supplementary",
                                     "chapter_native_exemplar": False,
                                 },
@@ -352,12 +352,12 @@ def test_aggregated_data_surfaces_story_metadata_and_story_note(tmp_path: Path) 
     data = load_benchmark_data(data_file=data_file)
     bench = data["benchmarks"][0]
 
-    assert bench["pair_role"] == "control"
+    assert bench["pair_role"] == "comparison"
     assert bench["chapter_alignment"] == "supplementary"
     assert bench["chapter_native_exemplar"] is False
-    assert "Supplementary control pair." in bench["story_note"]
+    assert "Supplementary comparison pair." in bench["story_note"]
     assert "prefill_decode_disagg_ttft" in bench["story_note"]
-    assert bench["optimizations"][0]["story_metadata"]["pair_role"] == "control"
+    assert bench["optimizations"][0]["story_metadata"]["pair_role"] == "comparison"
 
 
 def test_generate_report_from_raw_results_file_renders_story_note(tmp_path: Path) -> None:
@@ -373,10 +373,10 @@ def test_generate_report_from_raw_results_file_renders_story_note(tmp_path: Path
                         "baseline_time_ms": 0.548,
                         "status": "succeeded",
                         "baseline_story_metadata": {
-                            "pair_role": "control",
+                            "pair_role": "comparison",
                             "chapter_alignment": "supplementary",
                             "chapter_native_exemplar": False,
-                            "control_reason": "Host/runtime overhead control benchmark",
+                            "comparison_reason": "Host/runtime overhead comparison benchmark",
                             "chapter_native_targets": ["pageable_copy", "rack_prep"],
                         },
                         "optimizations": [
@@ -400,5 +400,5 @@ def test_generate_report_from_raw_results_file_renders_story_note(tmp_path: Path
     generate_report(data_file, output_path, format="html")
     html = output_path.read_text(encoding="utf-8")
 
-    assert "Supplementary control pair." in html
+    assert "Supplementary comparison pair." in html
     assert "Chapter-native targets: pageable_copy, rack_prep." in html

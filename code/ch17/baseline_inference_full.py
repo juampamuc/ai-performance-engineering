@@ -1,6 +1,6 @@
-"""baseline_inference_full.py - Full-depth control inference benchmark.
+"""baseline_inference_full.py - Full-depth comparison inference benchmark.
 
-This workload is a control pair for model-side work reduction. It is not the
+This workload is a comparison pair for model-side work reduction. It is not the
 chapter's native disaggregated prefill/decode optimization example.
 """
 
@@ -32,19 +32,19 @@ class FullDepthModel(nn.Module):
 
 
 class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Control pair that always executes every layer.
+    """Comparison pair that always executes every layer.
 
-    This benchmark is a model-side control workload. The chapter-native
+    This benchmark is a model-side comparison workload. The chapter-native
     disaggregated prefill/decode story lives in the prefill_decode_disagg*
-    targets, so this pair should be read as a work-reduction control only.
+    targets, so this pair should be read as a work-reduction comparison only.
     """
 
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "variant_role": "baseline",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": (
+        "comparison_reason": (
             "This pair measures model-side work reduction; the chapter-native "
             "disaggregated serving story lives in the prefill_decode_disagg targets."
         ),
@@ -103,7 +103,7 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.inputs is not None
 
-        with self._nvtx_range("inference_full_control_full_depth"):
+        with self._nvtx_range("inference_full_comparison_full_depth"):
             with torch.no_grad():
                 self.output = self.model(self.inputs)
         if self.output is None or self.inputs is None:
@@ -139,7 +139,7 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return self._workload
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return inference metrics plus explicit control-pair work shape."""
+        """Return inference metrics plus explicit comparison-pair work shape."""
         from core.benchmark.metrics import compute_inference_metrics
         metrics = compute_inference_metrics(
             ttft_ms=None,
@@ -155,7 +155,7 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 "active_layers": float(self.num_layers),
                 "identity_tail_layers": float(self.num_layers - self.identity_start_layer),
                 "identity_layers_skipped": 0.0,
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
             }
         )

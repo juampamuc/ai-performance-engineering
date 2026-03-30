@@ -35,16 +35,16 @@ def _story_note(story_metadata: Dict[str, Any]) -> str:
     parts: List[str] = []
     pair_role = str(story_metadata.get("pair_role") or "").strip().lower()
     chapter_alignment = str(story_metadata.get("chapter_alignment") or "").strip().lower()
-    control_reason = str(story_metadata.get("control_reason") or "").strip()
+    comparison_reason = str(story_metadata.get("comparison_reason") or "").strip()
     chapter_native_targets = story_metadata.get("chapter_native_targets") or []
 
-    if pair_role == "control" and chapter_alignment == "supplementary":
-        parts.append("Supplementary control pair.")
+    if pair_role == "comparison" and chapter_alignment == "supplementary":
+        parts.append("Supplementary comparison pair.")
     elif pair_role:
         parts.append(f"{pair_role.title()} pair.")
 
-    if control_reason:
-        parts.append(control_reason.rstrip(".") + ".")
+    if comparison_reason:
+        parts.append(comparison_reason.rstrip(".") + ".")
 
     if isinstance(chapter_native_targets, list):
         targets = [str(target).strip() for target in chapter_native_targets if str(target).strip()]
@@ -144,7 +144,7 @@ def _transform_aggregated_data(all_benchmarks: dict, timestamp: str) -> dict:
                 "pair_role": pair_story_metadata.get("pair_role"),
                 "chapter_alignment": pair_story_metadata.get("chapter_alignment"),
                 "chapter_native_exemplar": pair_story_metadata.get("chapter_native_exemplar"),
-                "control_reason": pair_story_metadata.get("control_reason"),
+                "comparison_reason": pair_story_metadata.get("comparison_reason"),
                 "chapter_native_targets": pair_story_metadata.get("chapter_native_targets"),
                 "story_note": story_note,
             }

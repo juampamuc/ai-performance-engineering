@@ -35,7 +35,7 @@ def get_benchmark() -> DecodeBenchmark:
         "chapter_native_exemplar": True,
         "comparison_axis": "bf16_vs_fp8_transformer_engine",
         "execution_pattern": "prefill_only_decode",
-        "control_reason": (
+        "comparison_reason": (
             "This baseline keeps the FP8 workload fixed while using BF16 nn.Linear "
             "modules as the non-Transformer-Engine reference path."
         ),

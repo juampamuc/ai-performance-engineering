@@ -73,7 +73,7 @@
         "best_optimization_speedup": 1.0085124421948866,
         "best_optimization_technique": "optimized_nvlink_offload",
         "best_optimization_time_ms": 1.0543602047822414,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 166.125,

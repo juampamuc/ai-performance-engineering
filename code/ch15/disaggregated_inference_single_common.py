@@ -1,4 +1,4 @@
-"""Shared single-GPU KV-handoff control benchmark logic."""
+"""Shared single-GPU KV-handoff comparison benchmark logic."""
 
 from __future__ import annotations
 
@@ -212,7 +212,7 @@ class _DisaggregatedInferenceSingleGPUBase(VerificationPayloadMixin, BaseBenchma
 
     def get_custom_metrics(self) -> Optional[dict]:
         metrics = {
-            "story.control_pair": 1.0,
+            "story.comparison_pair": 1.0,
             "story.chapter_native_exemplar": 0.0,
             "single_gpu_kv_handoff.requests_per_rank": float(self.cfg.requests_per_rank),
             "single_gpu_kv_handoff.context_window": float(self.cfg.context_window),

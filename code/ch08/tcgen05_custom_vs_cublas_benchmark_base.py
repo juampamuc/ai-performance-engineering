@@ -11,7 +11,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
 class Tcgen05CustomVsCublasBase(VerificationPayloadMixin, BaseBenchmark):
-    """Common setup for the Chapter 8 tcgen05-versus-library bridge control."""
+    """Common setup for the Chapter 8 tcgen05-versus-library bridge comparison."""
 
     nvtx_label = "tcgen05_custom_vs_cublas"
     matrix_rows = 8192
@@ -112,11 +112,11 @@ class Tcgen05CustomVsCublasBase(VerificationPayloadMixin, BaseBenchmark):
             "tcgen05_custom_vs_cublas.matrix_n": float(self.matrix_cols),
             "tcgen05_custom_vs_cublas.flops": float(flops),
             "tcgen05_custom_vs_cublas.bytes_transferred": float(bytes_per_iter),
-            "story.control_pair": 1.0,
+            "story.comparison_pair": 1.0,
             "story.chapter_native_exemplar": 0.0,
             "story.bridge_to_ch09": 1.0,
         }
 
     def get_optimization_goal(self) -> str:
-        """Keep the bridge-control pair runnable without headline speed gating."""
-        return "control"
+        """Keep the bridge-comparison pair runnable without headline speed gating."""
+        return "comparison"

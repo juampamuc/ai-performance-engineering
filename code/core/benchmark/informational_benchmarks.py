@@ -6,7 +6,7 @@ from typing import Dict, Set, Tuple
 INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     # Ch4: DataParallel demo shows basic parallelism pattern (requires multi-GPU)
     "ch04": {"dataparallel_basic"},
-    # Ch5: overlap/control demo remains useful, but no longer carries a canonical speed claim.
+    # Ch5: overlap/comparison demo remains useful, but no longer carries a canonical speed claim.
     "ch05": {"ai"},
     # Ch12: Graph CUDA demos show graph capture patterns.
     "ch12": {"graph_cuda", "cuda_graphs_conditional"},
@@ -18,13 +18,13 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
         "precisionfp8_rowwise",
         "precisionfp8_rowwise_gw_hp",
     },
-    # Ch14: explicit cuBLAS-vs-CUTLASS remains a supplementary control pair, not a chapter-native speed claim.
+    # Ch14: explicit cuBLAS-vs-CUTLASS remains a supplementary comparison pair, not a chapter-native speed claim.
     "ch14": {"cublas_vs_cutlass"},
     # Ch15: Inference placement demo shows architecture patterns (multi-GPU).
     "ch15": {"inference_placement"},
     # Ch16: Hardware-variant dense-attention path and piece-graphs example remain informational.
     "ch16": {"dense_attention_flash_blackwell_variant", "piece_graphs"},
-    # Ch17: Pipeline parallelism, routing demos, and the inference control pair remain informational.
+    # Ch17: Pipeline parallelism, routing demos, and the inference comparison pair remain informational.
     "ch17": {"pipeline_parallelism", "prefill_decode_disagg", "inference_full"},
     # Ch18: Speculative decoding demos show technique patterns.
     "ch18": {"speculative_decoding_multi_draft", "flexdecoding_graphs"},
@@ -34,7 +34,7 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     "ch20": {"pipeline_sequential"},
     # Labs: Dynamic router demos show routing patterns.
     "dynamic_router": {"dynamic_router", "router_vectorized"},
-    # Labs: Persistent decode transport/control demos stay informational; canonical wins come from
+    # Labs: Persistent decode transport/comparison demos stay informational; canonical wins come from
     # the graph-backed decode CUDA variant and KV-locality microbench.
     "persistent_decode": {
         "kv_locality_microbench",

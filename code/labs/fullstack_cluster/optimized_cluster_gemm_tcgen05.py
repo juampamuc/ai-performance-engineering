@@ -23,11 +23,10 @@ class OptimizedCapstoneGemmTCGen05Benchmark(CapstoneMatmulBenchmark):
         super().setup()
 
     def get_optimization_goal(self) -> str:
-        """This tcgen05 follow-up stays runnable as a control benchmark."""
-        return "control"
+        """This tcgen05 follow-up stays runnable as a comparison benchmark."""
+        return "comparison"
 
 
 
 def get_benchmark() -> OptimizedCapstoneGemmTCGen05Benchmark:
     return OptimizedCapstoneGemmTCGen05Benchmark()
-

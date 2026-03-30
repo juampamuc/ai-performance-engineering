@@ -70,7 +70,7 @@
         "launch.block_k": 256.0,
         "launch.gemm_calls_per_iteration": 8.0,
         "story.chapter_native_exemplar": 0.0,
-        "story.control_pair": 1.0,
+        "story.comparison_pair": 1.0,
         "system.cores_per_numa": 0.0,
         "system.cpu_cores": 64.0,
         "system.memory_channels": 0.0,
@@ -88,7 +88,7 @@
         "best_optimization_speedup": 1.8737633085531562,
         "best_optimization_technique": "optimized_gemm",
         "best_optimization_time_ms": 0.1775897890329361,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 212.125,

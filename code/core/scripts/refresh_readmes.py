@@ -1179,11 +1179,11 @@ ENTRIES["ch03"] = chapter_entry(
                 | Target | Baseline | Optimized | Measured delta | What changed |
                 | --- | ---: | ---: | ---: | --- |
                 | `pinned_prefetch_mlp` | `4.456 ms` | `1.225 ms` | `3.64x` | pinned-memory prefetch removes blocking host staging |
-                | `gemm` | `0.548 ms` | `0.189 ms` | `2.90x` | control GEMM shows how host/runtime launch overhead caps achievable FLOP/s |
+                | `gemm` | `0.548 ms` | `0.189 ms` | `2.90x` | comparison GEMM shows how host/runtime launch overhead caps achievable FLOP/s |
                 | `double_buffered_batch_provisioning` | `1.734 ms` | `1.076 ms` | `1.61x` | double-buffered provisioning overlaps batch copies with compute |
 
                 The magnitude is smaller than the headline CUDA chapters, but the lesson is important: host tuning changes are often prerequisite wins, not optional polish.
-                `gemm` is intentionally a control workload for host/runtime overhead, while `rack_prep` is the more chapter-native staged-copy example for locality-aware host preparation. Structured metrics mark `gemm` with `story.control_pair=1` and `story.chapter_native_exemplar=0`, and structured story metadata marks it as a supplementary control pair with chapter-native targets like `pageable_copy` and `rack_prep`, so downstream reports can keep that distinction explicit."""
+                `gemm` is intentionally a comparison workload for host/runtime overhead, while `rack_prep` is the more chapter-native staged-copy example for locality-aware host preparation. Structured metrics mark `gemm` with `story.comparison_pair=1` and `story.chapter_native_exemplar=0`, and structured story metadata marks it as a supplementary comparison pair with chapter-native targets like `pageable_copy` and `rack_prep`, so downstream reports can keep that distinction explicit."""
             ),
         ),
         MarkdownSection(
@@ -1221,15 +1221,15 @@ ENTRIES["ch03"] = chapter_entry(
         "Diagnose CPU and memory affinity issues that throttle GPU pipelines.",
         "Harden Docker and Kubernetes environments for sustained GPU throughput on shared clusters.",
         "Automate repeatable system tuning via shell scripts so lab machines stay consistent.",
-        "Use control workloads like GEMM and rack-prep to quantify host/runtime overhead, locality, and launch latency.",
+        "Use comparison workloads like GEMM and rack-prep to quantify host/runtime overhead, locality, and launch latency.",
     ],
     contents=[
         ("`baseline_pageable_copy.py`, `optimized_pageable_copy.py`, `bind_numa_affinity.py`, `numa_topology_script.sh`", "Host-transfer and NUMA-adjacent helpers: the benchmark pair covers pageable-vs-pinned async copies, while the scripts handle CPU/GPU socket placement and topology inspection."),
-        ("`baseline_rack_prep.py`, `optimized_rack_prep.py`, `grace_blackwell_topology.py`", "Topology-aware staging control pair: baseline uses blocking pageable staging, while optimized adds affinity planning plus pinned double-buffered copy/compute overlap."),
-        ("`baseline_pinned_prefetch_mlp.py`, `optimized_pinned_prefetch_mlp.py`, `docker_gpu_optimized.dockerfile`, `system_tuning.sh`, `gpu_setup_commands.sh`", "Pinned-memory prefetch control pair plus host/container setup scripts that toggle persistence mode, huge pages, IRQ steering, and MIG visibility."),
+        ("`baseline_rack_prep.py`, `optimized_rack_prep.py`, `grace_blackwell_topology.py`", "Topology-aware staging comparison pair: baseline uses blocking pageable staging, while optimized adds affinity planning plus pinned double-buffered copy/compute overlap."),
+        ("`baseline_pinned_prefetch_mlp.py`, `optimized_pinned_prefetch_mlp.py`, `docker_gpu_optimized.dockerfile`, `system_tuning.sh`, `gpu_setup_commands.sh`", "Pinned-memory prefetch comparison pair plus host/container setup scripts that toggle persistence mode, huge pages, IRQ steering, and MIG visibility."),
         ("`baseline_double_buffered_batch_provisioning.py`, `optimized_double_buffered_batch_provisioning.py`, `kubernetes_mig_pod.yaml`, `kubernetes_topology_pod.yaml`", "Batch-provisioning overlap pair plus Kubernetes manifests demonstrating topology-aware scheduling and MIG partitioning for multi-tenant fleets."),
         ("`cpu_gpu_numa_optimizations.sh`, `system_tuning.sh`, `gpu_setup_commands.sh`", "Workflow scripts for aligning CPU governors, cgroup limits, persistence mode, and driver settings with the benchmark harness."),
-        ("`baseline_gemm.py`, `optimized_gemm.py`, `train.py`", "Control GEMM + training loops that expose host/runtime launch overhead in measurable FLOP/s without claiming a NUMA-specific kernel optimization."),
+        ("`baseline_gemm.py`, `optimized_gemm.py`, `train.py`", "Comparison GEMM + training loops that expose host/runtime launch overhead in measurable FLOP/s without claiming a NUMA-specific kernel optimization."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`", "Harness entry, Python deps, and regression thresholds."),
     ],
     validation=[
@@ -1334,7 +1334,7 @@ ENTRIES["ch04"] = chapter_entry(
         ("`baseline_dataparallel.py`, `optimized_dataparallel.py`", "Single-GPU DataParallel anti-pattern vs direct GPU execution."),
         ("`baseline_dataparallel_multigpu.py`, `optimized_dataparallel_multigpu.py`", "Multi-GPU DataParallel vs manual gradient reduction with pre-staged shards."),
         ("`baseline_no_overlap.py`, `optimized_no_overlap.py`", "Strict distributed DDP overlap benchmarks; they now require `torchrun` plus `>=2` GPUs and fail fast with `SKIPPED:` when launched on unsupported hosts."),
-        ("`baseline_pcie_staging.py`, `optimized_pcie_staging.py`, `baseline_nvlink_topology_aware.py`, `optimized_nvlink_topology_aware.py`, `baseline_nvlink_multigpu.py`, `optimized_nvlink_multigpu.py`, `baseline_nvlink_topology_aware_multigpu.py`, `optimized_nvlink_topology_aware_multigpu.py`", "PCIe host-staging control pair plus NVLink exercises for validating peer bandwidth and topology effects (single- and multi-GPU)."),
+        ("`baseline_pcie_staging.py`, `optimized_pcie_staging.py`, `baseline_nvlink_topology_aware.py`, `optimized_nvlink_topology_aware.py`, `baseline_nvlink_multigpu.py`, `optimized_nvlink_multigpu.py`, `baseline_nvlink_topology_aware_multigpu.py`, `optimized_nvlink_topology_aware_multigpu.py`", "PCIe host-staging comparison pair plus NVLink exercises for validating peer bandwidth and topology effects (single- and multi-GPU)."),
         ("`baseline_nixl_tier_handoff.py`, `optimized_nixl_tier_handoff.py`, `nixl_tier_handoff_tool.py`", "Chapter-local NIXL-style memory-tier handoff analogue built on the same selected-block transport workload used by the communication-stack lab, with both benchmark and probe entrypoints."),
         ("`baseline_continuous_batching.py`, `optimized_continuous_batching.py`, `baseline_disaggregated.py`, `optimized_disaggregated.py`, `baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py`, `baseline_disaggregated_multigpu.py`, `optimized_disaggregated_multigpu.py`", "Continuous batching + disaggregated inference demos that showcase pooling and remote KV reuse."),
         ("`baseline_gradient_compression_fp16.py`, `optimized_gradient_compression_fp16.py`, `baseline_gradient_compression_int8.py`, `optimized_gradient_compression_int8.py`, `baseline_gradient_compression_fp16_multigpu.py`, `optimized_gradient_compression_fp16_multigpu.py`, `baseline_gradient_compression_int8_multigpu.py`, `optimized_gradient_compression_int8_multigpu.py`", "Gradient compression all-reduce benchmarks comparing small-bucket vs full-buffer compression (single GPU and multi-GPU FP16/INT8 paths)."),
@@ -1560,6 +1560,7 @@ ENTRIES["ch06"] = chapter_entry(
     notes=[
         "`arch_config.py` forces SM-specific compile flags (e.g., disabling pipelines on unsupported GPUs) so targets fail gracefully on older hardware.",
         "The canonical public add targets are `add` and `add_cuda`; the older add-tensors wrapper names were removed instead of kept as legacy aliases.",
+        "`launch_bounds` and `launch_bounds_cuda` are small-effect teaching cases with local expectation-backed contracts, not headline Chapter 6 speed claims.",
         "`attention_ilp` is an attention-score preprocessing microbenchmark. It is intentionally not a fused SDPA or multi-stream overlap example.",
         "CUDA extensions in `cuda_extensions/` can be imported directly into notebooks for interactive prototyping.",
     ],
@@ -1716,7 +1717,7 @@ ENTRIES["ch08"] = chapter_entry(
                 | `loop_unrolling` | `1.591 ms` | `0.382 ms` | `4.17x` | more independent work per thread reduces execution-dependency stalls |
                 | `ai_optimization` | `0.646 ms` | `0.241 ms` | `2.68x` | occupancy-aware scheduling keeps more useful work resident |
 
-                These are the chapter-native exemplars. The repo also keeps a few real bridge-control pairs here, such as `thresholdtma`, `tiling`, `tiling_tcgen05`, `tcgen05_custom_vs_cublas`, and `nvfp4_mlp`, but those are explicitly marked in structured metrics as control pairs so dashboards do not blur them with the book's core Chapter 8 story."""
+                These are the chapter-native exemplars. The repo also keeps a few real bridge comparison pairs here, such as `thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp`, but those are explicitly marked in structured metrics as comparison pairs so dashboards do not blur them with the book's core Chapter 8 story. `tcgen05_custom_vs_cublas` remains an explicit custom-versus-library comparison target, and it now stays runnable as a supplementary comparison benchmark with a local contract rather than being skipped as informational."""
             ),
         ),
         MarkdownSection(
@@ -1761,20 +1762,20 @@ ENTRIES["ch08"] = chapter_entry(
         ("`baseline_occupancy_tuning.py`, `optimized_occupancy_tuning.py`, `occupancy_tuning_tool.py`, `occupancy_api_example.cu`, `occupancy_tuning.cu`", "Occupancy studies that tune CTA shapes, register caps, and API-computed limits (plus a sweep tool for quick preset exploration)."),
         ("`baseline_loop_unrolling.cu`, `baseline_loop_unrolling.py`, `optimized_loop_unrolling.cu`, `optimized_loop_unrolling.py`, `loop_unrolling_kernels.cu`", "Loop-unrolling case studies that expose more independent work per thread while tracking register pressure."),
         ("`baseline_ai_optimization.py`, `optimized_ai_optimization.py`, `ai_optimization_kernels.cu`, `independent_ops.cu`", "AI-kernel scheduling samples that stage independent ops to highlight occupancy and issue-efficiency tradeoffs."),
-        ("`baseline_thresholdtma.py`, `optimized_thresholdtma.py`, `threshold_tma_benchmark_base.py`", "Bridge control pair into the later TMA chapters: same threshold workload shape, but a TMA-backed path marked as a control pair in structured metrics."),
-        ("`baseline_tiling.py`, `optimized_tiling.py`, `baseline_tiling_tcgen05.py`, `optimized_tiling_tcgen05.py`, `tiling_kernels.cu`, `tiling_extension_tcgen05.py`", "Bridge control pairs into Chapter 9: arithmetic-intensity and tensor-core tiling workloads kept as real baseline/optimized pairs but marked non-native for Chapter 8."),
-        ("`baseline_tcgen05_custom_vs_cublas.py`, `optimized_tcgen05_custom_vs_cublas.py`, `tcgen05_custom_vs_cublas_benchmark_base.py`", "Custom-tcgen05-versus-cuBLAS bridge control pair that points ahead to Chapter 9 tensor-core scheduling."),
-        ("`baseline_nvfp4_mlp.py`, `optimized_nvfp4_mlp.py`", "Precision bridge control pair: BF16 versus NVFP4 MLP path kept here as a real pair, but explicitly marked as a Chapter 9-style control."),
+        ("`baseline_thresholdtma.py`, `optimized_thresholdtma.py`, `threshold_tma_benchmark_base.py`", "Bridge comparison pair into the later TMA chapters: same threshold workload shape, but a TMA-backed path marked as a comparison pair in structured metrics."),
+        ("`baseline_tiling.py`, `optimized_tiling.py`, `baseline_tiling_tcgen05.py`, `optimized_tiling_tcgen05.py`, `tiling_kernels.cu`, `tiling_extension_tcgen05.py`", "Bridge comparison pairs into Chapter 9: arithmetic-intensity and tensor-core tiling workloads kept as real baseline/optimized pairs but marked non-native for Chapter 8. `optimized_tiling.py` uses the strict `matmul_tiled_fast` path so runtime issues fail fast instead of silently falling back."),
+        ("`baseline_tcgen05_custom_vs_cublas.py`, `optimized_tcgen05_custom_vs_cublas.py`, `tcgen05_custom_vs_cublas_benchmark_base.py`", "Supplementary custom-tcgen05-versus-cuBLAS bridge comparison benchmark that points ahead to Chapter 9 tensor-core scheduling without acting as a canonical Chapter 8 speed claim."),
+        ("`baseline_nvfp4_mlp.py`, `optimized_nvfp4_mlp.py`", "Precision bridge comparison pair: BF16 versus NVFP4 MLP path kept here as a real pair, but explicitly marked as a Chapter 9-style comparison."),
         ("`compare.py`, `requirements.txt`, `expectations_{hardware_key}.json`", "Harness entry, dependencies, and regression thresholds."),
     ],
     validation=[
         "Nsight Compute traces for `optimized_threshold.py` should show higher warp execution efficiency than `baseline_threshold.py`.",
         "`python -m cli.aisp tools occupancy-tuning` prints preset timings + speedups for the occupancy tuning microbenchmark.",
-        "`python -m cli.aisp bench run --targets ch08:thresholdtma --profile minimal` exercises the Blackwell-only bridge control on the same threshold shape used by the chapter-native threshold pair.",
+        "`python -m cli.aisp bench run --targets ch08:thresholdtma --profile minimal` exercises the Blackwell-only bridge comparison on the same threshold shape used by the chapter-native threshold pair.",
     ],
     notes=[
         "`arch_config.py` exposes toggles for enabling/disabling tcgen05 lowering per GPU so the same scripts work on SM100 and SM121.",
-        "`threshold`, `loop_unrolling`, and `ai_optimization` are the chapter-native exemplars. `thresholdtma`, `tiling`, `tiling_tcgen05`, `tcgen05_custom_vs_cublas`, and `nvfp4_mlp` remain real baseline/optimized bridge controls and expose `story.control_pair=1` plus `story.chapter_native_exemplar=0` in structured metrics.",
+        "`threshold`, `loop_unrolling`, and `ai_optimization` are the chapter-native exemplars. `thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp` remain real baseline/optimized bridge comparisons and expose `story.comparison_pair=1` plus `story.chapter_native_exemplar=0` in structured metrics.",
         "`tcgen05_custom_vs_cublas` is intentionally named as a custom-versus-library comparison target so the benchmark surface matches the story it is telling.",
         "`build/` caches CUDA object files per configuration; clean via `python cleanup.py --include-build` when adjusting toolchains.",
     ],
@@ -2320,7 +2321,7 @@ ENTRIES["ch14"] = chapter_entry(
     title="Chapter 14 - Compiler & Triton Optimization",
     summary=dedent(
         """\
-        Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness. The repo chapter focuses on CUDA/Triton/Inductor paths; the broader XLA backend discussion from the manuscript is not represented as runnable chapter code here. The explicit `cublas_vs_cutlass` pair remains an informational control surface rather than a chapter-native speed-claim benchmark."""
+        Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness. The repo chapter focuses on CUDA/Triton/Inductor paths; the broader XLA backend discussion from the manuscript is not represented as runnable chapter code here. The explicit `cublas_vs_cutlass` pair remains an informational comparison surface rather than a chapter-native speed-claim benchmark."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -2402,7 +2403,7 @@ ENTRIES["ch14"] = chapter_entry(
     ],
     contents=[
         ("`baseline_model_compile_reduced_precision.py`, `optimized_model_compile_reduced_precision.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py`", "Model-scale examples showcasing the eager-vs-compiled reduced-precision pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests."),
-        ("`baseline_cublas_vs_cutlass.py`, `optimized_cublas_vs_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py`", "Explicit cuBLAS-vs-CUTLASS control pair plus advanced TMA/NVSHMEM Triton kernels. The control pair remains informational rather than a canonical chapter speed claim."),
+        ("`baseline_cublas_vs_cutlass.py`, `optimized_cublas_vs_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py`", "Explicit cuBLAS-vs-CUTLASS comparison pair plus advanced TMA/NVSHMEM Triton kernels. The comparison pair remains informational rather than a canonical chapter speed claim."),
         ("`baseline_attention_eager_sdpa.py`, `optimized_attention_eager_sdpa.py`, `baseline_flex_attention_sparse.py`, `optimized_flex_attention_sparse.py`, `flex_attention_sparse_demo.py`", "Eager-vs-SDPA attention plus FlexAttention sparse workloads that validate custom score mods, masks, sparsity, and compile speedups."),
         ("`baseline_nccl_quantization.py`, `optimized_nccl_quantization.py`, `deepseek_innovation_l2_bypass.py`", "Quantization-aware communication and the DeepSeek-inspired L2 bypass experiment."),
         ("`baseline_regional_triton.py`, `optimized_regional_triton.py`, `inspect_compiled_code.py`, `benchmark_tma_configs.py`", "Regional compilation and TMA parameter sweeps for auto-tuning generated kernels."),
@@ -2417,7 +2418,7 @@ ENTRIES["ch14"] = chapter_entry(
         "`inspect_compiled_code.py` dumps Triton/PTX/Graph captures for any target; edit the helper to introspect new workloads.",
         "`requirements.txt` includes nightly Triton + PyTorch wheels to keep compiler features aligned with the CUDA 13 toolchain.",
         "For repo-native supporting examples that fill the training hot-path gaps without changing this chapter's primary compile narrative, see `labs/training_hotpath`.",
-        "`cublas_vs_cutlass` is a supplementary control pair. Chapter-native performance claims stay anchored on `model_compile_reduced_precision`, `regional_triton`, and `triton_persistent`.",
+        "`cublas_vs_cutlass` is a supplementary comparison pair. Chapter-native performance claims stay anchored on `model_compile_reduced_precision`, `regional_triton`, and `triton_persistent`.",
     ],
 )
 
@@ -2507,7 +2508,7 @@ ENTRIES["ch15"] = chapter_entry(
     contents=[
         ("`baseline_inference_monolithic.py`, `optimized_inference_monolithic.py`", "Single-box inference loops that establish the baseline before disaggregation."),
         ("`disaggregated_inference_multigpu.py`", "Disaggregated inference demo that layers speculative decoding on top of prefill/decode pools."),
-        ("`baseline_single_gpu_kv_handoff.py`, `optimized_single_gpu_kv_handoff.py`, `baseline_disaggregated_inference_multigpu.py`, `optimized_disaggregated_inference_multigpu.py`, `baseline_prefill_decode_disagg.py`, `optimized_prefill_decode_disagg.py`, `baseline_prefill_decode_disagg_multigpu.py`, `optimized_prefill_decode_disagg_multigpu.py`, `disaggregated_inference_single_common.py`", "Disaggregated pipelines modeling remote prefills, decode overlap, and NVLink pooling (multi-GPU), plus a supplementary single-GPU KV-handoff control pair."),
+        ("`baseline_single_gpu_kv_handoff.py`, `optimized_single_gpu_kv_handoff.py`, `baseline_disaggregated_inference_multigpu.py`, `optimized_disaggregated_inference_multigpu.py`, `baseline_prefill_decode_disagg.py`, `optimized_prefill_decode_disagg.py`, `baseline_prefill_decode_disagg_multigpu.py`, `optimized_prefill_decode_disagg_multigpu.py`, `disaggregated_inference_single_common.py`", "Disaggregated pipelines modeling remote prefills, decode overlap, and NVLink pooling (multi-GPU), plus a supplementary single-GPU KV-handoff comparison pair."),
         ("`baseline_kv_cache_management.py`, `optimized_kv_cache_management.py`, `kv_cache_management_math.py`, `baseline_kv_cache_nvlink_pool.py`, `optimized_kv_cache_nvlink_pool.py`, `baseline_kv_cache_nvlink_pool_multigpu.py`, `optimized_kv_cache_nvlink_pool_multigpu.py`", "KV-cache orchestration utilities with local-only, math-only, and NVLink-pooled variants."),
         ("`baseline_continuous_batching.py`, `optimized_continuous_batching.py`", "Single-GPU continuous batching scheduler for TTFT-aware queueing."),
         ("`baseline_continuous_batching_multigpu.py`, `optimized_continuous_batching_multigpu.py`", "Multi-GPU continuous batching scheduler for scaled queueing throughput."),
@@ -2774,7 +2775,7 @@ ENTRIES["ch17"] = chapter_entry(
                 | `prefill_decode_disagg_ttft` | `2678.148 ms` | `938.237 ms` | `2.85x` | disaggregated prefill/decode handoff optimized for TTFT |
 
                 This chapter mixes policy wins with orchestration wins. That is useful, but it means you should read each target as a specific system story rather than as one generic routing number.
-                Use the `prefill_decode_disagg*` targets as the chapter-native exemplars; `inference_full` remains a control pair for model-side work reduction rather than a disaggregated serving benchmark. Its structured metrics now expose `active_layers`, `identity_layers_skipped`, `story.control_pair=1`, and `story.chapter_native_exemplar=0`, while structured story metadata points to the `prefill_decode_disagg*` family as the chapter-native exemplar set."""
+                Use the `prefill_decode_disagg*` targets as the chapter-native exemplars; `inference_full` remains a comparison pair for model-side work reduction rather than a disaggregated serving benchmark. Its structured metrics now expose `active_layers`, `identity_layers_skipped`, `story.comparison_pair=1`, and `story.chapter_native_exemplar=0`, while structured story metadata points to the `prefill_decode_disagg*` family as the chapter-native exemplar set."""
             ),
         ),
         MarkdownSection(
@@ -3603,11 +3604,13 @@ ENTRIES["labs/cache_aware_disagg_inference"] = lab_entry(
     validation=[
         "`python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference --profile minimal` compares the cache-unaware and cache-aware paths through the standard harness.",
         "`python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference:cache_aware_disagg --profile minimal` emits the round-robin baseline and cache-affine optimized metrics through one harness artifact set.",
-        "The cache-aware path should report lower KV transfer volume and fewer worker switches than the round-robin control on the same warm/cold request mix.",
+        "The cache-aware path should report lower KV transfer volume and fewer worker switches than the round-robin baseline on the same warm/cold request mix.",
     ],
     notes=[
         "This lab is intentionally a logical reproduction of the scheduler/caching story, not a full serving engine.",
-        "The defaults model chunked prefill, warm/cold requests, and a 2P1D-style control problem without forcing an 8-GPU host.",
+        "Treat single-GPU `cache_aware_disagg` as a locality-comparison benchmark with a local comparison contract. The stable value on one GPU is the cache hit rate, KV transfer volume, and worker affinity improvement; the timed delta is recorded, but it is not a trustworthy headline speed gate on this host.",
+        "Judge the single-GPU target by cache hit rate, KV transfer volume, and worker affinity before raw wall-clock speedup.",
+        "The defaults model chunked prefill, warm/cold requests, and a 2P1D-style comparison problem without forcing an 8-GPU host.",
     ],
 )
 
@@ -3792,7 +3795,7 @@ ENTRIES["labs/decode_optimization"] = lab_entry(
             "Control Surfaces",
             dedent(
                 """\
-                Treat `decode_pinned` as a supplementary informational control surface. More broadly, the standalone pinned-memory stepping stones remain informational control surfaces; the lab's canonical host-overhead benchmark stays on `decode_streams`, where the workload explicitly stages a large host payload and turns the transfer path into a measurable part of the story."""
+                Treat `decode_pinned` as a supplementary local-contract speed benchmark. The pair now uses a dedicated pageable-vs-pinned baseline on the same transfer-heavy workload (`host_payload_mb=512`, no stream overlap) so the pinned-memory comparison is measurable on its own. More broadly, the standalone pinned-memory stepping stones remain non-headline benchmarks, while the lab's canonical host-overhead benchmark stays on `decode_streams`, where the workload keeps that same large host payload and adds copy/compute overlap."""
             ),
         ),
         MarkdownSection(
@@ -3842,7 +3845,7 @@ ENTRIES["labs/decode_optimization"] = lab_entry(
     ],
     notes=[
         "All targets emit TTFT, TPOT mean, decode time, total time, and tokens/sec in `custom_metrics` for easy diffing.",
-        "`decode_pinned` is an informational stepping-stone target; use `decode_streams` when you want the lab's canonical pinned-host/host-transfer speed claim.",
+        "`decode_pinned` is a supplementary local-contract stepping-stone target that now isolates pageable vs pinned staging on the same large host payload; use `decode_streams` when you want the lab's canonical pinned-host plus overlap speed claim.",
         "FP4 requires NVFP4-capable Blackwell hardware; unsupported platforms fail fast.",
         "The HF cache pair reproduces the main idea from Chaim Rand's token-generation optimization write-up while keeping the harness contract intact.",
         "`decode_fp8` is intentionally a BF16/`nn.Linear` baseline versus FP8/Transformer Engine `TELinear`, because Transformer Engine is the supported FP8 linear path in this lab.",
@@ -5448,9 +5451,9 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
                 | --- | ---: | ---: | ---: | --- |
                 | `nvfp4_group_gemm` | `0.614 ms` | `0.595 ms` | `1.03x` | canonical local-contract speed benchmark |
                 | `nvfp4_group_gemm_g2_n3072_k4096` | `0.615 ms` | `0.594 ms` | `1.04x` | promoted shape companion (same routed workload as the front-door target) |
-                | `nvfp4_group_gemm_g8_n7168_k2048` | `2.080 ms` | `2.019 ms` | `1.03x` | supplementary control benchmark |
-                | `nvfp4_group_gemm_g8_n4096_k7168` | `2.408 ms` | `2.379 ms` | `1.01x` | supplementary control benchmark |
-                | `nvfp4_group_gemm_g2_n4096_k1536` | `0.352 ms` | `0.352 ms` | `1.00x` | supplementary control benchmark |
+                | `nvfp4_group_gemm_g8_n7168_k2048` | `2.080 ms` | `2.019 ms` | `1.03x` | supplementary comparison benchmark |
+                | `nvfp4_group_gemm_g8_n4096_k7168` | `2.408 ms` | `2.379 ms` | `1.01x` | supplementary comparison benchmark |
+                | `nvfp4_group_gemm_g2_n4096_k1536` | `0.352 ms` | `0.352 ms` | `1.00x` | supplementary comparison benchmark |
 
                 The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for this harness surface on this host. The former competition `caseN` numbering is retired from the public benchmark targets; the canonical front-door target now points at the isolated single-target winner `g2_n3072_k4096`."""
             ),
@@ -5479,7 +5482,7 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
     ],
     goals=[
         "Keep grouped-GEMM tuning grounded in repeated verified shape-by-shape evidence.",
-        "Keep non-winning shapes visible as supplementary control benchmarks without forcing them to carry the lab's canonical speed claim on every host.",
+        "Keep non-winning shapes visible as supplementary comparison benchmarks without forcing them to carry the lab's canonical speed claim on every host.",
         "Retire the old competition `caseN` labels from the public harness surface.",
     ],
     contents=[
@@ -5489,13 +5492,13 @@ ENTRIES["labs/nvfp4_group_gemm"] = lab_entry(
     ],
     validation=[
         "`python -m cli.aisp bench run --targets labs/nvfp4_group_gemm:nvfp4_group_gemm --profile minimal` should keep the promoted `g2_n3072_k4096` route verification-clean.",
-        "`nvfp4_group_gemm_g8_n4096_k7168`, `nvfp4_group_gemm_g8_n7168_k2048`, and `nvfp4_group_gemm_g2_n4096_k1536` remain supplementary control benchmarks; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.",
+        "`nvfp4_group_gemm_g8_n4096_k7168`, `nvfp4_group_gemm_g8_n7168_k2048`, and `nvfp4_group_gemm_g2_n4096_k1536` remain supplementary comparison benchmarks; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.",
         "Old `caseN` target names should no longer appear in `python -m cli.aisp bench list-targets --chapter labs/nvfp4_group_gemm`.",
         "Default changes should still be gated by the stricter ABAB/verify process documented in the codebase notes, not by a single benchmark run.",
     ],
     notes=[
         "This lab is intentionally stricter than a normal benchmark pair because grouped-GEMM route tuning is unusually noise-prone.",
-        "The benchmark harness now exposes one canonical front-door speed target, the explicit promoted-shape companion, and three supplementary control shapes on this host-aligned repo surface, because fresh portable B200 single-target reruns showed `g2_n3072_k4096` as the clearest isolated winner.",
+        "The benchmark harness now exposes one canonical front-door speed target, the explicit promoted-shape companion, and three supplementary comparison shapes on this host-aligned repo surface, because fresh portable B200 single-target reruns showed `g2_n3072_k4096` as the clearest isolated winner.",
     ],
 )
 
@@ -5951,7 +5954,7 @@ ENTRIES["labs/fullstack_cluster"] = lab_entry(
 
                 The useful split here is that `cluster_gemm` demonstrates the big end-to-end kernel win, while `cluster_gemm_tcgen05` is the fine-grained tcgen05 follow-up where the remaining headroom is much smaller.
 
-                Treat `cluster_gemm_tcgen05` as a supplementary informational control surface. It is still useful for tcgen05 profiling and regression tracking, but the lab's canonical speed claim stays on `cluster_gemm`."""
+                Treat `cluster_gemm_tcgen05` as a supplementary comparison benchmark with a local contract. It is still useful for tcgen05 profiling and regression tracking, but the lab's canonical speed claim stays on `cluster_gemm`."""
             ),
         ),
         MarkdownSection(
@@ -6003,7 +6006,7 @@ ENTRIES["labs/fullstack_cluster"] = lab_entry(
         "`capstone_extension.py` caches builds under `~/.cache/torch_extensions`; run `python cleanup.py --include-extensions` when switching CUDA versions.",
         "Single-GPU `moe_hybrid_ep` benchmark runs measure `HybridEPTrainer.run_step()` in-process so the timing reflects the optimizer step instead of single-rank launcher overhead; multi-rank runs still use `torchrun`.",
         "Canonical hybrid-EP comparisons now keep the same default routing mode; use `--route-mode topology_aware` when you want that alternate behavior to be visible instead of relying on a silent default.",
-        "`cluster_gemm_tcgen05` is an informational control surface; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.",
+        "`cluster_gemm_tcgen05` is a supplementary comparison benchmark with a local contract; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.",
     ],
 )
 
@@ -6260,7 +6263,7 @@ ENTRIES["labs/occupancy_tuning"] = lab_entry(
 
                 The lab is valuable because it keeps the schedule sweep honest. The win is real, but it is a schedule-selection win, not magic.
 
-                Keep `proton_matmul_bm64_bn64_bk32_nw2` as an informational control surface. It is still useful for low-warp occupancy and Proton-vs-Nsight agreement checks, but the canonical speed claims stay on `proton_matmul`, `proton_matmul_bm64_bn256_bk32`, `proton_matmul_bm128_bn128_bk32_nw8`, and `proton_matmul_bm128_bn256_bk64`."""
+                Keep `proton_matmul_bm64_bn64_bk32_nw2` as a supplementary local-contract schedule benchmark. It also remains a supplementary comparison schedule benchmark for low-warp occupancy and Proton-vs-Nsight agreement checks, while the canonical speed claims stay on `proton_matmul`, `proton_matmul_bm64_bn256_bk32`, `proton_matmul_bm128_bn128_bk32_nw8`, and `proton_matmul_bm128_bn256_bk64`."""
             ),
         ),
         MarkdownSection(
@@ -6305,7 +6308,7 @@ ENTRIES["labs/occupancy_tuning"] = lab_entry(
     ],
     notes=[
         "Add new schedules to `triton_matmul_schedules.py` and regenerate the harness targets by rerunning the sweep script.",
-        "`proton_matmul_bm64_bn64_bk32_nw2` is an informational control surface; use the larger winning schedules when you want the lab's canonical speed claims.",
+        "`proton_matmul_bm64_bn64_bk32_nw2` is a supplementary local-contract schedule benchmark and supplementary comparison schedule benchmark; use the larger winning schedules when you want the lab's canonical speed claims.",
         "`expectations_{hardware_key}.json` records FLOP/s per schedule so improvements show up in CI.",
     ],
 )
@@ -6442,7 +6445,7 @@ ENTRIES["labs/persistent_decode"] = lab_entry(
 
                 The decode win is a launch-overhead story. The prefill win is a staging/data-movement story. This lab is more useful when you keep those two categories separate.
 
-                The direct transport swaps `nvlink_offload` and `paged_kv_offload` remain informational control surfaces. The canonical KV-offload overlap claim stays on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics."""
+                The direct transport swaps stay visible as a transport-comparison benchmark on `nvlink_offload` and as `paged_kv_offload` as a real speed benchmark with a small local contract. The canonical KV-offload overlap claim stays on `paged_kv_offload_prefetch`, where async prefetch materially changes the overlap story instead of only swapping host-transport mechanics."""
             ),
         ),
         MarkdownSection(
@@ -6492,7 +6495,7 @@ ENTRIES["labs/persistent_decode"] = lab_entry(
     notes=[
         "Set `TORCH_COMPILE_MODE` or `TMA_TILE_SIZE` via env vars before invoking the harness to sweep tile sizes.",
         "`tma_extension.py` caches builds under `~/.cache/torch_extensions`; clean the cache when switching CUDA versions.",
-        "`nvlink_offload` and `paged_kv_offload` are informational control surfaces; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.",
+        "`nvlink_offload` remains a transport-comparison benchmark and `paged_kv_offload` stays a real speed benchmark with a small local contract; use `paged_kv_offload_prefetch` when you want the lab's canonical KV-offload overlap benchmark.",
     ],
 )
 
@@ -6739,7 +6742,9 @@ ENTRIES["labs/train_distributed"] = lab_entry(
                 | `pipeline_dualpipe` | `154.106 ms` | `105.111 ms` | `1.47x` |
                 | `symmem_training` | `177.269 ms` | `167.167 ms` | `1.06x` |
 
-                The useful point is that the lab shows more than one kind of "distributed optimization." Compression and pipeline scheduling move the needle more than the current symmetric-memory path on this local setup."""
+                The useful point is that the lab shows more than one kind of "distributed optimization." Compression and pipeline scheduling move the needle more than the current symmetric-memory path on this local setup.
+
+                Treat single-GPU `fsdp2` on `b200` as a supplementary comparison surface with a local comparison contract. The real FSDP2 speed gate stays on the multi-GPU `2x_b200` contract where sharding and overlap can actually change the communication story."""
             ),
         ),
         MarkdownSection(
@@ -6791,6 +6796,7 @@ ENTRIES["labs/train_distributed"] = lab_entry(
         "FSDP/FSDP2 benchmarks default to `labs/train_distributed/data/tinystories_packed_seq128.jsonl` plus `labs/train_distributed/data/tinyllama_config.json`, with `AISP_TINYSTORIES_LAYERS=4` to keep the model small. Override with `AISP_TINYSTORIES_PACKED_PATH`, `AISP_TINYSTORIES_LOCAL_PATH`, `AISP_TINYSTORIES_CONFIG_PATH`, or `AISP_TINYSTORIES_LAYERS`.",
         "Scale up by increasing `AISP_TINYSTORIES_LAYERS` or swapping to a larger config and pairing it with a packed dataset that matches the new sequence length.",
         "Set `AISP_FSDP_DISABLE_FP8=1` to keep the minimal BF16 path; unset it when you want to exercise the FP8 conversion on larger workloads.",
+        "On single-GPU `b200`, `fsdp2` remains runnable for regression tracking and profiler capture, but the benchmark is judged as a local comparison contract rather than a canonical speed claim.",
     ],
 )
 

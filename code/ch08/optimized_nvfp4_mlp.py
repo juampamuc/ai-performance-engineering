@@ -1,4 +1,4 @@
-"""Optimized NVFP4 MLP for the Chapter 8 precision bridge-control pair."""
+"""Optimized NVFP4 MLP for the Chapter 8 precision bridge-comparison pair."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from core.harness.benchmark_harness import BaseBenchmark
 
 
 class OptimizedChapter8NVFP4MLPBenchmark(NVFP4MLPBenchmark):
-    """Bridge control: NVFP4 path that points ahead to the tensor-core chapters."""
+    """Bridge comparison: NVFP4 path that points ahead to the tensor-core chapters."""
 
     def __init__(self) -> None:
         config = NVFP4MLPConfig(
@@ -23,7 +23,7 @@ class OptimizedChapter8NVFP4MLPBenchmark(NVFP4MLPBenchmark):
 
     def get_custom_metrics(self) -> dict | None:
         return {
-            "story.control_pair": 1.0,
+            "story.comparison_pair": 1.0,
             "story.chapter_native_exemplar": 0.0,
             "story.bridge_to_ch09": 1.0,
             "precision.nvfp4_enabled": 1.0,
@@ -34,7 +34,7 @@ class OptimizedChapter8NVFP4MLPBenchmark(NVFP4MLPBenchmark):
 
     def get_optimization_goal(self) -> str:
         """Keep the Chapter 8 NVFP4 bridge pair out of headline contract gating."""
-        return "control"
+        return "comparison"
 
 
 def get_benchmark() -> BaseBenchmark:

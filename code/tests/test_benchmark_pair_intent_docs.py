@@ -67,15 +67,15 @@ def test_ch06_attention_ilp_docs_call_out_attention_score_microbenchmark() -> No
     assert "attention-score preprocessing microbenchmark" in readme_text
 
 
-def test_ch08_readme_marks_bridge_controls_vs_native_exemplars() -> None:
+def test_ch08_readme_marks_bridge_comparisons_vs_native_exemplars() -> None:
     readme_text = (REPO_ROOT / "ch08" / "README.md").read_text(encoding="utf-8")
 
     assert "chapter-native exemplars" in readme_text
-    assert "bridge control" in readme_text
+    assert "bridge comparison" in readme_text
     assert "`threshold`, `loop_unrolling`, and `ai_optimization` are the chapter-native exemplars" in readme_text
-    assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp` remain real baseline/optimized bridge controls" in readme_text
+    assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp` remain real baseline/optimized bridge comparisons" in readme_text
     assert "`tcgen05_custom_vs_cublas`" in readme_text
-    assert "supplementary control benchmark with a local contract" in readme_text
+    assert "supplementary comparison benchmark with a local contract" in readme_text
     assert "historical baseline/optimized filenames" not in readme_text
 
 
@@ -84,7 +84,7 @@ def test_ch04_readme_calls_single_gpu_staging_pair_pcie_not_nvlink() -> None:
 
     assert "baseline_pcie_staging.py" in readme_text
     assert "optimized_pcie_staging.py" in readme_text
-    assert "PCIe host-staging control pair" in readme_text
+    assert "PCIe host-staging comparison pair" in readme_text
 
 
 def test_ch14_readme_uses_renamed_compile_and_library_targets() -> None:
@@ -93,8 +93,8 @@ def test_ch14_readme_uses_renamed_compile_and_library_targets() -> None:
     assert "model_compile_reduced_precision" in readme_text
     assert "baseline_model_compile_reduced_precision.py" in readme_text
     assert "baseline_cublas_vs_cutlass.py" in readme_text
-    assert "informational control surface" in readme_text
-    assert "supplementary control pair" in readme_text
+    assert "informational comparison surface" in readme_text
+    assert "supplementary comparison pair" in readme_text
     assert "model_compile_bf16" not in readme_text
     assert "baseline_cutlass.py" not in readme_text
 
@@ -103,15 +103,15 @@ def test_ch08_readme_marks_tcgen05_custom_vs_cublas_informational_and_tiling_fas
     readme_text = (REPO_ROOT / "ch08" / "README.md").read_text(encoding="utf-8")
 
     assert "tcgen05_custom_vs_cublas" in readme_text
-    assert "supplementary control benchmark with a local contract" in readme_text
+    assert "supplementary comparison benchmark with a local contract" in readme_text
     assert "matmul_tiled_fast" in readme_text
 
 
-def test_ch15_readme_calls_single_gpu_pair_a_control_handoff() -> None:
+def test_ch15_readme_calls_single_gpu_pair_a_comparison_handoff() -> None:
     readme_text = (REPO_ROOT / "ch15" / "README.md").read_text(encoding="utf-8")
 
     assert "baseline_single_gpu_kv_handoff.py" in readme_text
-    assert "supplementary single-GPU KV-handoff control pair" in readme_text
+    assert "supplementary single-GPU KV-handoff comparison pair" in readme_text
     assert "baseline_disaggregated_inference.py" not in readme_text
 
 
@@ -125,7 +125,7 @@ def test_nvfp4_group_gemm_readme_uses_shape_names_and_frontdoor() -> None:
     assert "nvfp4_group_gemm_g2_n3072_k4096" in readme_text
     assert "nvfp4_group_gemm_g2_n4096_k1536" in readme_text
     assert "former competition `caseN` numbering is retired" in readme_text
-    assert "supplementary control benchmark" in readme_text
+    assert "supplementary comparison benchmark" in readme_text
     assert "canonical local-contract speed benchmark" in readme_text
     assert "nvfp4_group_gemm_case0" not in readme_text
     assert "nvfp4_group_gemm_case1" not in readme_text
@@ -142,20 +142,20 @@ def test_nvfp4_group_gemm_readme_uses_shape_names_and_frontdoor() -> None:
     assert "nvfp4_group_gemm_case3" not in names
 
 
-def test_ch17_inference_full_docs_mark_control_pair_not_disagg_exemplar() -> None:
+def test_ch17_inference_full_docs_mark_comparison_pair_not_disagg_exemplar() -> None:
     baseline_text = (REPO_ROOT / "ch17" / "baseline_inference_full.py").read_text(encoding="utf-8")
     optimized_text = (REPO_ROOT / "ch17" / "optimized_inference_full.py").read_text(encoding="utf-8")
     readme_text = (REPO_ROOT / "ch17" / "README.md").read_text(encoding="utf-8")
 
-    assert "control pair for model-side work reduction" in baseline_text
-    assert "control pair for model-side work reduction" in optimized_text
+    assert "comparison pair for model-side work reduction" in baseline_text
+    assert "comparison pair for model-side work reduction" in optimized_text
     assert "disaggregated prefill/decode" in baseline_text
     assert "disaggregated prefill/decode" in optimized_text
     assert "It is not the" in baseline_text
     assert "It is not the" in optimized_text
     assert "chapter's native" in baseline_text
     assert "chapter's native" in optimized_text
-    assert "inference_full` remains a control pair" in readme_text
+    assert "inference_full` remains a comparison pair" in readme_text
     assert "chapter-native exemplars" in readme_text
 
 
@@ -205,18 +205,18 @@ def test_ch13_readme_marks_canonical_vs_informational_variants() -> None:
     assert "memory-goal benchmark" in readme_text
 
 
-def test_persistent_decode_readme_marks_direct_offload_controls_vs_prefetch_overlap() -> None:
+def test_persistent_decode_readme_marks_direct_offload_comparisons_vs_prefetch_overlap() -> None:
     readme_text = (REPO_ROOT / "labs" / "persistent_decode" / "README.md").read_text(encoding="utf-8")
 
     assert "nvlink_offload" in readme_text
     assert "paged_kv_offload" in readme_text
-    assert "transport-control benchmark" in readme_text
+    assert "transport-comparison benchmark" in readme_text
     assert "paged_kv_offload` as a real speed benchmark" in readme_text
     assert "paged_kv_offload_prefetch" in readme_text
     assert "canonical KV-offload overlap claim" in readme_text
 
 
-def test_decode_optimization_readme_marks_decode_pinned_as_control_surface() -> None:
+def test_decode_optimization_readme_marks_decode_pinned_as_comparison_surface() -> None:
     readme_text = (REPO_ROOT / "labs" / "decode_optimization" / "README.md").read_text(encoding="utf-8")
 
     assert "decode_pinned" in readme_text
@@ -234,19 +234,19 @@ def test_training_hotpath_readme_marks_padding_aware_transformer_memory_goal() -
     assert "not by raw speedup" in readme_text
 
 
-def test_cache_aware_disagg_readme_marks_single_gpu_locality_control_contract() -> None:
+def test_cache_aware_disagg_readme_marks_single_gpu_locality_comparison_contract() -> None:
     readme_text = (REPO_ROOT / "labs" / "cache_aware_disagg_inference" / "README.md").read_text(encoding="utf-8")
 
     assert "cache_aware_disagg" in readme_text
-    assert "locality-control benchmark with a local control contract" in readme_text
+    assert "locality-comparison benchmark with a local comparison contract" in readme_text
     assert "cache hit rate, KV transfer volume, and worker affinity" in readme_text
 
 
-def test_train_distributed_readme_marks_single_gpu_fsdp2_as_control_surface() -> None:
+def test_train_distributed_readme_marks_single_gpu_fsdp2_as_comparison_surface() -> None:
     readme_text = (REPO_ROOT / "labs" / "train_distributed" / "README.md").read_text(encoding="utf-8")
 
     assert "single-GPU `fsdp2` on `b200`" in readme_text
-    assert "supplementary control surface with a local control contract" in readme_text
+    assert "supplementary comparison surface with a local comparison contract" in readme_text
     assert "multi-GPU `2x_b200` contract" in readme_text
 
 

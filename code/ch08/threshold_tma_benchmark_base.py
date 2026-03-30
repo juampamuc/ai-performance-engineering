@@ -10,7 +10,7 @@ from ch08.threshold_benchmark_base import ThresholdBenchmarkBase
 
 
 class ThresholdBenchmarkBaseTMA(ThresholdBenchmarkBase):
-    """Blackwell bridge control for the threshold kernel on a TMA path.
+    """Blackwell bridge comparison for the threshold kernel on a TMA path.
 
     The chapter-native warp-divergence story lives in `threshold`. This pair keeps
     the same threshold workload shape but swaps in a TMA-backed launch path so the
@@ -33,7 +33,7 @@ class ThresholdBenchmarkBaseTMA(ThresholdBenchmarkBase):
         metrics = super().get_custom_metrics() or {}
         metrics.update(
             {
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
                 "story.bridge_to_ch10": 1.0,
             }
@@ -42,4 +42,4 @@ class ThresholdBenchmarkBaseTMA(ThresholdBenchmarkBase):
 
     def get_optimization_goal(self) -> str:
         """Keep the TMA bridge pair runnable without headline speed gating."""
-        return "control"
+        return "comparison"

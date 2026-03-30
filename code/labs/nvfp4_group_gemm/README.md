@@ -24,9 +24,9 @@ Fresh portable B200 single-target reruns on this host showed one clear winner, t
 | --- | ---: | ---: | ---: | --- |
 | `nvfp4_group_gemm` | `0.614 ms` | `0.595 ms` | `1.03x` | canonical local-contract speed benchmark |
 | `nvfp4_group_gemm_g2_n3072_k4096` | `0.615 ms` | `0.594 ms` | `1.04x` | promoted shape companion (same routed workload as the front-door target) |
-| `nvfp4_group_gemm_g8_n7168_k2048` | `2.080 ms` | `2.019 ms` | `1.03x` | supplementary control benchmark |
-| `nvfp4_group_gemm_g8_n4096_k7168` | `2.408 ms` | `2.379 ms` | `1.01x` | supplementary control benchmark |
-| `nvfp4_group_gemm_g2_n4096_k1536` | `0.352 ms` | `0.352 ms` | `1.00x` | supplementary control benchmark |
+| `nvfp4_group_gemm_g8_n7168_k2048` | `2.080 ms` | `2.019 ms` | `1.03x` | supplementary comparison benchmark |
+| `nvfp4_group_gemm_g8_n4096_k7168` | `2.408 ms` | `2.379 ms` | `1.01x` | supplementary comparison benchmark |
+| `nvfp4_group_gemm_g2_n4096_k1536` | `0.352 ms` | `0.352 ms` | `1.00x` | supplementary comparison benchmark |
 
 The older strict all-case snapshots in `artifacts/runs/20260302_rerun_all_labschapters_strict/` are still useful historical router evidence, but they are not the current runnable truth for this harness surface on this host. The former competition `caseN` numbering is retired from the public benchmark targets; the canonical front-door target now points at the isolated single-target winner `g2_n3072_k4096`.
 
@@ -45,7 +45,7 @@ python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile minimal
 
 ## Learning Goals
 - Keep grouped-GEMM tuning grounded in repeated verified shape-by-shape evidence.
-- Keep non-winning shapes visible as supplementary control benchmarks without forcing them to carry the lab's canonical speed claim on every host.
+- Keep non-winning shapes visible as supplementary comparison benchmarks without forcing them to carry the lab's canonical speed claim on every host.
 - Retire the old competition `caseN` labels from the public harness surface.
 
 ## Directory Layout
@@ -68,10 +68,10 @@ python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile minimal
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/nvfp4_group_gemm:nvfp4_group_gemm --profile minimal` should keep the promoted `g2_n3072_k4096` route verification-clean.
-- `nvfp4_group_gemm_g8_n4096_k7168`, `nvfp4_group_gemm_g8_n7168_k2048`, and `nvfp4_group_gemm_g2_n4096_k1536` remain supplementary control benchmarks; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.
+- `nvfp4_group_gemm_g8_n4096_k7168`, `nvfp4_group_gemm_g8_n7168_k2048`, and `nvfp4_group_gemm_g2_n4096_k1536` remain supplementary comparison benchmarks; use the ABAB/router tooling when deciding whether any of them should become canonical speed-claim targets again.
 - Old `caseN` target names should no longer appear in `python -m cli.aisp bench list-targets --chapter labs/nvfp4_group_gemm`.
 - Default changes should still be gated by the stricter ABAB/verify process documented in the codebase notes, not by a single benchmark run.
 
 ## Notes
 - This lab is intentionally stricter than a normal benchmark pair because grouped-GEMM route tuning is unusually noise-prone.
-- The benchmark harness now exposes one canonical front-door speed target, the explicit promoted-shape companion, and three supplementary control shapes on this host-aligned repo surface, because fresh portable B200 single-target reruns showed `g2_n3072_k4096` as the clearest isolated winner.
+- The benchmark harness now exposes one canonical front-door speed target, the explicit promoted-shape companion, and three supplementary comparison shapes on this host-aligned repo surface, because fresh portable B200 single-target reruns showed `g2_n3072_k4096` as the clearest isolated winner.

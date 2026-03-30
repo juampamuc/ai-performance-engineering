@@ -1,7 +1,7 @@
 # Chapter 14 - Compiler & Triton Optimization
 
 ## Summary
-Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness. The repo chapter focuses on CUDA/Triton/Inductor paths; the broader XLA backend discussion from the manuscript is not represented as runnable chapter code here. The explicit `cublas_vs_cutlass` pair remains an informational control surface rather than a chapter-native speed-claim benchmark.
+Highlights compiler-driven acceleration: `torch.compile` workflows, Triton kernels, CUTLASS/TMA experimentation, and quantization-aware communication, all validated through the shared harness. The repo chapter focuses on CUDA/Triton/Inductor paths; the broader XLA backend discussion from the manuscript is not represented as runnable chapter code here. The explicit `cublas_vs_cutlass` pair remains an informational comparison surface rather than a chapter-native speed-claim benchmark.
 
 ## Problem
 Chapter 14 is where compiler claims have to turn into measured wins. The useful question is not "can `torch.compile` or Triton work?" but "which compiler-driven optimizations still deliver real latency and memory reductions on current Blackwell-class hardware?"
@@ -59,7 +59,7 @@ python -m cli.aisp bench run --targets ch14:triton_persistent --profile deep_div
 | Path | Description |
 | --- | --- |
 | `baseline_model_compile_reduced_precision.py`, `optimized_model_compile_reduced_precision.py`, `model_eager_common.py`, `torch_compile_large_model.py`, `torch_compiler_examples.py`, `training_large_model_1_5x.py` | Model-scale examples showcasing the eager-vs-compiled reduced-precision pair, shared transformer scaffolding, compile modes, guard rails, and large-model sanity tests. |
-| `baseline_cublas_vs_cutlass.py`, `optimized_cublas_vs_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py` | Explicit cuBLAS-vs-CUTLASS control pair plus advanced TMA/NVSHMEM Triton kernels. The control pair remains informational rather than a canonical chapter speed claim. |
+| `baseline_cublas_vs_cutlass.py`, `optimized_cublas_vs_cutlass.py`, `triton_examples.py`, `triton_tma_blackwell.py`, `triton_fp8_advanced.py`, `triton_nvshmem_example.py` | Explicit cuBLAS-vs-CUTLASS comparison pair plus advanced TMA/NVSHMEM Triton kernels. The comparison pair remains informational rather than a canonical chapter speed claim. |
 | `baseline_attention_eager_sdpa.py`, `optimized_attention_eager_sdpa.py`, `baseline_flex_attention_sparse.py`, `optimized_flex_attention_sparse.py`, `flex_attention_sparse_demo.py` | Eager-vs-SDPA attention plus FlexAttention sparse workloads that validate custom score mods, masks, sparsity, and compile speedups. |
 | `baseline_nccl_quantization.py`, `optimized_nccl_quantization.py`, `deepseek_innovation_l2_bypass.py` | Quantization-aware communication and the DeepSeek-inspired L2 bypass experiment. |
 | `baseline_regional_triton.py`, `optimized_regional_triton.py`, `inspect_compiled_code.py`, `benchmark_tma_configs.py` | Regional compilation and TMA parameter sweeps for auto-tuning generated kernels. |
@@ -85,4 +85,4 @@ python -m cli.aisp bench run --targets ch14 --profile minimal
 - `inspect_compiled_code.py` dumps Triton/PTX/Graph captures for any target; edit the helper to introspect new workloads.
 - `requirements.txt` includes nightly Triton + PyTorch wheels to keep compiler features aligned with the CUDA 13 toolchain.
 - For repo-native supporting examples that fill the training hot-path gaps without changing this chapter's primary compile narrative, see `labs/training_hotpath`.
-- `cublas_vs_cutlass` is a supplementary control pair. Chapter-native performance claims stay anchored on `model_compile_reduced_precision`, `regional_triton`, and `triton_persistent`.
+- `cublas_vs_cutlass` is a supplementary comparison pair. Chapter-native performance claims stay anchored on `model_compile_reduced_precision`, `regional_triton`, and `triton_persistent`.

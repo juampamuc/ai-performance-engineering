@@ -16,15 +16,6 @@ Naive prefill/decode disaggregation makes the topology look correct while still 
 - warm prefixes stay resident on the same logical decode worker
 - the benchmark reports cache hit rate, KV transfer volume, worker switches, and TTFT/TPOT so the win is explained, not just timed
 
-## Measured Delta
-Representative portable single-GPU result from `artifacts/runs/20260328_truth_cache_aware_disagg_control_clean/`:
-
-| Target | Baseline | Optimized | Measured delta |
-| --- | ---: | ---: | ---: |
-| `cache_aware_disagg` | `145.545 ms` | `146.159 ms` | `1.00x` speed, `92.3%` lower KV transfer, `4.5 -> 0.0` worker switches/request |
-
-Treat single-GPU `cache_aware_disagg` as a locality-control benchmark with a local control contract. The stable value on one GPU is the cache-hit, KV-transfer, and worker-affinity improvement; the timed delta is recorded, but it is not a trustworthy headline speed gate on this host.
-
 ## Learning Goals
 - Compare cache-unaware round-robin handoff against cache-aware decode affinity.
 - Make temporal and spatial locality visible through custom metrics rather than narrative alone.
@@ -49,9 +40,10 @@ python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference --profi
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference --profile minimal` compares the cache-unaware and cache-aware paths through the standard harness.
 - `python -m cli.aisp bench run --targets labs/cache_aware_disagg_inference:cache_aware_disagg --profile minimal` emits the round-robin baseline and cache-affine optimized metrics through one harness artifact set.
-- The cache-aware path should report lower KV transfer volume and fewer worker switches than the round-robin control on the same warm/cold request mix.
-- The single-GPU target is a locality-control benchmark; judge it by cache hit rate, KV transfer volume, and worker affinity before raw wall-clock speedup.
+- The cache-aware path should report lower KV transfer volume and fewer worker switches than the round-robin baseline on the same warm/cold request mix.
 
 ## Notes
 - This lab is intentionally a logical reproduction of the scheduler/caching story, not a full serving engine.
-- The defaults model chunked prefill, warm/cold requests, and a 2P1D-style control problem without forcing an 8-GPU host.
+- Treat single-GPU `cache_aware_disagg` as a locality-comparison benchmark with a local comparison contract. The stable value on one GPU is the cache hit rate, KV transfer volume, and worker affinity improvement; the timed delta is recorded, but it is not a trustworthy headline speed gate on this host.
+- Judge the single-GPU target by cache hit rate, KV transfer volume, and worker affinity before raw wall-clock speedup.
+- The defaults model chunked prefill, warm/cold requests, and a 2P1D-style comparison problem without forcing an 8-GPU host.

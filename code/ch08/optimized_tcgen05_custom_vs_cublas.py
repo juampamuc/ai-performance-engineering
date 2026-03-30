@@ -1,4 +1,4 @@
-"""Optimized side of the tcgen05-versus-cuBLAS bridge control."""
+"""Optimized side of the tcgen05-versus-cuBLAS bridge comparison."""
 
 from __future__ import annotations
 

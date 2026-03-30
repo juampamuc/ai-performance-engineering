@@ -11,7 +11,7 @@
         "best_optimization_speedup": 1.9122807017543857,
         "best_optimization_technique": "optimized_atomic_reduction",
         "best_optimization_time_ms": 0.019,
-        "optimization_goal": "speed"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 148.125,
@@ -1563,7 +1563,7 @@
         "best_optimization_speedup": 1.033373002282355,
         "best_optimization_technique": "optimized_tcgen05_warp_specialization_cutlass",
         "best_optimization_time_ms": 1.7212818073776532,
-        "optimization_goal": "speed"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 1812.125,

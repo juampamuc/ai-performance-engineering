@@ -18,7 +18,7 @@
         "best_optimization_speedup": 3.035830543207117,
         "best_optimization_technique": "optimized_ai_optimization",
         "best_optimization_time_ms": 0.353955146140204,
-        "optimization_goal": "control"
+        "optimization_goal": "speed"
       },
       "metrics": {
         "baseline_memory_mb": 212.251953125,
@@ -391,7 +391,7 @@
         "precision.nvfp4_enabled": 0.0,
         "story.bridge_to_ch09": 1.0,
         "story.chapter_native_exemplar": 0.0,
-        "story.control_pair": 1.0
+        "story.comparison_pair": 1.0
       },
       "example": "nvfp4_mlp",
       "metadata": {
@@ -403,7 +403,7 @@
         "best_optimization_speedup": 0.9483899066942484,
         "best_optimization_technique": "optimized_nvfp4_mlp",
         "best_optimization_time_ms": 1.1718535221798319,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 2277.28125,
@@ -507,7 +507,7 @@
       "custom_metrics": {
         "story.bridge_to_ch09": 1.0,
         "story.chapter_native_exemplar": 0.0,
-        "story.control_pair": 1.0,
+        "story.comparison_pair": 1.0,
         "tcgen05_custom_vs_cublas.bytes_transferred": 150994944.0,
         "tcgen05_custom_vs_cublas.flops": 68719476736.0,
         "tcgen05_custom_vs_cublas.matrix_k": 512.0,
@@ -524,7 +524,7 @@
         "best_optimization_speedup": 0.1796404636487896,
         "best_optimization_technique": "optimized_tcgen05_custom_vs_cublas",
         "best_optimization_time_ms": 0.710855255879107,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 420.125,
@@ -674,7 +674,7 @@
         "best_optimization_speedup": 22.726608288489388,
         "best_optimization_technique": "optimized_thresholdtma",
         "best_optimization_time_ms": 3.6679748552186147,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 404.125,
@@ -728,7 +728,7 @@
         "best_optimization_speedup": 98.95392447771535,
         "best_optimization_technique": "optimized_thresholdtma",
         "best_optimization_time_ms": 0.132782,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_p75_ms": 13.1265,
@@ -759,7 +759,7 @@
         "baseline_tiling.flops": 1649267441664.0,
         "baseline_tiling.bytes_transferred": 2415919104.0,
         "baseline_tiling.arithmetic_intensity": 682.6666666666666,
-        "story.control_pair": 1.0,
+        "story.comparison_pair": 1.0,
         "story.chapter_native_exemplar": 0.0,
         "story.bridge_to_ch09": 1.0
       },
@@ -773,7 +773,7 @@
         "best_optimization_speedup": 145.00742163988065,
         "best_optimization_technique": "optimized_tiling",
         "best_optimization_time_ms": 3.3232789357503254,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 340.125,
@@ -829,7 +829,7 @@
         "baseline_tiling_tcgen05.matrix_n": 8192.0,
         "story.bridge_to_ch09": 1.0,
         "story.chapter_native_exemplar": 0.0,
-        "story.control_pair": 1.0
+        "story.comparison_pair": 1.0
       },
       "example": "tiling_tcgen05",
       "metadata": {
@@ -841,7 +841,7 @@
         "best_optimization_speedup": 1.0536982273924227,
         "best_optimization_technique": "optimized_tiling_tcgen05",
         "best_optimization_time_ms": 3.9618009757995605,
-        "optimization_goal": "control"
+        "optimization_goal": "comparison"
       },
       "metrics": {
         "baseline_memory_mb": 1047.125,

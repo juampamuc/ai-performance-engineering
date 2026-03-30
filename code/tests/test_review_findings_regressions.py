@@ -125,13 +125,13 @@ def test_ch06_optimized_adaptive_uses_chunk_plan_without_extra_staging_buffers()
         assert forbidden not in optimized_text
 
 
-def test_ch08_bridge_control_pairs_are_explicitly_marked_in_structured_metrics() -> None:
+def test_ch08_bridge_comparison_pairs_are_explicitly_marked_in_structured_metrics() -> None:
     threshold = object.__new__(ThresholdBenchmarkBaseTMA)
     threshold.rows = ThresholdBenchmarkBaseTMA.rows
     threshold.threshold = ThresholdBenchmarkBaseTMA.threshold
     threshold.inner_iterations = ThresholdBenchmarkBaseTMA.inner_iterations
     threshold_metrics = threshold.get_custom_metrics()
-    assert threshold_metrics["story.control_pair"] == 1.0
+    assert threshold_metrics["story.comparison_pair"] == 1.0
     assert threshold_metrics["story.chapter_native_exemplar"] == 0.0
     assert threshold_metrics["story.bridge_to_ch10"] == 1.0
 
@@ -142,7 +142,7 @@ def test_ch08_bridge_control_pairs_are_explicitly_marked_in_structured_metrics()
     tiling.inner_iterations = TilingBenchmarkBase.inner_iterations
     tiling.nvtx_label = "tiling"
     tiling_metrics = tiling.get_custom_metrics()
-    assert tiling_metrics["story.control_pair"] == 1.0
+    assert tiling_metrics["story.comparison_pair"] == 1.0
     assert tiling_metrics["story.chapter_native_exemplar"] == 0.0
     assert tiling_metrics["story.bridge_to_ch09"] == 1.0
 
@@ -151,14 +151,14 @@ def test_ch08_bridge_control_pairs_are_explicitly_marked_in_structured_metrics()
     tcgen05.shared_dim = Tcgen05CustomVsCublasBase.shared_dim
     tcgen05.matrix_cols = Tcgen05CustomVsCublasBase.matrix_cols
     tcgen05_metrics = tcgen05.get_custom_metrics()
-    assert tcgen05_metrics["story.control_pair"] == 1.0
+    assert tcgen05_metrics["story.comparison_pair"] == 1.0
     assert tcgen05_metrics["story.chapter_native_exemplar"] == 0.0
     assert tcgen05_metrics["story.bridge_to_ch09"] == 1.0
 
     baseline_nvfp4_text = _read("ch08/baseline_nvfp4_mlp.py")
     optimized_nvfp4_text = _read("ch08/optimized_nvfp4_mlp.py")
     for source in (baseline_nvfp4_text, optimized_nvfp4_text):
-        assert '"story.control_pair": 1.0' in source
+        assert '"story.comparison_pair": 1.0' in source
         assert '"story.chapter_native_exemplar": 0.0' in source
         assert '"story.bridge_to_ch09": 1.0' in source
 
@@ -189,7 +189,7 @@ def test_ch08_loop_unrolling_binaries_share_identical_input_initialization() -> 
     assert "constexpr float kWeightBase = 0.5f" in common_text
 
 
-def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -> None:
+def test_ch08_readme_calls_out_bridge_comparisons_and_historical_tcgen05_naming() -> None:
     readme_text = _read("ch08/README.md")
     baseline_tcgen05_text = _read("ch08/baseline_tcgen05_custom_vs_cublas.py")
     optimized_tcgen05_text = _read("ch08/optimized_tcgen05_custom_vs_cublas.py")
@@ -197,10 +197,10 @@ def test_ch08_readme_calls_out_bridge_controls_and_historical_tcgen05_naming() -
     assert "chapter-native exemplars" in readme_text
     assert "`thresholdtma`, `tiling`, `tiling_tcgen05`, and `nvfp4_mlp`" in readme_text
     assert "custom-versus-library comparison target" in readme_text
-    assert "supplementary control benchmark with a local contract" in readme_text
+    assert "supplementary comparison benchmark with a local contract" in readme_text
     assert "matmul_tiled_fast" in readme_text
     assert "historical baseline/optimized filenames" not in readme_text
-    assert "tcgen05-versus-cuBLAS bridge control" in baseline_tcgen05_text
+    assert "tcgen05-versus-cuBLAS bridge comparison" in baseline_tcgen05_text
     assert "Vendor cuBLAS reference side of the comparison pair." in baseline_tcgen05_text
     assert "Custom tcgen05 kernel side of the comparison pair." in optimized_tcgen05_text
 
@@ -233,7 +233,7 @@ def test_ch04_gradient_fusion_batches_reductions_per_timed_call() -> None:
     assert "accum.add_(tensor.sum())" in common_text
 
 
-def test_ch08_tiling_bridge_control_batches_enough_inner_iterations() -> None:
+def test_ch08_tiling_bridge_comparison_batches_enough_inner_iterations() -> None:
     tiling_base = _read("ch08/tiling_benchmark_base.py")
 
     assert "inner_iterations: int = 12" in tiling_base
@@ -245,11 +245,11 @@ def test_occupancy_tuning_low_warp_reference_schedule_uses_local_contract() -> N
 
     assert "proton_matmul_bm64_bn64_bk32_nw2" not in INFORMATIONAL_BENCHMARKS.get("occupancy_tuning", set())
     assert "verifying Proton vs Nsight agreement" in schedule_text
-    assert "supplementary control schedule benchmark" in readme_text
+    assert "supplementary comparison schedule benchmark" in readme_text
     assert "canonical speed claims stay on" in readme_text
 
 
-def test_nvfp4_group_gemm_shape_surface_uses_frontdoor_and_control_companions() -> None:
+def test_nvfp4_group_gemm_shape_surface_uses_frontdoor_and_comparison_companions() -> None:
     readme_text = _read("labs/nvfp4_group_gemm/README.md")
 
     assert "nvfp4_group_gemm" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
@@ -257,7 +257,7 @@ def test_nvfp4_group_gemm_shape_surface_uses_frontdoor_and_control_companions() 
     assert "nvfp4_group_gemm_g2_n3072_k4096" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
     assert "nvfp4_group_gemm_g2_n4096_k1536" not in INFORMATIONAL_BENCHMARKS.get("nvfp4_group_gemm", set())
     assert "canonical local-contract speed benchmark" in readme_text
-    assert "supplementary control benchmark" in readme_text
+    assert "supplementary comparison benchmark" in readme_text
     assert "older strict all-case snapshots" in readme_text
     assert "former competition `caseN` numbering is retired" in readme_text
 
@@ -977,7 +977,7 @@ def test_ch18_and_fullstack_pairs_keep_semantics_fixed() -> None:
     assert 'route_mode="uniform"' in moe_common
     assert 'route_mode="topology_aware" if optimized else "uniform"' not in moe_common
     assert "cluster_gemm_tcgen05" not in INFORMATIONAL_BENCHMARKS.get("fullstack_cluster", set())
-    assert "supplementary control benchmark with a local contract" in fullstack_readme
+    assert "supplementary comparison benchmark with a local contract" in fullstack_readme
     assert "canonical speed claim stays on `cluster_gemm`" in fullstack_readme
 
 

@@ -15,14 +15,14 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 
 
 class BaselinePcieStagingBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Supplementary control pair: pageable, blocking host staging over PCIe."""
+    """Supplementary comparison pair: pageable, blocking host staging over PCIe."""
 
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "variant_role": "baseline",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": (
+        "comparison_reason": (
             "This single-GPU pair isolates pageable versus pinned host staging. "
             "It is not an NVLink fabric benchmark."
         ),
@@ -109,7 +109,7 @@ class BaselinePcieStagingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         metrics.update(
             {
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
                 "pcie.host_buffer_pinned": 0.0,
                 "pcie.non_blocking_copy": 0.0,

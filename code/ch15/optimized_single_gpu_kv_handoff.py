@@ -1,4 +1,4 @@
-"""Optimized single-GPU KV-handoff control benchmark."""
+"""Optimized single-GPU KV-handoff comparison benchmark."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from ch15.disaggregated_inference_single_common import (
 )
 
 OPTIMIZED_STORY_METADATA = {
-    "pair_role": "control",
+    "pair_role": "comparison",
     "variant_role": "optimized",
     "chapter_alignment": "supplementary",
     "chapter_native_exemplar": False,
-    "control_reason": (
+    "comparison_reason": (
         "Simulates single-GPU KV handoff to isolate host-staged versus device-resident "
         "cache movement. It is not the chapter-native multi-GPU disaggregated serving benchmark."
     ),
@@ -31,4 +31,3 @@ def get_benchmark() -> BaseBenchmark:
     )
     bench.story_metadata = dict(OPTIMIZED_STORY_METADATA)
     return attach_benchmark_metadata(bench, __file__)
-

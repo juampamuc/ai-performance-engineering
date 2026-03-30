@@ -27,7 +27,7 @@ Representative strict result from `artifacts/runs/20260302_full_strict_chapter_l
 
 The useful split here is that `cluster_gemm` demonstrates the big end-to-end kernel win, while `cluster_gemm_tcgen05` is the fine-grained tcgen05 follow-up where the remaining headroom is much smaller.
 
-Treat `cluster_gemm_tcgen05` as a supplementary informational control surface. It is still useful for tcgen05 profiling and regression tracking, but the lab's canonical speed claim stays on `cluster_gemm`.
+Treat `cluster_gemm_tcgen05` as a supplementary comparison benchmark with a local contract. It is still useful for tcgen05 profiling and regression tracking, but the lab's canonical speed claim stays on `cluster_gemm`.
 
 ## Profiler Evidence
 ```bash
@@ -82,4 +82,4 @@ python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal
 - `capstone_extension.py` caches builds under `~/.cache/torch_extensions`; run `python cleanup.py --include-extensions` when switching CUDA versions.
 - Single-GPU `moe_hybrid_ep` benchmark runs measure `HybridEPTrainer.run_step()` in-process so the timing reflects the optimizer step instead of single-rank launcher overhead; multi-rank runs still use `torchrun`.
 - Canonical hybrid-EP comparisons now keep the same default routing mode; use `--route-mode topology_aware` when you want that alternate behavior to be visible instead of relying on a silent default.
-- `cluster_gemm_tcgen05` is an informational control surface; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.
+- `cluster_gemm_tcgen05` is a supplementary comparison benchmark with a local contract; use `cluster_gemm` when you want the lab's canonical cluster-GEMM speed claim.

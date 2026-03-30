@@ -1,6 +1,6 @@
-"""Baseline control GEMM that serializes many small launches.
+"""Baseline comparison GEMM that serializes many small launches.
 
-This is a Chapter 3 host/runtime control workload rather than a NUMA-specific
+This is a Chapter 3 host/runtime comparison workload rather than a NUMA-specific
 kernel study. It keeps the math fixed while fragmenting the launch pattern so
 host-side scheduling overhead is measurable.
 """
@@ -16,14 +16,14 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
 class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Control workload with many small GEMM launches."""
+    """Comparison workload with many small GEMM launches."""
 
     story_metadata = {
-        "pair_role": "control",
+        "pair_role": "comparison",
         "variant_role": "baseline",
         "chapter_alignment": "supplementary",
         "chapter_native_exemplar": False,
-        "control_reason": (
+        "comparison_reason": (
             "Quantifies Chapter 3 host/runtime launch overhead without claiming a "
             "NUMA-local math-kernel optimization."
         ),
@@ -129,7 +129,7 @@ class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         metrics.update(
             {
-                "story.control_pair": 1.0,
+                "story.comparison_pair": 1.0,
                 "story.chapter_native_exemplar": 0.0,
                 "launch.gemm_calls_per_iteration": float(self.num_blocks),
                 "launch.block_k": float(self.block_size),
@@ -138,8 +138,8 @@ class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return metrics
 
     def get_optimization_goal(self) -> str:
-        """Keep the host/runtime GEMM pair as a supplementary control workload."""
-        return "control"
+        """Keep the host/runtime GEMM pair as a supplementary comparison workload."""
+        return "comparison"
 
     def validate_result(self) -> Optional[str]:
         if self.left is None or self.right is None:
