@@ -6015,7 +6015,7 @@ ENTRIES["labs/moe_cuda"] = lab_entry(
     title="Lab - CUDA MoE Decode Toolkit",
     summary=dedent(
         """\
-        Implements mixture-of-experts decode helpers directly in CUDA: decode kernels, KV-transfer graphs, router policies, and validation math so you can iterate on Blackwell-friendly pipelines."""
+        Implements mixture-of-experts decode helpers directly in CUDA: decode kernels, KV-transfer overlap/graph variants, router policies, and validation math so you can iterate on Blackwell-friendly pipelines."""
     ),
     lead_sections=[
         MarkdownSection(
@@ -6039,7 +6039,7 @@ ENTRIES["labs/moe_cuda"] = lab_entry(
             dedent(
                 """\
                 - staged decode kernels
-                - graph-assisted KV transfer
+                - overlapped and graph-assisted KV transfer
                 - backend and router kernels tuned for Blackwell-friendly execution"""
             ),
         ),
@@ -6052,11 +6052,12 @@ ENTRIES["labs/moe_cuda"] = lab_entry(
                 | Target | Baseline | Optimized | Measured delta |
                 | --- | ---: | ---: | ---: |
                 | `decode_attention` | `0.259 ms` | `0.207 ms` | `1.25x` |
-                | `kv_transfer` | `1.224 ms` | `0.315 ms` | `3.88x` |
+                | `kv_transfer` | `1.224 ms` | `1.085 ms` | `1.13x` |
+                | `kv_transfer_graphs` | `1.224 ms` | `0.315 ms` | `3.88x` |
                 | `moe_backend_selection` | `1.747 ms` | `0.308 ms` | `5.67x` |
                 | `router` | `67.265 ms` | `8.674 ms` | `7.75x` |
 
-                That spread is the point of the lab. Not every MoE subsystem gets the same win, and the router/backend work is where the biggest local payoff is showing up."""
+                That spread is the point of the lab. Not every MoE subsystem gets the same win: overlap-only KV transfer is a modest directional step, while the graphed replay path removes most of the launch overhead. The router/backend work is still where the biggest local payoff is showing up."""
             ),
         ),
         MarkdownSection(

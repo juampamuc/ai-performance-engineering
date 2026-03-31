@@ -108,60 +108,6 @@
       },
       "type": "python"
     },
-    "kv_transfer": {
-      "example": "kv_transfer",
-      "metadata": {
-        "best_memory_savings_pct": -3.5404498088603416,
-        "best_memory_savings_ratio": 0.9658061191022818,
-        "best_optimization": "graphs",
-        "best_optimization_file": "optimized_kv_transfer_graphs.py",
-        "best_optimization_memory_mb": 208.427734375,
-        "best_optimization_speedup": 13.450724220842279,
-        "best_optimization_technique": "graphs",
-        "best_optimization_time_ms": 0.2510843584763593,
-        "optimization_goal": "speed"
-      },
-      "metrics": {
-        "baseline_memory_mb": 201.30078125,
-        "baseline_p75_ms": 3.6606719493865967,
-        "baseline_throughput.bytes_per_s": null,
-        "baseline_throughput.custom_unit_name": null,
-        "baseline_throughput.custom_unit_per_s": null,
-        "baseline_throughput.goodput": null,
-        "baseline_throughput.latency_ms": 3.3772664620326114,
-        "baseline_throughput.requests_per_s": 9475.118519591364,
-        "baseline_throughput.samples_per_s": null,
-        "baseline_throughput.schemaVersion": "1.0",
-        "baseline_throughput.tokens_per_s": 2425630.341015389,
-        "baseline_time_ms": 3.3772664620326114,
-        "best_memory_savings_pct": -3.5404498088603416,
-        "best_memory_savings_ratio": 0.9658061191022818,
-        "best_optimized_memory_mb": 208.427734375,
-        "best_optimized_p75_ms": 0.2560639977455139,
-        "best_optimized_speedup": 13.450724220842279,
-        "best_optimized_throughput.bytes_per_s": null,
-        "best_optimized_throughput.custom_unit_name": null,
-        "best_optimized_throughput.custom_unit_per_s": null,
-        "best_optimized_throughput.goodput": null,
-        "best_optimized_throughput.latency_ms": 0.2510843584763593,
-        "best_optimized_throughput.requests_per_s": 127447.20616681881,
-        "best_optimized_throughput.samples_per_s": null,
-        "best_optimized_throughput.schemaVersion": "1.0",
-        "best_optimized_throughput.tokens_per_s": 32626484.778705616,
-        "best_optimized_time_ms": 0.2510843584763593,
-        "best_speedup": 13.450724220842279,
-        "is_regression": false
-      },
-      "provenance": {
-        "git_commit": "5d7bc9517fae3fe67d0581ab1380d19a44e6e8fe",
-        "hardware_key": "4x_gb200",
-        "iterations": 20,
-        "profile_name": "none",
-        "timestamp": "2026-02-10T19:14:25.432954",
-        "warmup_iterations": 5
-      },
-      "type": "python"
-    },
     "kv_transfer_graphs": {
       "example": "kv_transfer_graphs",
       "metadata": {

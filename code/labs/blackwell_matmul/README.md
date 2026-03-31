@@ -77,3 +77,4 @@ python -m cli.aisp bench run --targets labs/blackwell_matmul --profile minimal
 ## Notes
 - `run_blackwell_matmul.py` accepts `--variant baseline|pipeline|tma|cluster` plus `--size` to mirror the blog walkthrough.
 - TMA kernels require CUDA 13.0+ and SM100/103 hardware; on GB10 they log a warning and skip execution.
+- For a schedule-design companion to this implementation-heavy matmul lab, see `labs/software_pipelining`, which makes ring-buffer reuse and dependency legality explicit in a smaller benchmark and analyzer surface.
