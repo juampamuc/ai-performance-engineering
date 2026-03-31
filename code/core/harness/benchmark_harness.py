@@ -1948,7 +1948,8 @@ class BaseBenchmark:
         The harness will use this to evaluate success appropriately.
         
         Returns:
-            One of: "speed", "memory", "throughput", "latency", "power"
+            One of: "speed", "memory", "throughput", "latency", "power",
+            or the repo-local "comparison" category.
             Default is "speed" (lower time = better)
             
         Examples:
@@ -1956,6 +1957,8 @@ class BaseBenchmark:
             - "memory": Memory reduction (baseline_memory / optimized_memory)
             - "throughput": Higher is better (optimized_throughput / baseline_throughput)
             - "latency": Lower is better (baseline_latency / optimized_latency)
+            - "comparison": Supplementary comparison surface excluded from
+              headline speed gating and canonical speed-target winner selection
         """
         return "speed"
 

@@ -240,16 +240,67 @@ def _parse_target_extra_args(entries: Optional[List[str]]) -> Dict[str, List[str
     return parsed
 
 
-def _apply_suite_timeout(seconds: Optional[int]) -> None:
-    """Install a SIGALRM to stop the suite after a timeout."""
+def _apply_suite_timeout(seconds: Optional[int]):
+    """Install a scoped SIGALRM timeout and return a restore callback."""
+    sigalrm = getattr(signal, "SIGALRM", None)
+    if sigalrm is None:
+        return lambda: None
+
+    previous_handler = signal.getsignal(sigalrm)
+    previous_delay = 0.0
+    previous_interval = 0.0
+    use_itimer = all(
+        hasattr(signal, attr) for attr in ("getitimer", "setitimer", "ITIMER_REAL")
+    )
+    if use_itimer:
+        try:
+            previous_delay, previous_interval = signal.getitimer(signal.ITIMER_REAL)
+        except Exception:
+            use_itimer = False
+    elif hasattr(signal, "alarm"):
+        previous_delay = float(signal.alarm(0))
+
+    started_at = time.monotonic()
+
+    def _clear_alarm() -> None:
+        try:
+            if use_itimer:
+                signal.setitimer(signal.ITIMER_REAL, 0.0, 0.0)
+            elif hasattr(signal, "alarm"):
+                signal.alarm(0)
+        except Exception:
+            pass
+
+    def _restore() -> None:
+        elapsed = max(0.0, time.monotonic() - started_at)
+        _clear_alarm()
+        try:
+            signal.signal(sigalrm, previous_handler)
+        except Exception:
+            return
+        remaining_delay = max(0.0, previous_delay - elapsed)
+        try:
+            if use_itimer:
+                if previous_delay > 0.0 or previous_interval > 0.0:
+                    signal.setitimer(signal.ITIMER_REAL, remaining_delay, previous_interval)
+            elif hasattr(signal, "alarm") and previous_delay > 0.0:
+                signal.alarm(max(0, int(remaining_delay)))
+        except Exception:
+            pass
+
+    _clear_alarm()
     if seconds is None or seconds <= 0:
-        return
+        return _restore
 
     def _on_timeout(signum, frame):
         raise TimeoutError(f"Benchmark suite exceeded timeout of {seconds} seconds")
 
-    signal.signal(signal.SIGALRM, _on_timeout)
-    signal.alarm(seconds)
+    signal.signal(sigalrm, _on_timeout)
+    if use_itimer:
+        signal.setitimer(signal.ITIMER_REAL, float(seconds), 0.0)
+    else:
+        signal.alarm(int(seconds))
+    return _restore
 
 
 def _read_progress_payload_for_heartbeat(progress_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -630,478 +681,481 @@ def _execute_benchmarks(
 
     enable_profiling = (profile_type or "none").lower() != "none"
 
-    _apply_suite_timeout(suite_timeout)
+    restore_suite_timeout = _apply_suite_timeout(suite_timeout)
+    try:
 
-    progress_recorder = ProgressRecorder(
-        run_id=artifact_manager.run_id,
-        progress_path=artifact_manager.progress_dir / "run_progress.json",
-    )
-    if progress_recorder.load_warning:
-        logger.warning(progress_recorder.load_warning)
+        progress_recorder = ProgressRecorder(
+            run_id=artifact_manager.run_id,
+            progress_path=artifact_manager.progress_dir / "run_progress.json",
+        )
+        if progress_recorder.load_warning:
+            logger.warning(progress_recorder.load_warning)
+            emit_event(
+                event_logger,
+                logger,
+                "progress_history_unavailable",
+                warning=progress_recorder.load_warning,
+                progress_path=str(progress_recorder.progress_path),
+            )
+        progress_recorder.emit(
+            ProgressEvent(
+                phase="run",
+                phase_index=1,
+                total_phases=2,
+                step="start",
+                step_detail=f"targets={targets or ['all']}",
+                percent_complete=0.0,
+            )
+        )
+        defaults = get_defaults() or BenchmarkDefaults()
+        # Optional per-run GPU clock overrides. These become defaults for all BenchmarkConfig
+        # instances created during this run (including in subprocess isolation).
+        clock_overrides = {}
+        if gpu_sm_clock_mhz is not None:
+            clock_overrides["gpu_sm_clock_mhz"] = int(gpu_sm_clock_mhz)
+        if gpu_mem_clock_mhz is not None:
+            clock_overrides["gpu_mem_clock_mhz"] = int(gpu_mem_clock_mhz)
+        if clock_overrides:
+            defaults = replace(defaults, **clock_overrides)
+            set_defaults(defaults)
+        gpu_state = get_gpu_state(allow_telemetry_failures=portable_mode)
         emit_event(
             event_logger,
             logger,
-            "progress_history_unavailable",
-            warning=progress_recorder.load_warning,
-            progress_path=str(progress_recorder.progress_path),
+            "run_start",
+            targets=targets or ["all"],
+            profile_type=profile_type,
+            ncu_metric_set=ncu_metric_set,
+            ncu_replay_mode=ncu_replay_mode,
+            timeout_multiplier=timeout_multiplier,
+            nsys_timeout_seconds=nsys_timeout_seconds,
+            ncu_timeout_seconds=ncu_timeout_seconds,
+            validity_profile=validity_profile,
+            allow_virtualization=allow_virtualization,
+            allow_foreign_gpu_processes=allow_foreign_gpu_processes,
+            update_expectations=update_expectations,
+            allow_portable_expectations_update=allow_portable_expectations_update,
+            allow_mixed_provenance=allow_mixed_provenance,
+            artifacts_dir=str(artifact_manager.run_dir),
+            log_file=str(log_file),
+            events_file=str(artifact_manager.get_log_path("benchmark_events.jsonl")),
+            gpu_clock_lock_enabled=defaults.lock_gpu_clocks,
+            gpu_sm_clock_mhz=defaults.gpu_sm_clock_mhz,
+            gpu_mem_clock_mhz=defaults.gpu_mem_clock_mhz,
+            gpu_app_clock_mhz=gpu_state.get("gpu_app_clock_mhz"),
+            memory_app_clock_mhz=gpu_state.get("memory_app_clock_mhz"),
+            gpu_clock_mhz=gpu_state.get("gpu_clock_mhz"),
+            memory_clock_mhz=gpu_state.get("memory_clock_mhz"),
         )
-    progress_recorder.emit(
-        ProgressEvent(
-            phase="run",
-            phase_index=1,
-            total_phases=2,
-            step="start",
-            step_detail=f"targets={targets or ['all']}",
-            percent_complete=0.0,
-        )
-    )
-    defaults = get_defaults() or BenchmarkDefaults()
-    # Optional per-run GPU clock overrides. These become defaults for all BenchmarkConfig
-    # instances created during this run (including in subprocess isolation).
-    clock_overrides = {}
-    if gpu_sm_clock_mhz is not None:
-        clock_overrides["gpu_sm_clock_mhz"] = int(gpu_sm_clock_mhz)
-    if gpu_mem_clock_mhz is not None:
-        clock_overrides["gpu_mem_clock_mhz"] = int(gpu_mem_clock_mhz)
-    if clock_overrides:
-        defaults = replace(defaults, **clock_overrides)
-        set_defaults(defaults)
-    gpu_state = get_gpu_state(allow_telemetry_failures=portable_mode)
-    emit_event(
-        event_logger,
-        logger,
-        "run_start",
-        targets=targets or ["all"],
-        profile_type=profile_type,
-        ncu_metric_set=ncu_metric_set,
-        ncu_replay_mode=ncu_replay_mode,
-        timeout_multiplier=timeout_multiplier,
-        nsys_timeout_seconds=nsys_timeout_seconds,
-        ncu_timeout_seconds=ncu_timeout_seconds,
-        validity_profile=validity_profile,
-        allow_virtualization=allow_virtualization,
-        allow_foreign_gpu_processes=allow_foreign_gpu_processes,
-        update_expectations=update_expectations,
-        allow_portable_expectations_update=allow_portable_expectations_update,
-        allow_mixed_provenance=allow_mixed_provenance,
-        artifacts_dir=str(artifact_manager.run_dir),
-        log_file=str(log_file),
-        events_file=str(artifact_manager.get_log_path("benchmark_events.jsonl")),
-        gpu_clock_lock_enabled=defaults.lock_gpu_clocks,
-        gpu_sm_clock_mhz=defaults.gpu_sm_clock_mhz,
-        gpu_mem_clock_mhz=defaults.gpu_mem_clock_mhz,
-        gpu_app_clock_mhz=gpu_state.get("gpu_app_clock_mhz"),
-        memory_app_clock_mhz=gpu_state.get("memory_app_clock_mhz"),
-        gpu_clock_mhz=gpu_state.get("gpu_clock_mhz"),
-        memory_clock_mhz=gpu_state.get("memory_clock_mhz"),
-    )
-    heartbeat_stop = threading.Event()
-    stale_progress_seconds = max(60, int(os.environ.get("AISP_STALE_PROGRESS_SECONDS", "900")))
-    stale_phases = {
-        "baseline_nsys",
-        "optimized_nsys",
-        "baseline_ncu",
-        "optimized_ncu",
-        "baseline_torch",
-        "optimized_torch",
-    }
-    # Long high-iteration timing phases can legitimately run for extended periods
-    # without progress timestamp updates. Keep timing stale-abort as explicit opt-in.
-    if os.environ.get("AISP_STALE_WATCH_TIMING", "0").strip().lower() in {"1", "true", "yes", "on"}:
-        stale_phases.update({"baseline_timing", "optimized_timing"})
+        heartbeat_stop = threading.Event()
+        stale_progress_seconds = max(60, int(os.environ.get("AISP_STALE_PROGRESS_SECONDS", "900")))
+        stale_phases = {
+            "baseline_nsys",
+            "optimized_nsys",
+            "baseline_ncu",
+            "optimized_ncu",
+            "baseline_torch",
+            "optimized_torch",
+        }
+        # Long high-iteration timing phases can legitimately run for extended periods
+        # without progress timestamp updates. Keep timing stale-abort as explicit opt-in.
+        if os.environ.get("AISP_STALE_WATCH_TIMING", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            stale_phases.update({"baseline_timing", "optimized_timing"})
 
-    def _snapshot_process_table() -> Dict[int, Tuple[int, str]]:
-        try:
-            proc = subprocess.run(
-                ["ps", "-eo", "pid=,ppid=,cmd="],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-            )
-        except Exception:
-            return {}
-        rows: Dict[int, Tuple[int, str]] = {}
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split(None, 2)
-            if len(parts) < 2:
-                continue
+        def _snapshot_process_table() -> Dict[int, Tuple[int, str]]:
             try:
-                pid = int(parts[0])
-                ppid = int(parts[1])
-            except ValueError:
-                continue
-            cmd = parts[2] if len(parts) > 2 else ""
-            rows[pid] = (ppid, cmd)
-        return rows
-
-    def _descendants_of(root_pid: int, table: Dict[int, Tuple[int, str]]) -> List[Tuple[int, str]]:
-        children: Dict[int, List[int]] = {}
-        for pid, (ppid, _cmd) in table.items():
-            children.setdefault(ppid, []).append(pid)
-        out: List[Tuple[int, str]] = []
-        queue: List[int] = [root_pid]
-        seen: set[int] = set()
-        while queue:
-            current = queue.pop(0)
-            for child in children.get(current, []):
-                if child in seen:
-                    continue
-                seen.add(child)
-                cmd = table.get(child, (0, ""))[1]
-                out.append((child, cmd))
-                queue.append(child)
-        return out
-
-    def _is_profiler_process(cmd: str) -> bool:
-        lower = cmd.lower()
-        return any(
-            token in lower
-            for token in (
-                " ncu ",
-                "nsight-compute",
-                "/ncu",
-                " nsys ",
-                "nsight-systems",
-                "qdstrmimporter",
-                "nsys-tee",
-            )
-        )
-
-    def _is_build_process(cmd: str) -> bool:
-        lower = cmd.lower()
-        return any(
-            token in lower
-            for token in (
-                " nvcc ",
-                "/nvcc",
-                " ptxas ",
-                "/ptxas",
-                " ninja ",
-                "/ninja",
-                " gcc ",
-                " g++ ",
-                " cc1plus ",
-                " cicc ",
-                " fatbinary ",
-                " ld ",
-                " cmake ",
-            )
-        )
-
-    def _terminate_stalled_children() -> Tuple[List[int], List[int], List[int]]:
-        table = _snapshot_process_table()
-        descendants = _descendants_of(os.getpid(), table)
-        profiler_pids = [pid for pid, cmd in descendants if _is_profiler_process(cmd)]
-        build_pids = [pid for pid, cmd in descendants if _is_build_process(cmd)]
-        # Do not kill while profiling/build toolchains are actively running.
-        # These phases can legitimately run for extended periods without
-        # benchmark progress updates.
-        if profiler_pids or build_pids:
-            return [], profiler_pids, build_pids
-        kill_targets: List[int] = []
-        for pid, cmd in descendants:
-            lower = cmd.lower()
-            if "isolated_runner.py" in lower or "core.harness.isolated_runner" in lower:
-                kill_targets.append(pid)
-        killed: List[int] = []
-        for pid in kill_targets:
-            try:
-                pgid = os.getpgid(pid)
-                os.killpg(pgid, signal.SIGTERM)
-                killed.append(pid)
+                proc = subprocess.run(
+                    ["ps", "-eo", "pid=,ppid=,cmd="],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
             except Exception:
-                continue
-        if killed:
-            time.sleep(1.0)
-            for pid in killed:
-                if not Path(f"/proc/{pid}").exists():
+                return {}
+            rows: Dict[int, Tuple[int, str]] = {}
+            for line in (proc.stdout or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) < 2:
                     continue
                 try:
+                    pid = int(parts[0])
+                    ppid = int(parts[1])
+                except ValueError:
+                    continue
+                cmd = parts[2] if len(parts) > 2 else ""
+                rows[pid] = (ppid, cmd)
+            return rows
+
+        def _descendants_of(root_pid: int, table: Dict[int, Tuple[int, str]]) -> List[Tuple[int, str]]:
+            children: Dict[int, List[int]] = {}
+            for pid, (ppid, _cmd) in table.items():
+                children.setdefault(ppid, []).append(pid)
+            out: List[Tuple[int, str]] = []
+            queue: List[int] = [root_pid]
+            seen: set[int] = set()
+            while queue:
+                current = queue.pop(0)
+                for child in children.get(current, []):
+                    if child in seen:
+                        continue
+                    seen.add(child)
+                    cmd = table.get(child, (0, ""))[1]
+                    out.append((child, cmd))
+                    queue.append(child)
+            return out
+
+        def _is_profiler_process(cmd: str) -> bool:
+            lower = cmd.lower()
+            return any(
+                token in lower
+                for token in (
+                    " ncu ",
+                    "nsight-compute",
+                    "/ncu",
+                    " nsys ",
+                    "nsight-systems",
+                    "qdstrmimporter",
+                    "nsys-tee",
+                )
+            )
+
+        def _is_build_process(cmd: str) -> bool:
+            lower = cmd.lower()
+            return any(
+                token in lower
+                for token in (
+                    " nvcc ",
+                    "/nvcc",
+                    " ptxas ",
+                    "/ptxas",
+                    " ninja ",
+                    "/ninja",
+                    " gcc ",
+                    " g++ ",
+                    " cc1plus ",
+                    " cicc ",
+                    " fatbinary ",
+                    " ld ",
+                    " cmake ",
+                )
+            )
+
+        def _terminate_stalled_children() -> Tuple[List[int], List[int], List[int]]:
+            table = _snapshot_process_table()
+            descendants = _descendants_of(os.getpid(), table)
+            profiler_pids = [pid for pid, cmd in descendants if _is_profiler_process(cmd)]
+            build_pids = [pid for pid, cmd in descendants if _is_build_process(cmd)]
+            # Do not kill while profiling/build toolchains are actively running.
+            # These phases can legitimately run for extended periods without
+            # benchmark progress updates.
+            if profiler_pids or build_pids:
+                return [], profiler_pids, build_pids
+            kill_targets: List[int] = []
+            for pid, cmd in descendants:
+                lower = cmd.lower()
+                if "isolated_runner.py" in lower or "core.harness.isolated_runner" in lower:
+                    kill_targets.append(pid)
+            killed: List[int] = []
+            for pid in kill_targets:
+                try:
                     pgid = os.getpgid(pid)
-                    os.killpg(pgid, signal.SIGKILL)
+                    os.killpg(pgid, signal.SIGTERM)
+                    killed.append(pid)
                 except Exception:
                     continue
-        return killed, profiler_pids, build_pids
+            if killed:
+                time.sleep(1.0)
+                for pid in killed:
+                    if not Path(f"/proc/{pid}").exists():
+                        continue
+                    try:
+                        pgid = os.getpgid(pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except Exception:
+                        continue
+            return killed, profiler_pids, build_pids
 
-    stale_state: Dict[str, Any] = {
-        "fingerprint": None,
-        "since": time.time(),
-        "last_logged_sec": 0.0,
-        "abort_triggered": False,
-    }
-    progress_read_state: Dict[str, Any] = {
-        "warning": None,
-        "last_logged_sec": 0.0,
-    }
+        stale_state: Dict[str, Any] = {
+            "fingerprint": None,
+            "since": time.time(),
+            "last_logged_sec": 0.0,
+            "abort_triggered": False,
+        }
+        progress_read_state: Dict[str, Any] = {
+            "warning": None,
+            "last_logged_sec": 0.0,
+        }
 
-    def _heartbeat_loop() -> None:
-        while not heartbeat_stop.is_set():
-            payload, progress_warning = _read_progress_payload_for_heartbeat(progress_recorder.progress_path)
-            now = time.time()
-            if progress_warning:
-                if (
-                    progress_read_state["warning"] != progress_warning
-                    or now - float(progress_read_state["last_logged_sec"]) >= 30.0
-                ):
-                    progress_read_state["warning"] = progress_warning
-                    progress_read_state["last_logged_sec"] = now
-                    emit_event(
-                        event_logger,
-                        logger,
-                        "run_progress_unreadable",
-                        warning=progress_warning,
-                        progress_path=str(progress_recorder.progress_path),
-                        run_id=artifact_manager.run_id,
-                    )
-                    logger.warning(progress_warning)
-            else:
-                progress_read_state["warning"] = None
-            current = payload.get("current") if isinstance(payload, dict) else None
-            if isinstance(current, dict):
-                phase = str(current.get("phase") or "")
-                fingerprint = json.dumps(
-                    {
-                        "phase": phase,
-                        "step": current.get("step"),
-                        "step_detail": current.get("step_detail"),
-                        "timestamp": current.get("timestamp"),
-                    },
-                    sort_keys=True,
-                    default=str,
-                )
-                if stale_state["fingerprint"] != fingerprint:
-                    stale_state["fingerprint"] = fingerprint
-                    stale_state["since"] = now
-                    stale_state["abort_triggered"] = False
-                stagnant_for = now - float(stale_state["since"])
-                if phase in stale_phases and stagnant_for >= stale_progress_seconds:
-                    if now - float(stale_state["last_logged_sec"]) >= 30.0:
-                        stale_state["last_logged_sec"] = now
+        def _heartbeat_loop() -> None:
+            while not heartbeat_stop.is_set():
+                payload, progress_warning = _read_progress_payload_for_heartbeat(progress_recorder.progress_path)
+                now = time.time()
+                if progress_warning:
+                    if (
+                        progress_read_state["warning"] != progress_warning
+                        or now - float(progress_read_state["last_logged_sec"]) >= 30.0
+                    ):
+                        progress_read_state["warning"] = progress_warning
+                        progress_read_state["last_logged_sec"] = now
                         emit_event(
                             event_logger,
                             logger,
-                            "run_stale_progress",
-                            phase=phase,
-                            stagnant_seconds=stagnant_for,
-                            stale_threshold_seconds=stale_progress_seconds,
-                            step=current.get("step"),
-                            step_detail=current.get("step_detail"),
+                            "run_progress_unreadable",
+                            warning=progress_warning,
+                            progress_path=str(progress_recorder.progress_path),
+                            run_id=artifact_manager.run_id,
                         )
-                    if not stale_state["abort_triggered"]:
-                        killed_pids, profiler_pids, build_pids = _terminate_stalled_children()
-                        if profiler_pids or build_pids:
-                            stale_state["since"] = now
+                        logger.warning(progress_warning)
+                else:
+                    progress_read_state["warning"] = None
+                current = payload.get("current") if isinstance(payload, dict) else None
+                if isinstance(current, dict):
+                    phase = str(current.get("phase") or "")
+                    fingerprint = json.dumps(
+                        {
+                            "phase": phase,
+                            "step": current.get("step"),
+                            "step_detail": current.get("step_detail"),
+                            "timestamp": current.get("timestamp"),
+                        },
+                        sort_keys=True,
+                        default=str,
+                    )
+                    if stale_state["fingerprint"] != fingerprint:
+                        stale_state["fingerprint"] = fingerprint
+                        stale_state["since"] = now
+                        stale_state["abort_triggered"] = False
+                    stagnant_for = now - float(stale_state["since"])
+                    if phase in stale_phases and stagnant_for >= stale_progress_seconds:
+                        if now - float(stale_state["last_logged_sec"]) >= 30.0:
+                            stale_state["last_logged_sec"] = now
                             emit_event(
                                 event_logger,
                                 logger,
-                                "run_stale_deferred",
+                                "run_stale_progress",
                                 phase=phase,
                                 stagnant_seconds=stagnant_for,
                                 stale_threshold_seconds=stale_progress_seconds,
+                                step=current.get("step"),
+                                step_detail=current.get("step_detail"),
+                            )
+                        if not stale_state["abort_triggered"]:
+                            killed_pids, profiler_pids, build_pids = _terminate_stalled_children()
+                            if profiler_pids or build_pids:
+                                stale_state["since"] = now
+                                emit_event(
+                                    event_logger,
+                                    logger,
+                                    "run_stale_deferred",
+                                    phase=phase,
+                                    stagnant_seconds=stagnant_for,
+                                    stale_threshold_seconds=stale_progress_seconds,
+                                    profiler_pids=profiler_pids,
+                                    build_pids=build_pids,
+                                    run_id=artifact_manager.run_id,
+                                )
+                                logger.error(
+                                    "Stale progress detected for %.0fs in phase=%s, but active worker pids were found; defer auto-abort (profiler=%s, build=%s).",
+                                    stagnant_for,
+                                    phase,
+                                    profiler_pids,
+                                    build_pids,
+                                )
+                                continue
+                            stale_state["abort_triggered"] = True
+                            emit_event(
+                                event_logger,
+                                logger,
+                                "run_stale_abort",
+                                phase=phase,
+                                stagnant_seconds=stagnant_for,
+                                stale_threshold_seconds=stale_progress_seconds,
+                                killed_pids=killed_pids,
                                 profiler_pids=profiler_pids,
                                 build_pids=build_pids,
                                 run_id=artifact_manager.run_id,
                             )
-                            logger.error(
-                                "Stale progress detected for %.0fs in phase=%s, but active worker pids were found; defer auto-abort (profiler=%s, build=%s).",
-                                stagnant_for,
-                                phase,
-                                profiler_pids,
-                                build_pids,
-                            )
-                            continue
-                        stale_state["abort_triggered"] = True
-                        emit_event(
-                            event_logger,
-                            logger,
-                            "run_stale_abort",
-                            phase=phase,
-                            stagnant_seconds=stagnant_for,
-                            stale_threshold_seconds=stale_progress_seconds,
-                            killed_pids=killed_pids,
-                            profiler_pids=profiler_pids,
-                            build_pids=build_pids,
-                            run_id=artifact_manager.run_id,
-                        )
-                        if killed_pids:
-                            logger.error(
-                                "Stale progress detected for %.0fs in phase=%s; terminated child benchmark pids=%s.",
-                                stagnant_for,
-                                phase,
-                                killed_pids,
-                            )
-                        else:
-                            logger.error(
-                                "Stale progress detected for %.0fs in phase=%s with no killable child; terminating run process.",
-                                stagnant_for,
-                                phase,
-                            )
-                            try:
-                                os.kill(os.getpid(), signal.SIGTERM)
-                            except Exception:
-                                os._exit(143)
-            emit_event(
-                event_logger,
-                logger,
-                "run_heartbeat",
-                progress=current,
-                progress_path=str(progress_recorder.progress_path),
-                progress_warning=progress_warning,
-            )
-            heartbeat_stop.wait(60.0)
-    heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
-    heartbeat_thread.start()
+                            if killed_pids:
+                                logger.error(
+                                    "Stale progress detected for %.0fs in phase=%s; terminated child benchmark pids=%s.",
+                                    stagnant_for,
+                                    phase,
+                                    killed_pids,
+                                )
+                            else:
+                                logger.error(
+                                    "Stale progress detected for %.0fs in phase=%s with no killable child; terminating run process.",
+                                    stagnant_for,
+                                    phase,
+                                )
+                                try:
+                                    os.kill(os.getpid(), signal.SIGTERM)
+                                except Exception:
+                                    os._exit(143)
+                emit_event(
+                    event_logger,
+                    logger,
+                    "run_heartbeat",
+                    progress=current,
+                    progress_path=str(progress_recorder.progress_path),
+                    progress_warning=progress_warning,
+                )
+                heartbeat_stop.wait(60.0)
+        heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+        heartbeat_thread.start()
 
-    all_results = []
-    output_json = artifact_manager.get_result_path("benchmark_test_results.json")
-    for chapter_dir in chapter_dirs:
-        chapter_id = chapter_slug(chapter_dir, active_bench_root, bench_root=active_bench_root)
-        example_filters = chapter_filters.get(chapter_id)
-        only_examples = sorted(example_filters) if example_filters else None
-        result = test_chapter(
-            chapter_dir=chapter_dir,
-            enable_profiling=enable_profiling,
-            profile_type=profile_type if enable_profiling else "none",
-            profile_output_root=artifact_manager.profiles_dir,
-            timeout_multiplier=timeout_multiplier,
-            reproducible=reproducible,
-            cold_start=cold_start,
-            force_synchronize=force_synchronize,
-            iterations=iterations,
-            warmup=warmup,
-            single_gpu=single_gpu,
-            enforce_environment_validation=True,
-            allow_virtualization=allow_virtualization,
-            allow_foreign_gpu_processes=allow_foreign_gpu_processes,
-            validity_profile=validity_profile,
-            only_examples=only_examples,
-            accept_regressions=accept_regressions,
-            update_expectations=update_expectations,
-            allow_portable_expectations_update=allow_portable_expectations_update,
-            allow_mixed_provenance=allow_mixed_provenance,
-            ncu_metric_set=ncu_metric_set,
-            ncu_replay_mode=ncu_replay_mode,
-            pm_sampling_interval=pm_sampling_interval,
-            nsys_timeout_seconds=nsys_timeout_seconds,
-            ncu_timeout_seconds=ncu_timeout_seconds,
-            launch_via=launch_via,
-            nproc_per_node=nproc_per_node,
-            nnodes=nnodes,
-            rdzv_backend=rdzv_backend,
-            rdzv_endpoint=rdzv_endpoint,
-            env_passthrough=torchrun_env,
-            target_extra_args=parsed_extra_args,
-            subprocess_stderr_dir=artifact_manager.logs_dir,
-            only_cuda=only_cuda,
-            only_python=only_python,
-            progress_recorder=progress_recorder,
-            # Verification - both enabled by default for valid benchmark comparisons
-            verify_input=verify_input,
-            verify_output=verify_output,
-            # LLM options
-            llm_analysis=llm_analysis or force_llm,
-            force_llm=force_llm,
-            llm_provider=llm_provider,
-            apply_llm_patches=apply_llm_patches,
-            rebenchmark_llm_patches=rebenchmark_llm_patches,
-            patch_strategy=patch_strategy,
-            llm_patch_retries=llm_patch_retries,
-            use_llm_cache=use_llm_cache,
-            llm_explain=llm_explain,
-            fail_on_no_benchmarks=explicit_targets,
-            event_logger=event_logger,
+        all_results = []
+        output_json = artifact_manager.get_result_path("benchmark_test_results.json")
+        for chapter_dir in chapter_dirs:
+            chapter_id = chapter_slug(chapter_dir, active_bench_root, bench_root=active_bench_root)
+            example_filters = chapter_filters.get(chapter_id)
+            only_examples = sorted(example_filters) if example_filters else None
+            result = test_chapter(
+                chapter_dir=chapter_dir,
+                enable_profiling=enable_profiling,
+                profile_type=profile_type if enable_profiling else "none",
+                profile_output_root=artifact_manager.profiles_dir,
+                timeout_multiplier=timeout_multiplier,
+                reproducible=reproducible,
+                cold_start=cold_start,
+                force_synchronize=force_synchronize,
+                iterations=iterations,
+                warmup=warmup,
+                single_gpu=single_gpu,
+                enforce_environment_validation=True,
+                allow_virtualization=allow_virtualization,
+                allow_foreign_gpu_processes=allow_foreign_gpu_processes,
+                validity_profile=validity_profile,
+                only_examples=only_examples,
+                accept_regressions=accept_regressions,
+                update_expectations=update_expectations,
+                allow_portable_expectations_update=allow_portable_expectations_update,
+                allow_mixed_provenance=allow_mixed_provenance,
+                ncu_metric_set=ncu_metric_set,
+                ncu_replay_mode=ncu_replay_mode,
+                pm_sampling_interval=pm_sampling_interval,
+                nsys_timeout_seconds=nsys_timeout_seconds,
+                ncu_timeout_seconds=ncu_timeout_seconds,
+                launch_via=launch_via,
+                nproc_per_node=nproc_per_node,
+                nnodes=nnodes,
+                rdzv_backend=rdzv_backend,
+                rdzv_endpoint=rdzv_endpoint,
+                env_passthrough=torchrun_env,
+                target_extra_args=parsed_extra_args,
+                subprocess_stderr_dir=artifact_manager.logs_dir,
+                only_cuda=only_cuda,
+                only_python=only_python,
+                progress_recorder=progress_recorder,
+                # Verification - both enabled by default for valid benchmark comparisons
+                verify_input=verify_input,
+                verify_output=verify_output,
+                # LLM options
+                llm_analysis=llm_analysis or force_llm,
+                force_llm=force_llm,
+                llm_provider=llm_provider,
+                apply_llm_patches=apply_llm_patches,
+                rebenchmark_llm_patches=rebenchmark_llm_patches,
+                patch_strategy=patch_strategy,
+                llm_patch_retries=llm_patch_retries,
+                use_llm_cache=use_llm_cache,
+                llm_explain=llm_explain,
+                fail_on_no_benchmarks=explicit_targets,
+                event_logger=event_logger,
+            )
+            all_results.append(result)
+            if output_format in ["json", "both"]:
+                with open(output_json, "w") as f:
+                    json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "results": all_results}, f, indent=2)
+                logger.info(f"JSON results checkpoint saved to: {output_json}")
+
+        progress_recorder.emit(
+            ProgressEvent(
+                phase="run",
+                phase_index=2,
+                total_phases=2,
+                step="complete",
+                percent_complete=100.0,
+            )
         )
-        all_results.append(result)
+
+        manifests = []
+        for result in all_results:
+            manifests.extend(result.get("manifests", []))
+
+        if manifests:
+            with open(artifact_manager.manifest_path, "w") as f:
+                json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "manifests": manifests}, f, indent=2)
+            logger.info(f"Manifest saved to: {artifact_manager.manifest_path}")
+
         if output_format in ["json", "both"]:
             with open(output_json, "w") as f:
                 json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "results": all_results}, f, indent=2)
-            logger.info(f"JSON results checkpoint saved to: {output_json}")
+            logger.info(f"JSON results saved to: {output_json}")
+        if output_format in ["markdown", "both"]:
+            generate_markdown_report(all_results, output_md, bench_root=active_bench_root)
+            logger.info(f"Markdown report saved to: {output_md}")
 
-    progress_recorder.emit(
-        ProgressEvent(
-            phase="run",
-            phase_index=2,
-            total_phases=2,
-            step="complete",
-            percent_complete=100.0,
-        )
-    )
-
-    manifests = []
-    for result in all_results:
-        manifests.extend(result.get("manifests", []))
-
-    if manifests:
-        with open(artifact_manager.manifest_path, "w") as f:
-            json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "manifests": manifests}, f, indent=2)
-        logger.info(f"Manifest saved to: {artifact_manager.manifest_path}")
-
-    if output_format in ["json", "both"]:
-        with open(output_json, "w") as f:
-            json.dump({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "results": all_results}, f, indent=2)
-        logger.info(f"JSON results saved to: {output_json}")
-    if output_format in ["markdown", "both"]:
-        generate_markdown_report(all_results, output_md, bench_root=active_bench_root)
-        logger.info(f"Markdown report saved to: {output_md}")
-
-    def _failed_count(summary: Dict[str, Any]) -> int:
-        summary_failed = int(summary.get("failed", 0) or 0)
-        derived_failed = sum(
-            int(summary.get(key, 0) or 0)
-            for key in (
-                "failed_error",
-                "failed_verification",
-                "failed_regression",
-                "failed_no_speedup",
-                "failed_generic",
-                "failed_other",
+        def _failed_count(summary: Dict[str, Any]) -> int:
+            summary_failed = int(summary.get("failed", 0) or 0)
+            derived_failed = sum(
+                int(summary.get(key, 0) or 0)
+                for key in (
+                    "failed_error",
+                    "failed_verification",
+                    "failed_regression",
+                    "failed_no_speedup",
+                    "failed_generic",
+                    "failed_other",
+                )
             )
-        )
-        return max(summary_failed, derived_failed)
+            return max(summary_failed, derived_failed)
 
-    total_failed = sum(_failed_count(r.get("summary", {})) for r in all_results)
-    total_successful = sum(r.get("summary", {}).get("successful", 0) for r in all_results)
-    total_skipped = sum(r.get("summary", {}).get("total_skipped", 0) for r in all_results)
-    emit_event(
-        event_logger,
-        logger,
-        "run_end",
-        total_chapters=len(all_results),
-        total_successful=total_successful,
-        total_failed=total_failed,
-        total_skipped=total_skipped,
-        output_json=str(output_json),
-        output_markdown=str(output_md) if output_format in ["markdown", "both"] else None,
-    )
-    heartbeat_stop.set()
-    heartbeat_thread.join(timeout=5.0)
-    event_logger.close()
-    if total_failed > 0 and exit_on_failure:
-        sys.exit(1)
-    return {
-        "run_id": artifact_manager.run_id,
-        "artifact_root": str(artifact_manager.run_dir),
-        "output_json": str(output_json),
-        "output_markdown": (
-            str(output_md)
-            if output_format in ["markdown", "both"]
-            else None
-        ),
-        "manifest_path": (
-            str(artifact_manager.manifest_path)
-            if manifests
-            else None
-        ),
-        "bench_root": str(active_bench_root),
-        "total_failed": total_failed,
-        "total_successful": total_successful,
-        "total_skipped": total_skipped,
-        "results": all_results,
-    }
+        total_failed = sum(_failed_count(r.get("summary", {})) for r in all_results)
+        total_successful = sum(r.get("summary", {}).get("successful", 0) for r in all_results)
+        total_skipped = sum(r.get("summary", {}).get("total_skipped", 0) for r in all_results)
+        emit_event(
+            event_logger,
+            logger,
+            "run_end",
+            total_chapters=len(all_results),
+            total_successful=total_successful,
+            total_failed=total_failed,
+            total_skipped=total_skipped,
+            output_json=str(output_json),
+            output_markdown=str(output_md) if output_format in ["markdown", "both"] else None,
+        )
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=5.0)
+        event_logger.close()
+        if total_failed > 0 and exit_on_failure:
+            sys.exit(1)
+        return {
+            "run_id": artifact_manager.run_id,
+            "artifact_root": str(artifact_manager.run_dir),
+            "output_json": str(output_json),
+            "output_markdown": (
+                str(output_md)
+                if output_format in ["markdown", "both"]
+                else None
+            ),
+            "manifest_path": (
+                str(artifact_manager.manifest_path)
+                if manifests
+                else None
+            ),
+            "bench_root": str(active_bench_root),
+            "total_failed": total_failed,
+            "total_successful": total_successful,
+            "total_skipped": total_skipped,
+            "results": all_results,
+        }
+    finally:
+        restore_suite_timeout()
 
 
 if TYPER_AVAILABLE:
@@ -3328,8 +3382,6 @@ if TYPER_AVAILABLE:
             
             coverage = (total_compliant / max(1, total_compliant + total_needs_work)) * 100
             typer.echo(f"\n📊 Coverage: {coverage:.1f}%")
-
-
 def main():
     """Entry point for CLI."""
     if not TYPER_AVAILABLE:

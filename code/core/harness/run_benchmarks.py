@@ -6138,6 +6138,7 @@ def _test_chapter_impl(
                     continue
                 
                 optimized_benchmark = load_benchmark(optimized_path)
+                opt_goal = None
                 
                 # Capture optimization goal from the OPTIMIZED benchmark (not baseline)
                 try:
@@ -6476,6 +6477,7 @@ def _test_chapter_impl(
                         'status': 'succeeded',
                         'time_ms': optimized_time,
                         'speedup': speedup,
+                        'optimization_goal': str(opt_goal or "speed").strip().lower(),
                     }
 
                     # POST-TIMING VERIFICATION: validate workload equivalence + outputs using the timing-run artifacts.
@@ -8384,6 +8386,7 @@ def _test_chapter_impl(
                     'status': 'succeeded',
                     'time_ms': optimized_time,
                     'speedup': speedup,
+                    'optimization_goal': str(result_entry.get("optimization_goal") or "speed").strip().lower(),
                 }
                 if opt_p75 is not None:
                     opt_result['p75_ms'] = opt_p75

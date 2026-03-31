@@ -1328,6 +1328,54 @@ class TestSingleBestSelectionConsistency:
         assert best is not None
         assert best["file"] == "opt2.py"
 
+    def test_select_best_optimization_ignores_comparison_variants_for_speed(self):
+        """Speed targets should not select supplementary comparison variants."""
+        from core.benchmark.expectations import select_best_optimization
+
+        optimizations = [
+            {
+                "status": "succeeded",
+                "speedup": 2.5,
+                "file": "comparison_opt.py",
+                "optimization_goal": "comparison",
+            },
+            {
+                "status": "succeeded",
+                "speedup": 2.0,
+                "file": "speed_opt.py",
+                "optimization_goal": "speed",
+            },
+        ]
+
+        best = select_best_optimization(optimizations, goal="speed")
+
+        assert best is not None
+        assert best["file"] == "speed_opt.py"
+
+    def test_select_best_optimization_allows_comparison_variants_for_comparison_goal(self):
+        """Comparison targets should still pick the fastest comparison variant."""
+        from core.benchmark.expectations import select_best_optimization
+
+        optimizations = [
+            {
+                "status": "succeeded",
+                "speedup": 1.1,
+                "file": "comparison_opt_a.py",
+                "optimization_goal": "comparison",
+            },
+            {
+                "status": "succeeded",
+                "speedup": 1.3,
+                "file": "comparison_opt_b.py",
+                "optimization_goal": "comparison",
+            },
+        ]
+
+        best = select_best_optimization(optimizations, goal="comparison")
+
+        assert best is not None
+        assert best["file"] == "comparison_opt_b.py"
+
     def test_select_best_optimization_returns_none_for_empty(self):
         """select_best_optimization should return None for empty list."""
         from core.benchmark.expectations import select_best_optimization

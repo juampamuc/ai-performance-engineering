@@ -414,7 +414,8 @@ def select_best_optimization(
         goal: Primary optimization goal ('speed' or 'memory').
 
     Returns:
-        The optimization dict with the highest speedup, or None if no successful optimizations.
+        The optimization dict with the highest goal-aligned score, or None if
+        no successful optimizations remain after goal filtering.
     """
     goal_norm = (goal or "speed").strip().lower()
 
@@ -424,6 +425,10 @@ def select_best_optimization(
     for opt in optimizations or []:
         # Only consider successful optimizations
         if opt.get("status") != "succeeded":
+            continue
+
+        opt_goal = str(opt.get("optimization_goal") or "").strip().lower()
+        if goal_norm != "comparison" and opt_goal == "comparison":
             continue
 
         if goal_norm == "memory":

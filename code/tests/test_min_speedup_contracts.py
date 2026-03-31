@@ -193,35 +193,35 @@ def test_expectation_example_key_keeps_cuda_examples_with_cuda_suffix_stable() -
         assert helper("double_buffered_pipeline", "cuda") == "double_buffered_pipeline_cuda"
 
 
-def test_persistent_decode_nvlink_offload_is_control_contract_while_paged_offload_stays_speed() -> None:
+def test_persistent_decode_nvlink_offload_is_comparison_contract_while_paged_offload_stays_speed() -> None:
     payload = json.loads((REPO_ROOT / "labs" / "persistent_decode" / "expectations_b200.json").read_text(encoding="utf-8"))
     nvlink_entry = ExpectationEntry.from_dict(payload["examples"]["nvlink_offload"])
     paged_entry = ExpectationEntry.from_dict(payload["examples"]["paged_kv_offload"])
 
-    assert nvlink_entry.optimization_goal == "control"
+    assert nvlink_entry.optimization_goal == "comparison"
     assert nvlink_entry.minimum_required_speedup is None
     assert paged_entry.optimization_goal == "speed"
     assert paged_entry.minimum_required_speedup is None
 
 
-def test_fullstack_cluster_tcgen05_cta2_stays_control_contract() -> None:
+def test_fullstack_cluster_tcgen05_cta2_stays_comparison_contract() -> None:
     benchmark = get_fullstack_cluster_gemm_tcgen05_cta2_benchmark()
 
-    assert benchmark.get_optimization_goal() == "control"
+    assert benchmark.get_optimization_goal() == "comparison"
     assert benchmark.baseline_alias == "cluster_gemm_tcgen05"
 
 
-def test_occupancy_tuning_low_warp_schedule_stays_control_contract() -> None:
+def test_occupancy_tuning_low_warp_schedule_stays_comparison_contract() -> None:
     payload = json.loads((REPO_ROOT / "labs" / "occupancy_tuning" / "expectations_b200.json").read_text(encoding="utf-8"))
     entry = ExpectationEntry.from_dict(payload["examples"]["proton_matmul_bm64_bn64_bk32_nw2"])
     benchmark = get_low_warp_proton_benchmark()
 
-    assert entry.optimization_goal == "control"
+    assert entry.optimization_goal == "comparison"
     assert entry.minimum_required_speedup is None
-    assert benchmark.get_optimization_goal() == "control"
+    assert benchmark.get_optimization_goal() == "comparison"
 
 
-def test_nvfp4_group_gemm_shape_surface_uses_canonical_frontdoor_and_control_shapes() -> None:
+def test_nvfp4_group_gemm_shape_surface_uses_canonical_frontdoor_and_comparison_shapes() -> None:
     payload = json.loads((REPO_ROOT / "labs" / "nvfp4_group_gemm" / "expectations_b200.json").read_text(encoding="utf-8"))
 
     assert "nvfp4_group_gemm_case0" not in payload["examples"]
@@ -243,15 +243,15 @@ def test_nvfp4_group_gemm_shape_surface_uses_canonical_frontdoor_and_control_sha
     assert winner.minimum_required_speedup == 1.005
     assert winner.best_speedup > winner.minimum_required_speedup
 
-    assert loser_one.optimization_goal == "control"
+    assert loser_one.optimization_goal == "comparison"
     assert loser_one.minimum_required_speedup is None
-    assert loser_two.optimization_goal == "control"
+    assert loser_two.optimization_goal == "comparison"
     assert loser_two.minimum_required_speedup is None
-    assert loser_three.optimization_goal == "control"
+    assert loser_three.optimization_goal == "comparison"
     assert loser_three.minimum_required_speedup is None
 
 
-def test_ch08_bridge_controls_keep_control_contracts() -> None:
+def test_ch08_bridge_comparisons_keep_comparison_contracts() -> None:
     expectation_paths = (
         REPO_ROOT / "ch08" / "expectations_b200.json",
         REPO_ROOT / "ch08" / "expectations_2x_b200.json",
@@ -270,16 +270,16 @@ def test_ch08_bridge_controls_keep_control_contracts() -> None:
         assert present, path.name
         for key in present:
             entry = ExpectationEntry.from_dict(payload[key])
-            assert entry.optimization_goal == "control", (path.name, key)
+            assert entry.optimization_goal == "comparison", (path.name, key)
             assert entry.minimum_required_speedup is None, (path.name, key)
 
-    assert object.__new__(BaselineChapter8NVFP4MLPBenchmark).get_optimization_goal() == "control"
-    assert object.__new__(BaselineThresholdTMABenchmark).get_optimization_goal() == "control"
-    assert object.__new__(BaselineTilingBenchmark).get_optimization_goal() == "control"
-    assert object.__new__(BaselineTilingBenchmarkTCGen05).get_optimization_goal() == "control"
+    assert object.__new__(BaselineChapter8NVFP4MLPBenchmark).get_optimization_goal() == "comparison"
+    assert object.__new__(BaselineThresholdTMABenchmark).get_optimization_goal() == "comparison"
+    assert object.__new__(BaselineTilingBenchmark).get_optimization_goal() == "comparison"
+    assert object.__new__(BaselineTilingBenchmarkTCGen05).get_optimization_goal() == "comparison"
 
 
-def test_ch03_gemm_stays_control_contract() -> None:
+def test_ch03_gemm_stays_comparison_contract() -> None:
     expectation_paths = (
         REPO_ROOT / "ch03" / "expectations_b200.json",
         REPO_ROOT / "ch03" / "expectations_4x_gb200.json",
@@ -287,7 +287,7 @@ def test_ch03_gemm_stays_control_contract() -> None:
     for path in expectation_paths:
         payload = json.loads(path.read_text(encoding="utf-8"))["examples"]
         entry = ExpectationEntry.from_dict(payload["gemm"])
-        assert entry.optimization_goal == "control", path.name
+        assert entry.optimization_goal == "comparison", path.name
         assert entry.minimum_required_speedup is None, path.name
 
-    assert object.__new__(BaselineGemmBenchmark).get_optimization_goal() == "control"
+    assert object.__new__(BaselineGemmBenchmark).get_optimization_goal() == "comparison"
